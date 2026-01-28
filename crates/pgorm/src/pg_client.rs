@@ -5,11 +5,13 @@
 //! - SQL validation against registered schemas
 //! - Query monitoring and statistics
 //! - Configurable timeouts and slow query detection
+//! - Dynamic SQL execution with type-safe mapping
 //!
 //! # Example
 //!
 //! ```ignore
-//! use pgorm::{create_pool, PgClient, Model, FromRow};
+//! use pgorm::{create_pool, PgClient, PgClientConfig, Model, FromRow};
+//! use std::time::Duration;
 //!
 //! #[derive(Debug, FromRow, Model)]
 //! #[orm(table = "products")]
@@ -22,11 +24,25 @@
 //! let pool = create_pool(&database_url)?;
 //! let client = pool.get().await?;
 //!
-//! // Create PgClient - models auto-registered, monitoring enabled by default
-//! let pg = PgClient::new(client);
+//! // Create PgClient with configuration
+//! let pg = PgClient::with_config(client, PgClientConfig::new()
+//!     .timeout(Duration::from_secs(30))
+//!     .slow_threshold(Duration::from_secs(1))
+//!     .with_logging());
 //!
-//! // All queries are monitored and SQL-checked automatically
+//! // Model-based queries (monitored)
 //! let products = Product::select_all(&pg).await?;
+//!
+//! // Dynamic SQL queries (also monitored)
+//! let users: Vec<User> = pg.sql_query_as(
+//!     "SELECT * FROM users WHERE status = $1",
+//!     &[&"active"]
+//! ).await?;
+//!
+//! let count = pg.sql_execute(
+//!     "UPDATE users SET status = $1 WHERE last_login < $2",
+//!     &[&"inactive", &cutoff_date]
+//! ).await?;
 //!
 //! // Get query statistics
 //! println!("Stats: {:?}", pg.stats());
@@ -38,6 +54,7 @@ use crate::error::{OrmError, OrmResult};
 use crate::monitor::{
     LoggingMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, StatsMonitor,
 };
+use crate::row::FromRow;
 use crate::GenericClient;
 
 // Re-export CheckMode from checked_client for public API
@@ -541,6 +558,149 @@ impl<C: GenericClient> PgClient<C> {
                 .map_err(|_| OrmError::Timeout(timeout))?,
             None => future.await,
         }
+    }
+}
+
+// ============================================================================
+// Dynamic SQL execution methods
+// ============================================================================
+
+impl<C: GenericClient> PgClient<C> {
+    /// Execute a dynamic SQL query and return all rows mapped to type T.
+    ///
+    /// This method is monitored and uses the same configuration as the `PgClient`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let users: Vec<User> = pg.sql_query_as(
+    ///     "SELECT * FROM users WHERE status = $1",
+    ///     &[&"active"]
+    /// ).await?;
+    /// ```
+    pub async fn sql_query_as<T: FromRow>(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Vec<T>> {
+        let rows = self.query(sql, params).await?;
+        rows.iter().map(T::from_row).collect()
+    }
+
+    /// Execute a dynamic SQL query and return exactly one row mapped to type T.
+    ///
+    /// Returns an error if zero or more than one row is returned.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let user: User = pg.sql_query_one_as(
+    ///     "SELECT * FROM users WHERE id = $1",
+    ///     &[&user_id]
+    /// ).await?;
+    /// ```
+    pub async fn sql_query_one_as<T: FromRow>(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<T> {
+        let row = self.query_one(sql, params).await?;
+        T::from_row(&row)
+    }
+
+    /// Execute a dynamic SQL query and return at most one row mapped to type T.
+    ///
+    /// Returns `Ok(None)` if no rows are found.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let user: Option<User> = pg.sql_query_opt_as(
+    ///     "SELECT * FROM users WHERE email = $1",
+    ///     &[&email]
+    /// ).await?;
+    /// ```
+    pub async fn sql_query_opt_as<T: FromRow>(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Option<T>> {
+        let row = self.query_opt(sql, params).await?;
+        row.as_ref().map(T::from_row).transpose()
+    }
+
+    /// Execute a dynamic SQL statement and return the number of affected rows.
+    ///
+    /// Use this for INSERT, UPDATE, DELETE statements.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let count = pg.sql_execute(
+    ///     "UPDATE users SET status = $1 WHERE last_login < $2",
+    ///     &[&"inactive", &cutoff_date]
+    /// ).await?;
+    /// ```
+    pub async fn sql_execute(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<u64> {
+        self.execute(sql, params).await
+    }
+
+    /// Execute a dynamic SQL query and return all raw rows.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let rows = pg.sql_query(
+    ///     "SELECT id, name FROM users WHERE status = $1",
+    ///     &[&"active"]
+    /// ).await?;
+    /// ```
+    pub async fn sql_query(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Vec<Row>> {
+        self.query(sql, params).await
+    }
+
+    /// Execute a dynamic SQL query and return exactly one raw row.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let row = pg.sql_query_one(
+    ///     "SELECT * FROM users WHERE id = $1",
+    ///     &[&user_id]
+    /// ).await?;
+    /// ```
+    pub async fn sql_query_one(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Row> {
+        self.query_one(sql, params).await
+    }
+
+    /// Execute a dynamic SQL query and return at most one raw row.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let row = pg.sql_query_opt(
+    ///     "SELECT * FROM users WHERE email = $1",
+    ///     &[&email]
+    /// ).await?;
+    /// ```
+    pub async fn sql_query_opt(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Option<Row>> {
+        self.query_opt(sql, params).await
     }
 }
 

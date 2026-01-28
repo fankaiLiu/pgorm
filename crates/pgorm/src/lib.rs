@@ -4,47 +4,23 @@
 //!
 //! ## Features
 //!
-//! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()` or the query builders)
+//! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()`; `qb::query()` is an alias)
 //! - **Type-safe mapping**: Row → Struct via `FromRow` trait
 //! - **Minimal magic**: Traits and macros only for boilerplate reduction
 //! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
-//! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
 //! - **Query monitoring**: Built-in support for timing, logging, and hooking SQL execution
 //! - **SQL checking**: Validate SQL against registered schemas and lint for common issues
 //!
-//! ## Query Builder (qb)
+//! ## SQL fallback (qb)
 //!
-//! The `qb` module provides a unified query builder system:
+//! The `qb` module is a thin wrapper around `query()` for running hand-written SQL:
 //!
 //! ```ignore
 //! use pgorm::qb;
 //!
-//! // SELECT
-//! let users = qb::select("users")
-//!     .eq("status", "active")
-//!     .order_by("created_at DESC")
-//!     .limit(10)
-//!     .fetch_all::<User>(&client)
-//!     .await?;
-//!
-//! // INSERT
-//! qb::insert("users")
-//!     .set("username", "alice")
-//!     .set("email", "alice@example.com")
-//!     .execute(&client)
-//!     .await?;
-//!
-//! // UPDATE
-//! qb::update("users")
-//!     .set("status", "inactive")
-//!     .eq("id", user_id)
-//!     .execute(&client)
-//!     .await?;
-//!
-//! // DELETE
-//! qb::delete("users")
-//!     .eq("id", user_id)
-//!     .execute(&client)
+//! let users: Vec<User> = qb::query("SELECT * FROM users WHERE status = $1")
+//!     .bind("active")
+//!     .query_as(&client)
 //!     .await?;
 //! ```
 
@@ -52,8 +28,6 @@ pub mod client;
 pub mod condition;
 pub mod error;
 pub mod monitor;
-pub mod qb;
-pub mod query;
 pub mod row;
 pub mod sql;
 pub mod transaction;
@@ -66,15 +40,8 @@ pub use monitor::{
     NoopMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType,
     StatsMonitor,
 };
-pub use query::query;
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Sql, sql};
-
-// Re-export qb module for easy access
-pub use qb::{
-    delete, delete_from, insert, insert_into, select, select_from, update,
-    DeleteQb, Expr, ExprGroup, InsertQb, MutationQb, SelectQb, SqlQb, UpdateQb,
-};
 
 #[cfg(feature = "pool")]
 pub mod pool;
