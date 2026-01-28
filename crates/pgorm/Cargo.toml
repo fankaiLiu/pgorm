@@ -19,6 +19,10 @@ pgorm-derive = { workspace = true, optional = true }
 tokio.workspace = true
 
 [features]
-default = ["pool", "derive"]
+default = ["pool", "derive", "builder"]
+
 pool = ["deadpool-postgres"]
 derive = ["pgorm-derive"]
+
+# Structured SQL builders (SELECT/INSERT/UPDATE/DELETE)
+builder = []

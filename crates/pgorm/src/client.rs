@@ -1,38 +1,38 @@
-//! Generic client trait for unified database access
+//! Generic client trait for unified database access.
 
 use crate::error::{OrmError, OrmResult};
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
 
-/// A trait that unifies `Client` and `Transaction` for database operations.
+/// A trait that unifies database clients and transactions.
 ///
 /// This allows repository methods to accept either a direct client connection
 /// or a transaction, making it easy to compose operations within transactions.
 pub trait GenericClient: Send + Sync {
-    /// Execute a query and return all rows
+    /// Execute a query and return all rows.
     fn query(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Vec<Row>>> + Send;
 
-    /// Execute a query and return exactly one row
+    /// Execute a query and return exactly one row.
     ///
-    /// Returns `OrmError::NotFound` if no rows are returned
+    /// Returns `OrmError::NotFound` if no rows are returned.
     fn query_one(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Row>> + Send;
 
-    /// Execute a query and return at most one row
+    /// Execute a query and return at most one row.
     fn query_opt(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Option<Row>>> + Send;
 
-    /// Execute a statement and return the number of affected rows
+    /// Execute a statement and return the number of affected rows.
     fn execute(
         &self,
         sql: &str,
@@ -92,7 +92,59 @@ impl GenericClient for tokio_postgres::Transaction<'_> {
     }
 }
 
-/// Wrapper for deadpool_postgres::Client to implement GenericClient
+// ===== deadpool-postgres support =====
+
+#[cfg(feature = "pool")]
+impl GenericClient for deadpool_postgres::Client {
+    async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+        // Delegate to the deref target (ClientWrapper / tokio_postgres::Client).
+        GenericClient::query(&**self, sql, params).await
+    }
+
+    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+        let rows = GenericClient::query(self, sql, params).await?;
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| OrmError::not_found("Expected one row, got none"))
+    }
+
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        let rows = GenericClient::query(self, sql, params).await?;
+        Ok(rows.into_iter().next())
+    }
+
+    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+        GenericClient::execute(&**self, sql, params).await
+    }
+}
+
+#[cfg(feature = "pool")]
+impl GenericClient for deadpool_postgres::ClientWrapper {
+    async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+        GenericClient::query(&**self, sql, params).await
+    }
+
+    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+        let rows = GenericClient::query(self, sql, params).await?;
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| OrmError::not_found("Expected one row, got none"))
+    }
+
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        let rows = GenericClient::query(self, sql, params).await?;
+        Ok(rows.into_iter().next())
+    }
+
+    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+        GenericClient::execute(&**self, sql, params).await
+    }
+}
+
+/// Wrapper for `deadpool_postgres::Client`.
+///
+/// You can use this if you want to make pooled clients explicit in your API,
+/// but `deadpool_postgres::Client` itself also implements `GenericClient`.
 #[cfg(feature = "pool")]
 pub struct PoolClient(deadpool_postgres::Client);
 
@@ -123,28 +175,18 @@ impl std::ops::Deref for PoolClient {
 #[cfg(feature = "pool")]
 impl GenericClient for PoolClient {
     async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
-        self.0
-            .query(sql, params)
-            .await
-            .map_err(OrmError::from_db_error)
+        GenericClient::query(&self.0, sql, params).await
     }
 
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
-        let rows = GenericClient::query(self, sql, params).await?;
-        rows.into_iter()
-            .next()
-            .ok_or_else(|| OrmError::not_found("Expected one row, got none"))
+        GenericClient::query_one(&self.0, sql, params).await
     }
 
     async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
-        let rows = GenericClient::query(self, sql, params).await?;
-        Ok(rows.into_iter().next())
+        GenericClient::query_opt(&self.0, sql, params).await
     }
 
     async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
-        self.0
-            .execute(sql, params)
-            .await
-            .map_err(OrmError::from_db_error)
+        GenericClient::execute(&self.0, sql, params).await
     }
 }
