@@ -5,7 +5,7 @@
 //! Set DATABASE_URL in .env file or environment variable:
 //! DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
-use pgorm::{create_pool, query, FromRow, Model, Op, OrmError};
+use pgorm::{create_pool, query, FromRow, Model, OrmError};
 use std::env;
 
 #[derive(Debug, FromRow, Model)]
@@ -92,7 +92,7 @@ async fn main() -> Result<(), OrmError> {
     println!("=== Query: category_id = 1 ===\n");
 
     let electronics = Product::query()
-        .and("category_id", Op::eq(1_i64))
+        .eq("category_id", 1_i64)
         .find(&client)
         .await?;
 
@@ -107,7 +107,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: name ILIKE '%mouse%' ===\n");
 
     let mice = Product::query()
-        .and("name", Op::ilike("%mouse%".to_string()))
+        .ilike("name", "%mouse%")
         .find(&client)
         .await?;
 
@@ -122,8 +122,8 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: price_cents >= 5000 AND price_cents < 15000 ===\n");
 
     let mid_range = Product::query()
-        .and("price_cents", Op::gte(5000_i64))
-        .and("price_cents", Op::lt(15000_i64))
+        .gte("price_cents", 5000_i64)
+        .lt("price_cents", 15000_i64)
         .find(&client)
         .await?;
 
@@ -138,7 +138,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: price_cents BETWEEN 1000 AND 5000 ===\n");
 
     let budget = Product::query()
-        .and("price_cents", Op::between(1000_i64, 5000_i64))
+        .between("price_cents", 1000_i64, 5000_i64)
         .find(&client)
         .await?;
 
@@ -153,7 +153,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: category_id IN (1, 3) ===\n");
 
     let selected = Product::query()
-        .and("category_id", Op::in_list(vec![1_i64, 3]))
+        .in_list("category_id", vec![1_i64, 3])
         .find(&client)
         .await?;
 
@@ -168,7 +168,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: category_id NOT IN (1) ===\n");
 
     let non_electronics = Product::query()
-        .and("category_id", Op::not_in(vec![1_i64]))
+        .not_in("category_id", vec![1_i64])
         .find(&client)
         .await?;
 
@@ -183,9 +183,9 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: category_id = 1 AND in_stock = true AND price < 10000 ===\n");
 
     let cheap_in_stock = Product::query()
-        .and("category_id", Op::eq(1_i64))
-        .and("in_stock", Op::eq(true))
-        .and("price_cents", Op::lt(10000_i64))
+        .eq("category_id", 1_i64)
+        .eq("in_stock", true)
+        .lt("price_cents", 10000_i64)
         .find(&client)
         .await?;
 
@@ -200,7 +200,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: name NOT LIKE '%Cable%' ===\n");
 
     let not_cables = Product::query()
-        .and("name", Op::not_like("%Cable%".to_string()))
+        .not_like("name", "%Cable%")
         .find(&client)
         .await?;
 
@@ -246,13 +246,13 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: Count in_stock = true ===\n");
 
     let in_stock_count = Product::query()
-        .and("in_stock", Op::eq(true))
+        .eq("in_stock", true)
         .count(&client)
         .await?;
     println!("In-stock products: {}", in_stock_count);
 
     let out_of_stock_count = Product::query()
-        .and("in_stock", Op::eq(false))
+        .eq("in_stock", false)
         .count(&client)
         .await?;
     println!("Out-of-stock products: {}", out_of_stock_count);
@@ -263,7 +263,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: find_one with ILIKE ===\n");
 
     let laptop = Product::query()
-        .and("name", Op::ilike("%laptop%".to_string()))
+        .ilike("name", "%laptop%")
         .find_one(&client)
         .await?;
     println!("Found: {} (${:.2})", laptop.name, laptop.price_display());
@@ -274,7 +274,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: find_one_opt (not found) ===\n");
 
     let not_found = Product::query()
-        .and("name", Op::eq("NonExistent".to_string()))
+        .eq("name", "NonExistent")
         .find_one_opt(&client)
         .await?;
     println!("Result: {:?}", not_found);
@@ -285,8 +285,8 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Using column constants ===\n");
 
     let using_const = Product::query()
-        .and(ProductQuery::name, Op::ilike("%keyboard%".to_string()))
-        .and(ProductQuery::in_stock, Op::eq(false))
+        .ilike(ProductQuery::name, "%keyboard%")
+        .eq(ProductQuery::in_stock, false)
         .find(&client)
         .await?;
 
@@ -301,7 +301,7 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Query: category_id != 2 ===\n");
 
     let not_cables_cat = Product::query()
-        .and("category_id", Op::ne(2_i64))
+        .ne("category_id", 2_i64)
         .find(&client)
         .await?;
 

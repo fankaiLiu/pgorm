@@ -262,6 +262,142 @@ impl Condition {
         }
     }
 
+    // ==================== Convenience constructors ====================
+
+    /// Create an equality condition: column = value
+    pub fn eq<T>(column: &str, value: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Eq(value))
+    }
+
+    /// Create an inequality condition: column != value
+    pub fn ne<T>(column: &str, value: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Ne(value))
+    }
+
+    /// Create a greater-than condition: column > value
+    pub fn gt<T>(column: &str, value: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Gt(value))
+    }
+
+    /// Create a greater-than-or-equal condition: column >= value
+    pub fn gte<T>(column: &str, value: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Gte(value))
+    }
+
+    /// Create a less-than condition: column < value
+    pub fn lt<T>(column: &str, value: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Lt(value))
+    }
+
+    /// Create a less-than-or-equal condition: column <= value
+    pub fn lte<T>(column: &str, value: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Lte(value))
+    }
+
+    /// Create a LIKE condition: column LIKE pattern
+    pub fn like<T>(column: &str, pattern: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Like(pattern))
+    }
+
+    /// Create a case-insensitive ILIKE condition: column ILIKE pattern
+    pub fn ilike<T>(column: &str, pattern: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Ilike(pattern))
+    }
+
+    /// Create a NOT LIKE condition: column NOT LIKE pattern
+    pub fn not_like<T>(column: &str, pattern: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::NotLike(pattern))
+    }
+
+    /// Create a NOT ILIKE condition: column NOT ILIKE pattern
+    pub fn not_ilike<T>(column: &str, pattern: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::NotIlike(pattern))
+    }
+
+    /// Create an IS NULL condition: column IS NULL
+    pub fn is_null(column: &str) -> Self {
+        Condition {
+            column: column.to_string(),
+            operator: "IS NULL",
+            value: ConditionValue::None,
+            is_raw: false,
+            raw_sql: None,
+        }
+    }
+
+    /// Create an IS NOT NULL condition: column IS NOT NULL
+    pub fn is_not_null(column: &str) -> Self {
+        Condition {
+            column: column.to_string(),
+            operator: "IS NOT NULL",
+            value: ConditionValue::None,
+            is_raw: false,
+            raw_sql: None,
+        }
+    }
+
+    /// Create an IN condition: column IN (values...)
+    pub fn in_list<T>(column: &str, values: Vec<T>) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::In(values))
+    }
+
+    /// Create a NOT IN condition: column NOT IN (values...)
+    pub fn not_in<T>(column: &str, values: Vec<T>) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::NotIn(values))
+    }
+
+    /// Create a BETWEEN condition: column BETWEEN from AND to
+    pub fn between<T>(column: &str, from: T, to: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::Between(from, to))
+    }
+
+    /// Create a NOT BETWEEN condition: column NOT BETWEEN from AND to
+    pub fn not_between<T>(column: &str, from: T, to: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        Self::new(column, Op::NotBetween(from, to))
+    }
+
     /// Build the SQL fragment and return parameter references.
     pub fn build(&self, param_idx: &mut usize) -> (String, Vec<&(dyn ToSql + Sync)>) {
         if self.is_raw {
