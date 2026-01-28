@@ -43,6 +43,14 @@ pub use monitor::{
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Sql, sql};
 
+/// Alias for `sql()` - start building a SQL query.
+///
+/// This is the same as `sql()` but uses the name `query()` for familiarity
+/// with other query builder libraries.
+pub fn query(initial_sql: impl Into<String>) -> Sql {
+    sql(initial_sql)
+}
+
 #[cfg(feature = "pool")]
 pub mod pool;
 

@@ -85,6 +85,27 @@ impl Sql {
         self
     }
 
+    /// Chainable bind method (consumes self, returns Self).
+    ///
+    /// This is syntactic sugar for chained query building:
+    /// ```ignore
+    /// query("INSERT INTO users (name, email) VALUES ($1, $2)")
+    ///     .bind("Alice")
+    ///     .bind("alice@example.com")
+    ///     .execute(&conn).await?;
+    /// ```
+    ///
+    /// Note: This method is for SQL strings that already contain `$1, $2, ...` placeholders.
+    /// It only stores the parameter value without adding a new placeholder to the SQL.
+    pub fn bind<T>(mut self, value: T) -> Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        // Only add the parameter, don't add a placeholder (the SQL already has $1, $2, ...)
+        self.params.push(Box::new(value));
+        self
+    }
+
     /// Append a comma-separated list of placeholders and bind all values.
     ///
     /// If `values` is empty, this appends `NULL` (so `IN (NULL)` is valid SQL).
@@ -190,9 +211,12 @@ impl Sql {
             .filter(|p| matches!(p, SqlPart::Param))
             .count();
 
-        if placeholder_count != self.params.len() {
+        // When using bind() with pre-existing $1, $2, ... placeholders,
+        // params.len() may be greater than placeholder_count.
+        // We only validate that push_bind placeholders match their params.
+        if placeholder_count > self.params.len() {
             return Err(OrmError::Validation(format!(
-                "Sql internal invariant violated: placeholders({}) != params({})",
+                "Sql: more placeholders({}) than params({})",
                 placeholder_count,
                 self.params.len()
             )));
