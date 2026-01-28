@@ -29,6 +29,10 @@ name = "builder"
 name = "transaction"
 
 [[example]]
+name = "transaction_pool"
+required-features = ["pool"]
+
+[[example]]
 name = "dynamic_sql"
 
 [features]

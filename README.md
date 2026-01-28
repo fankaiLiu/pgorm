@@ -32,6 +32,24 @@ q.push(" AND username ILIKE ").push_bind("%admin%");
 let users: Vec<User> = q.fetch_all_as(&client).await?;
 ```
 
+## Transactions
+
+All query execution in `pgorm` takes `&impl GenericClient`, so the same code works
+with a plain client connection or inside a transaction:
+
+```rust
+use pgorm::{query, OrmResult};
+
+// Works with `tokio_postgres::Client` and `deadpool_postgres::Client`.
+pgorm::transaction!(&mut client, tx, {
+    query("UPDATE users SET last_login = NOW() WHERE id = $1")
+        .bind(1_i64)
+        .execute(&tx)
+        .await?;
+    Ok(())
+})?;
+```
+
 ## Crates
 
 - `pgorm` - Core ORM with connection pooling and query builder

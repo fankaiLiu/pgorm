@@ -141,6 +141,29 @@ impl GenericClient for deadpool_postgres::ClientWrapper {
     }
 }
 
+#[cfg(feature = "pool")]
+impl GenericClient for deadpool_postgres::Transaction<'_> {
+    async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+        GenericClient::query(&**self, sql, params).await
+    }
+
+    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+        let rows = GenericClient::query(self, sql, params).await?;
+        rows.into_iter()
+            .next()
+            .ok_or_else(|| OrmError::not_found("Expected one row, got none"))
+    }
+
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        let rows = GenericClient::query(self, sql, params).await?;
+        Ok(rows.into_iter().next())
+    }
+
+    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+        GenericClient::execute(&**self, sql, params).await
+    }
+}
+
 /// Wrapper for `deadpool_postgres::Client`.
 ///
 /// You can use this if you want to make pooled clients explicit in your API,

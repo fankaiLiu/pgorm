@@ -7,6 +7,7 @@
 //! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()` or the optional builders)
 //! - **Type-safe mapping**: Row → Struct via `FromRow` trait
 //! - **Minimal magic**: Traits and macros only for boilerplate reduction
+//! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
 //! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
 
 pub mod client;
@@ -15,6 +16,7 @@ pub mod error;
 pub mod query;
 pub mod row;
 pub mod sql;
+pub mod transaction;
 
 pub use client::GenericClient;
 pub use condition::{Condition, Op};
