@@ -10,6 +10,7 @@
 //! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
 //! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
 //! - **Query monitoring**: Built-in support for timing, logging, and hooking SQL execution
+//! - **SQL checking**: Validate SQL against registered schemas and lint for common issues
 
 pub mod client;
 pub mod condition;
@@ -52,3 +53,18 @@ pub use builder::{
 
 #[cfg(feature = "derive")]
 pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};
+
+// SQL checking and linting
+pub mod check;
+
+pub use check::{
+    ColumnMeta, SchemaIssue, SchemaIssueKind, SchemaIssueLevel, SchemaRegistry, TableMeta,
+    TableSchema,
+};
+
+#[cfg(feature = "check")]
+pub use check::{
+    delete_has_where, detect_statement_kind, get_table_names, is_valid_sql, lint_select_many,
+    lint_sql, select_has_limit, select_has_star, update_has_where, LintIssue, LintLevel,
+    LintResult, ParseResult, StatementKind,
+};

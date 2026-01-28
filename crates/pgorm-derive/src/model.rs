@@ -185,6 +185,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         quote! {}
     };
 
+    // Generate primary key option for TableMeta
+    let pk_option = if let Some(id) = &id_column {
+        quote! { Some(#id) }
+    } else {
+        quote! { None }
+    };
+
     // Generate select_one method only if there's an ID field
     let select_one_method = if let (Some(id_col), Some(id_ty)) = (&id_column, id_field_type) {
         let id_col_qualified = format!("{}.{}", table_name, id_col);
@@ -452,6 +459,20 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #(#has_many_methods)*
 
             #(#belongs_to_methods)*
+        }
+
+        impl pgorm::TableMeta for #name {
+            fn table_name() -> &'static str {
+                #table_name
+            }
+
+            fn columns() -> &'static [&'static str] {
+                &[#(#column_names),*]
+            }
+
+            fn primary_key() -> Option<&'static str> {
+                #pk_option
+            }
         }
 
         #query_struct
