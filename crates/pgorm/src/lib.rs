@@ -21,7 +21,7 @@ pub use condition::{Condition, Op};
 pub use error::{OrmError, OrmResult};
 pub use query::query;
 pub use row::{FromRow, RowExt};
-pub use sql::{sql, Sql};
+pub use sql::{Sql, sql};
 
 #[cfg(feature = "pool")]
 pub mod pool;
@@ -42,4 +42,4 @@ pub use builder::{
 };
 
 #[cfg(feature = "derive")]
-pub use pgorm_derive::{FromRow, Model};
+pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};

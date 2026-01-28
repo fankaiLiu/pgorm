@@ -3,10 +3,12 @@
 //! Provides `#[derive(FromRow)]` and `#[derive(Model)]` macros.
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{DeriveInput, parse_macro_input};
 
 mod from_row;
+mod insert_model;
 mod model;
+mod update_model;
 
 /// Derive `FromRow` trait for a struct.
 ///
@@ -68,6 +70,36 @@ pub fn derive_from_row(input: TokenStream) -> TokenStream {
 pub fn derive_model(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     model::expand(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derive `ViewModel` metadata for a struct.
+///
+/// This is an alias of `Model` intended to express that the type is a read/view model
+/// (optionally including JOINs), while write models are derived separately.
+#[proc_macro_derive(ViewModel, attributes(orm))]
+pub fn derive_view_model(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    model::expand(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derive `InsertModel` helpers for inserting into a table.
+#[proc_macro_derive(InsertModel, attributes(orm))]
+pub fn derive_insert_model(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    insert_model::expand(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derive `UpdateModel` helpers for updating a table (patch-style).
+#[proc_macro_derive(UpdateModel, attributes(orm))]
+pub fn derive_update_model(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    update_model::expand(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

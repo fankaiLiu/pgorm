@@ -238,6 +238,48 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         quote! {}
     };
 
+    // Generate delete_by_id methods only if there's an ID field.
+    let delete_by_id_methods = if let (Some(id_col), Some(id_ty)) = (&id_column, id_field_type) {
+        let id_col_qualified = format!("{}.{}", table_name, id_col);
+
+        quote! {
+            /// Delete a single record by its primary key.
+            ///
+            /// Returns the number of affected rows (0 or 1).
+            pub async fn delete_by_id(
+                conn: &impl pgorm::GenericClient,
+                id: #id_ty,
+            ) -> pgorm::OrmResult<u64> {
+                let sql = format!("DELETE FROM {} WHERE {} = $1", Self::TABLE, #id_col_qualified);
+                conn.execute(&sql, &[&id]).await
+            }
+
+            /// Delete a single record by its primary key and return the deleted row.
+            ///
+            /// Returns `OrmError::NotFound` if no record is found.
+            pub async fn delete_by_id_returning(
+                conn: &impl pgorm::GenericClient,
+                id: #id_ty,
+            ) -> pgorm::OrmResult<Self>
+            where
+                Self: pgorm::FromRow,
+            {
+                let sql = format!(
+                    "WITH {table} AS (DELETE FROM {table} WHERE {id_qualified} = $1 RETURNING *) \
+        SELECT {} FROM {table} {}",
+                    Self::SELECT_LIST,
+                    Self::JOIN_CLAUSE,
+                    table = Self::TABLE,
+                    id_qualified = #id_col_qualified,
+                );
+                let row = conn.query_one(&sql, &[&id]).await?;
+                pgorm::FromRow::from_row(&row)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     // Generate has_many methods (requires ID field)
     let has_many_methods: Vec<TokenStream> =
         if let (Some(id_ty), Some(id_field)) = (id_field_type, id_field_ident.as_ref()) {
@@ -361,6 +403,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #select_all_method
 
             #select_one_method
+
+            #delete_by_id_methods
 
             #(#has_many_methods)*
 
