@@ -1,7 +1,7 @@
 //! Model derive macro implementation
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{Data, DeriveInput, Fields, Result};
 
 pub fn expand(input: DeriveInput) -> Result<TokenStream> {
@@ -27,18 +27,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
-    let mut column_consts = Vec::new();
     let mut column_names = Vec::new();
     let mut id_column: Option<String> = None;
 
     for field in fields.iter() {
-        let field_name = field.ident.as_ref().unwrap();
         let column_name = get_column_name(field);
-        let const_name = format_ident!("COL_{}", field_name.to_string().to_uppercase());
-
-        column_consts.push(quote! {
-            pub const #const_name: &'static str = #column_name;
-        });
         column_names.push(column_name.clone());
 
         if is_id_field(field) {
@@ -59,7 +52,6 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         impl #name {
             pub const TABLE: &'static str = #table_name;
             #id_const
-            #(#column_consts)*
             pub const SELECT_LIST: &'static str = #select_list;
 
             pub fn select_list_as(alias: &str) -> String {
