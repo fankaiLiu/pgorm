@@ -57,10 +57,22 @@ pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};
 // SQL checking and linting
 pub mod check;
 
+// Checked client with auto-registration
+pub mod checked_client;
+
 pub use check::{
     ColumnMeta, SchemaIssue, SchemaIssueKind, SchemaIssueLevel, SchemaRegistry, TableMeta,
     TableSchema,
 };
+
+// Re-export inventory for use by derive macros
+pub use inventory;
+
+// Re-export CheckedClient and related types
+pub use checked_client::{CheckMode, ModelRegistration};
+
+#[cfg(feature = "check")]
+pub use checked_client::CheckedClient;
 
 #[cfg(feature = "check")]
 pub use check::{

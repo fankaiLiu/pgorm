@@ -16,6 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 pgorm-derive = { workspace = true, optional = true }
 pgorm-check = { path = "../pgorm-check", features = ["sql"], optional = true }
+inventory = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -46,6 +47,10 @@ name = "hooks"
 [[example]]
 name = "check"
 required-features = ["check"]
+
+[[example]]
+name = "checked_client"
+required-features = ["derive", "pool", "check"]
 
 [[example]]
 name = "comprehensive"

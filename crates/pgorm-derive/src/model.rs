@@ -476,6 +476,15 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
 
         #query_struct
+
+        // Auto-register this model with CheckedClient via inventory
+        pgorm::inventory::submit! {
+            pgorm::ModelRegistration {
+                register_fn: |registry: &mut pgorm::SchemaRegistry| {
+                    registry.register::<#name>();
+                }
+            }
+        }
     })
 }
 
