@@ -1,4 +1,5 @@
 use super::traits::{MutationBuilder, SqlBuilder};
+use super::where_builder::WhereBuilder;
 use tokio_postgres::types::ToSql;
 
 /// SET field value type.
@@ -15,18 +16,10 @@ pub struct UpdateBuilder {
     table: String,
     /// SET clauses (column, value)
     set_fields: Vec<(String, SetField)>,
-    /// WHERE clauses
-    where_clauses: Vec<WhereClause>,
+    /// WHERE conditions
+    where_builder: WhereBuilder,
     /// RETURNING columns
     returning_cols: Vec<String>,
-}
-
-enum WhereClause {
-    Raw(String),
-    Template {
-        sql_template: String,
-        params: Vec<Box<dyn ToSql + Sync + Send>>,
-    },
 }
 
 impl UpdateBuilder {
@@ -34,7 +27,7 @@ impl UpdateBuilder {
         Self {
             table: table.to_string(),
             set_fields: Vec::new(),
-            where_clauses: Vec::new(),
+            where_builder: WhereBuilder::new(),
             returning_cols: Vec::new(),
         }
     }
@@ -85,15 +78,23 @@ impl UpdateBuilder {
         self
     }
 
+    // ==================== Conditions (delegated to WhereBuilder) ====================
+
     /// Add AND equality condition.
     pub fn and_eq<T>(&mut self, col: &str, val: T) -> &mut Self
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.where_clauses.push(WhereClause::Template {
-            sql_template: format!("{} = ?", col),
-            params: vec![Box::new(val)],
-        });
+        self.where_builder.and_eq(col, val);
+        self
+    }
+
+    /// Add AND not-equal condition.
+    pub fn and_ne<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_ne(col, val);
         self
     }
 
@@ -102,21 +103,43 @@ impl UpdateBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if values.is_empty() {
-            self.where_clauses.push(WhereClause::Raw("1=0".to_string()));
-            return self;
-        }
+        self.where_builder.and_in(col, values);
+        self
+    }
 
-        let placeholders = vec!["?"; values.len()].join(", ");
-        let params = values
-            .into_iter()
-            .map(|value| Box::new(value) as Box<dyn ToSql + Sync + Send>)
-            .collect();
+    /// Add AND < condition.
+    pub fn and_lt<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_lt(col, val);
+        self
+    }
 
-        self.where_clauses.push(WhereClause::Template {
-            sql_template: format!("{} IN ({})", col, placeholders),
-            params,
-        });
+    /// Add AND <= condition.
+    pub fn and_lte<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_lte(col, val);
+        self
+    }
+
+    /// Add AND > condition.
+    pub fn and_gt<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_gt(col, val);
+        self
+    }
+
+    /// Add AND >= condition.
+    pub fn and_gte<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_gte(col, val);
         self
     }
 
@@ -126,19 +149,17 @@ impl UpdateBuilder {
     ///
     /// This directly concatenates SQL. The caller must ensure safety.
     pub fn and_raw(&mut self, sql: &str) -> &mut Self {
-        self.where_clauses.push(WhereClause::Raw(sql.to_string()));
+        self.where_builder.and_raw(sql);
         self
     }
 
     pub fn and_is_null(&mut self, col: &str) -> &mut Self {
-        self.where_clauses
-            .push(WhereClause::Raw(format!("{} IS NULL", col)));
+        self.where_builder.and_is_null(col);
         self
     }
 
     pub fn and_is_not_null(&mut self, col: &str) -> &mut Self {
-        self.where_clauses
-            .push(WhereClause::Raw(format!("{} IS NOT NULL", col)));
+        self.where_builder.and_is_not_null(col);
         self
     }
 
@@ -152,6 +173,14 @@ impl UpdateBuilder {
     pub fn returning_cols(&mut self, cols: &[&str]) -> &mut Self {
         self.returning_cols = cols.iter().map(|s| s.to_string()).collect();
         self
+    }
+
+    /// Count SET params (params that contribute to placeholders).
+    fn count_set_params(&self) -> usize {
+        self.set_fields
+            .iter()
+            .filter(|(_, field)| matches!(field, SetField::Value(_)))
+            .count()
     }
 
     /// Build SQL and params with an index offset.
@@ -181,33 +210,18 @@ impl UpdateBuilder {
         sql.push_str(" SET ");
         sql.push_str(&set_parts.join(", "));
 
-        let mut where_parts = Vec::new();
-        for clause in &self.where_clauses {
-            match clause {
-                WhereClause::Raw(sql) => {
-                    where_parts.push(sql.clone());
-                }
-                WhereClause::Template {
-                    sql_template,
-                    params: clause_params,
-                } => {
-                    let mut final_sql = sql_template.clone();
-                    for _ in clause_params {
-                        current_idx += 1;
-                        let placeholder = format!("${}", current_idx);
-                        final_sql = final_sql.replacen('?', &placeholder, 1);
-                    }
-                    where_parts.push(final_sql);
-                    for param in clause_params {
-                        params.push(&**param);
-                    }
-                }
-            }
-        }
-
-        if !where_parts.is_empty() {
+        // Build WHERE clause with correct offset
+        if !self.where_builder.is_empty() {
+            // We need to rebuild the where clause with the correct offset
+            // Since WhereBuilder stores conditions with placeholders already,
+            // we need to recalculate them
             sql.push_str(" WHERE ");
-            sql.push_str(&where_parts.join(" AND "));
+
+            let where_clause = self.build_where_with_offset(current_idx);
+            sql.push_str(&where_clause);
+
+            // Add where params
+            params.extend(self.where_builder.params_ref());
         }
 
         if !self.returning_cols.is_empty() {
@@ -217,35 +231,80 @@ impl UpdateBuilder {
 
         (sql, params)
     }
+
+    /// Build WHERE clause with correct param offset.
+    fn build_where_with_offset(&self, offset: usize) -> String {
+        // The WhereBuilder already built the clause with $1, $2, etc.
+        // We need to replace these with the correct offset
+        let base_clause = self.where_builder.build_clause();
+        let mut result = base_clause;
+
+        // Replace placeholders in reverse order to avoid $1 matching $10
+        for i in (1..=self.where_builder.param_count()).rev() {
+            let old = format!("${}", i);
+            let new = format!("${}", i + offset);
+            result = result.replace(&old, &new);
+        }
+
+        result
+    }
 }
 
 impl SqlBuilder for UpdateBuilder {
     fn build_sql(&self) -> String {
+        let set_param_count = self.count_set_params();
         let (parts, _) = self.build_with_offset(0);
+
         if parts.is_empty() {
             return format!("UPDATE {} SET _error_no_set_fields = 1 WHERE 1=0", self.table);
         }
-        format!("UPDATE {}{}", self.table, parts)
+
+        // Rebuild properly for standalone UPDATE
+        let mut sql = format!("UPDATE {}", self.table);
+
+        let mut current_idx = 0;
+        let mut set_parts = Vec::new();
+        for (col, field) in &self.set_fields {
+            match field {
+                SetField::Value(_) => {
+                    current_idx += 1;
+                    set_parts.push(format!("{} = ${}", col, current_idx));
+                }
+                SetField::Raw(expr) => {
+                    set_parts.push(format!("{} = {}", col, expr));
+                }
+            }
+        }
+
+        sql.push_str(" SET ");
+        sql.push_str(&set_parts.join(", "));
+
+        if !self.where_builder.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&self.build_where_with_offset(set_param_count));
+        }
+
+        if !self.returning_cols.is_empty() {
+            sql.push_str(" RETURNING ");
+            sql.push_str(&self.returning_cols.join(", "));
+        }
+
+        sql
     }
 
     fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
         let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new();
+
+        // SET params first
         for (_, field) in &self.set_fields {
             if let SetField::Value(val) = field {
                 params.push(&**val);
             }
         }
-        for clause in &self.where_clauses {
-            if let WhereClause::Template {
-                params: clause_params,
-                ..
-            } = clause
-            {
-                for param in clause_params {
-                    params.push(&**param);
-                }
-            }
-        }
+
+        // WHERE params second
+        params.extend(self.where_builder.params_ref());
+
         params
     }
 

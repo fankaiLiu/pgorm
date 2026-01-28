@@ -1,4 +1,5 @@
 use super::traits::{MutationBuilder, SqlBuilder};
+use super::where_builder::WhereBuilder;
 use tokio_postgres::types::ToSql;
 
 /// DELETE 语句构建器
@@ -6,11 +7,7 @@ pub struct DeleteBuilder {
     /// 表名
     table: String,
     /// WHERE 条件
-    where_conditions: Vec<String>,
-    /// 参数值
-    params: Vec<Box<dyn ToSql + Sync + Send>>,
-    /// 当前参数计数
-    param_count: usize,
+    where_builder: WhereBuilder,
     /// RETURNING 列
     returning_cols: Vec<String>,
     /// 是否允许删除全表（无 WHERE 条件）
@@ -22,9 +19,7 @@ impl DeleteBuilder {
     pub fn new(table: &str) -> Self {
         Self {
             table: table.to_string(),
-            where_conditions: Vec::new(),
-            params: Vec::new(),
-            param_count: 0,
+            where_builder: WhereBuilder::new(),
             returning_cols: Vec::new(),
             allow_delete_all: false,
         }
@@ -36,15 +31,23 @@ impl DeleteBuilder {
         self
     }
 
+    // ==================== Conditions (delegated to WhereBuilder) ====================
+
     /// 添加 AND 相等条件
     pub fn and_eq<T>(&mut self, col: &str, val: T) -> &mut Self
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.param_count += 1;
-        self.where_conditions
-            .push(format!("{} = ${}", col, self.param_count));
-        self.params.push(Box::new(val));
+        self.where_builder.and_eq(col, val);
+        self
+    }
+
+    /// 添加 AND 不等条件
+    pub fn and_ne<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_ne(col, val);
         self
     }
 
@@ -53,20 +56,7 @@ impl DeleteBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if values.is_empty() {
-            self.where_conditions.push("1=0".to_string());
-            return self;
-        }
-
-        let mut placeholders = Vec::new();
-        for value in values {
-            self.param_count += 1;
-            placeholders.push(format!("${}", self.param_count));
-            self.params.push(Box::new(value));
-        }
-
-        self.where_conditions
-            .push(format!("{} IN ({})", col, placeholders.join(", ")));
+        self.where_builder.and_in(col, values);
         self
     }
 
@@ -75,10 +65,46 @@ impl DeleteBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.param_count += 1;
-        self.where_conditions
-            .push(format!("{} < ${}", col, self.param_count));
-        self.params.push(Box::new(val));
+        self.where_builder.and_lt(col, val);
+        self
+    }
+
+    /// 添加 AND 小于等于条件
+    pub fn and_lte<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_lte(col, val);
+        self
+    }
+
+    /// 添加 AND 大于条件
+    pub fn and_gt<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_gt(col, val);
+        self
+    }
+
+    /// 添加 AND 大于等于条件
+    pub fn and_gte<T>(&mut self, col: &str, val: T) -> &mut Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.where_builder.and_gte(col, val);
+        self
+    }
+
+    /// 添加 AND IS NULL 条件
+    pub fn and_is_null(&mut self, col: &str) -> &mut Self {
+        self.where_builder.and_is_null(col);
+        self
+    }
+
+    /// 添加 AND IS NOT NULL 条件
+    pub fn and_is_not_null(&mut self, col: &str) -> &mut Self {
+        self.where_builder.and_is_not_null(col);
         self
     }
 
@@ -88,7 +114,7 @@ impl DeleteBuilder {
     ///
     /// 此方法直接拼接 SQL 字符串，调用者必须确保 inputs 是安全的，防止 SQL 注入。
     pub fn and_raw(&mut self, sql: &str) -> &mut Self {
-        self.where_conditions.push(sql.to_string());
+        self.where_builder.and_raw(sql);
         self
     }
 
@@ -108,15 +134,15 @@ impl DeleteBuilder {
 impl SqlBuilder for DeleteBuilder {
     fn build_sql(&self) -> String {
         // 安全检查：如果无条件且不允许删除全表，生成安全 no-op
-        if self.where_conditions.is_empty() && !self.allow_delete_all {
+        if self.where_builder.is_empty() && !self.allow_delete_all {
             return format!("DELETE FROM {} WHERE 1=0", self.table);
         }
 
         let mut sql = format!("DELETE FROM {}", self.table);
 
-        if !self.where_conditions.is_empty() {
+        if !self.where_builder.is_empty() {
             sql.push_str(" WHERE ");
-            sql.push_str(&self.where_conditions.join(" AND "));
+            sql.push_str(&self.where_builder.build_clause());
         }
 
         if !self.returning_cols.is_empty() {
@@ -128,10 +154,7 @@ impl SqlBuilder for DeleteBuilder {
     }
 
     fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
-        self.params
-            .iter()
-            .map(|v| &**v as &(dyn ToSql + Sync))
-            .collect()
+        self.where_builder.params_ref()
     }
 }
 

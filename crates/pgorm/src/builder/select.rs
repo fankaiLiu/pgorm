@@ -1,4 +1,5 @@
 use super::traits::SqlBuilder;
+use super::where_builder::WhereBuilder;
 use crate::client::GenericClient;
 use crate::error::{OrmError, OrmResult};
 use tokio_postgres::types::ToSql;
@@ -11,23 +12,21 @@ pub struct QueryBuilder {
     select_cols: Vec<String>,
     /// JOIN clauses
     join_clauses: Vec<String>,
-    /// WHERE conditions (without leading AND)
-    where_conditions: Vec<String>,
+    /// WHERE conditions
+    where_builder: WhereBuilder,
     /// ORDER BY clauses
     order_clauses: Vec<String>,
     /// GROUP BY clause
     group_by: Option<String>,
     /// HAVING conditions
     having_conditions: Vec<String>,
+    /// HAVING params
+    having_params: Vec<Box<dyn ToSql + Sync + Send>>,
     /// LIMIT
     limit: Option<i64>,
     /// OFFSET
     offset: Option<i64>,
-    /// Params
-    params: Vec<Box<dyn ToSql + Sync + Send>>,
-    /// Current param counter
-    param_count: usize,
-    /// Build error (validated at runtime)
+    /// Build error (for having mismatch etc.)
     build_error: Option<String>,
 }
 
@@ -38,14 +37,13 @@ impl QueryBuilder {
             table: table.to_string(),
             select_cols: vec!["*".to_string()],
             join_clauses: Vec::new(),
-            where_conditions: Vec::new(),
+            where_builder: WhereBuilder::new(),
             order_clauses: Vec::new(),
             group_by: None,
             having_conditions: Vec::new(),
+            having_params: Vec::new(),
             limit: None,
             offset: None,
-            params: Vec::new(),
-            param_count: 0,
             build_error: None,
         }
     }
@@ -108,26 +106,15 @@ impl QueryBuilder {
         self
     }
 
-    // ==================== Conditions ====================
-
-    fn add_condition<T>(&mut self, sql_template: &str, value: T) -> &mut Self
-    where
-        T: ToSql + Sync + Send + 'static,
-    {
-        self.param_count += 1;
-        let placeholder = format!("${}", self.param_count);
-        let condition = sql_template.replacen('$', &placeholder, 1);
-        self.where_conditions.push(condition);
-        self.params.push(Box::new(value));
-        self
-    }
+    // ==================== Conditions (delegated to WhereBuilder) ====================
 
     /// Add AND equality condition.
     pub fn and_eq<T>(&mut self, col: &str, val: T) -> &mut Self
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} = $", col), val)
+        self.where_builder.and_eq(col, val);
+        self
     }
 
     /// Add AND not-equal condition.
@@ -135,7 +122,8 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} != $", col), val)
+        self.where_builder.and_ne(col, val);
+        self
     }
 
     /// Add AND LIKE condition.
@@ -143,7 +131,8 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} LIKE $", col), val)
+        self.where_builder.and_like(col, val);
+        self
     }
 
     /// Add AND ILIKE condition.
@@ -151,7 +140,8 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} ILIKE $", col), val)
+        self.where_builder.and_ilike(col, val);
+        self
     }
 
     /// Add AND > condition.
@@ -159,7 +149,8 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} > $", col), val)
+        self.where_builder.and_gt(col, val);
+        self
     }
 
     /// Add AND >= condition.
@@ -167,7 +158,8 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} >= $", col), val)
+        self.where_builder.and_gte(col, val);
+        self
     }
 
     /// Add AND < condition.
@@ -175,7 +167,8 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} < $", col), val)
+        self.where_builder.and_lt(col, val);
+        self
     }
 
     /// Add AND <= condition.
@@ -183,18 +176,19 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.add_condition(&format!("{} <= $", col), val)
+        self.where_builder.and_lte(col, val);
+        self
     }
 
     /// Add AND IS NULL condition.
     pub fn and_is_null(&mut self, col: &str) -> &mut Self {
-        self.where_conditions.push(format!("{} IS NULL", col));
+        self.where_builder.and_is_null(col);
         self
     }
 
     /// Add AND IS NOT NULL condition.
     pub fn and_is_not_null(&mut self, col: &str) -> &mut Self {
-        self.where_conditions.push(format!("{} IS NOT NULL", col));
+        self.where_builder.and_is_not_null(col);
         self
     }
 
@@ -203,20 +197,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if values.is_empty() {
-            self.where_conditions.push("1=0".to_string());
-            return self;
-        }
-
-        let mut placeholders = Vec::new();
-        for value in values {
-            self.param_count += 1;
-            placeholders.push(format!("${}", self.param_count));
-            self.params.push(Box::new(value));
-        }
-
-        self.where_conditions
-            .push(format!("{} IN ({})", col, placeholders.join(", ")));
+        self.where_builder.and_in(col, values);
         self
     }
 
@@ -225,22 +206,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if values.is_empty() {
-            return self;
-        }
-
-        let mut placeholders = Vec::new();
-        for value in values {
-            self.param_count += 1;
-            placeholders.push(format!("${}", self.param_count));
-            self.params.push(Box::new(value));
-        }
-
-        self.where_conditions.push(format!(
-            "{} NOT IN ({})",
-            col,
-            placeholders.join(", ")
-        ));
+        self.where_builder.and_not_in(col, values);
         self
     }
 
@@ -249,16 +215,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        self.param_count += 1;
-        let p1 = format!("${}", self.param_count);
-        self.params.push(Box::new(from));
-
-        self.param_count += 1;
-        let p2 = format!("${}", self.param_count);
-        self.params.push(Box::new(to));
-
-        self.where_conditions
-            .push(format!("{} BETWEEN {} AND {}", col, p1, p2));
+        self.where_builder.and_between(col, from, to);
         self
     }
 
@@ -268,7 +225,7 @@ impl QueryBuilder {
     ///
     /// This directly concatenates SQL. The caller must ensure safety.
     pub fn and_raw(&mut self, sql: &str) -> &mut Self {
-        self.where_conditions.push(sql.to_string());
+        self.where_builder.and_raw(sql);
         self
     }
 
@@ -277,26 +234,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        let placeholder_count = sql_template.matches('?').count();
-        if placeholder_count != values.len() {
-            self.build_error = Some(format!(
-                "QueryBuilder param mismatch: template '{}' has {} '?', but {} values provided",
-                sql_template,
-                placeholder_count,
-                values.len()
-            ));
-            // Do NOT modify state if there is a mismatch.
-            return self;
-        }
-
-        let mut final_sql = sql_template.to_string();
-        for v in values {
-            self.param_count += 1;
-            let placeholder = format!("${}", self.param_count);
-            final_sql = final_sql.replacen('?', &placeholder, 1);
-            self.params.push(Box::new(v));
-        }
-        self.where_conditions.push(format!("({})", final_sql));
+        self.where_builder.and_where(sql_template, values);
         self
     }
 
@@ -305,19 +243,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + Clone + 'static,
     {
-        if columns.is_empty() {
-            return self;
-        }
-
-        let mut conditions = Vec::new();
-        for col in columns {
-            self.param_count += 1;
-            conditions.push(format!("{} ILIKE ${}", col, self.param_count));
-            self.params.push(Box::new(pattern.clone()));
-        }
-
-        self.where_conditions
-            .push(format!("({})", conditions.join(" OR ")));
+        self.where_builder.and_multi_ilike(columns, pattern);
         self
     }
 
@@ -327,9 +253,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_eq(col, v);
-        }
+        self.where_builder.and_eq_opt(col, val);
         self
     }
 
@@ -337,9 +261,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_like(col, v);
-        }
+        self.where_builder.and_like_opt(col, val);
         self
     }
 
@@ -347,9 +269,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_ilike(col, v);
-        }
+        self.where_builder.and_ilike_opt(col, val);
         self
     }
 
@@ -357,9 +277,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_gt(col, v);
-        }
+        self.where_builder.and_gt_opt(col, val);
         self
     }
 
@@ -367,9 +285,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_gte(col, v);
-        }
+        self.where_builder.and_gte_opt(col, val);
         self
     }
 
@@ -377,9 +293,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_lt(col, v);
-        }
+        self.where_builder.and_lt_opt(col, val);
         self
     }
 
@@ -387,9 +301,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = val {
-            self.and_lte(col, v);
-        }
+        self.where_builder.and_lte_opt(col, val);
         self
     }
 
@@ -397,9 +309,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + 'static,
     {
-        if let Some(v) = values {
-            self.and_in(col, v);
-        }
+        self.where_builder.and_in_opt(col, values);
         self
     }
 
@@ -407,9 +317,7 @@ impl QueryBuilder {
     where
         T: ToSql + Sync + Send + Clone + 'static,
     {
-        if let Some(p) = pattern {
-            self.and_multi_ilike(columns, p);
-        }
+        self.where_builder.and_multi_ilike_opt(columns, pattern);
         self
     }
 
@@ -439,11 +347,9 @@ impl QueryBuilder {
             return self;
         }
 
-        self.param_count += 1;
-        let placeholder = format!("${}", self.param_count);
-        let condition = sql_template.replacen('?', &placeholder, 1);
-        self.having_conditions.push(condition);
-        self.params.push(Box::new(value));
+        // HAVING params come after WHERE params, we'll handle placeholder numbering in build
+        self.having_conditions.push(sql_template.to_string());
+        self.having_params.push(Box::new(value));
         self
     }
 
@@ -483,9 +389,9 @@ impl QueryBuilder {
             sql.push_str(join);
         }
 
-        if !self.where_conditions.is_empty() {
+        if !self.where_builder.is_empty() {
             sql.push_str(" WHERE ");
-            sql.push_str(&self.where_conditions.join(" AND "));
+            sql.push_str(&self.where_builder.build_clause());
         }
 
         if let Some(ref group) = self.group_by {
@@ -495,7 +401,15 @@ impl QueryBuilder {
 
         if !self.having_conditions.is_empty() {
             sql.push_str(" HAVING ");
-            sql.push_str(&self.having_conditions.join(" AND "));
+            // Build HAVING with correct param numbers (after WHERE params)
+            let mut having_parts = Vec::new();
+            let mut param_idx = self.where_builder.param_count();
+            for template in &self.having_conditions {
+                param_idx += 1;
+                let placeholder = format!("${}", param_idx);
+                having_parts.push(template.replacen('?', &placeholder, 1));
+            }
+            sql.push_str(&having_parts.join(" AND "));
         }
 
         if !is_count {
@@ -526,9 +440,9 @@ impl QueryBuilder {
                 sql.push_str(join);
             }
 
-            if !self.where_conditions.is_empty() {
+            if !self.where_builder.is_empty() {
                 sql.push_str(" WHERE ");
-                sql.push_str(&self.where_conditions.join(" AND "));
+                sql.push_str(&self.where_builder.build_clause());
             }
 
             if let Some(ref group) = self.group_by {
@@ -538,7 +452,14 @@ impl QueryBuilder {
 
             if !self.having_conditions.is_empty() {
                 sql.push_str(" HAVING ");
-                sql.push_str(&self.having_conditions.join(" AND "));
+                let mut having_parts = Vec::new();
+                let mut param_idx = self.where_builder.param_count();
+                for template in &self.having_conditions {
+                    param_idx += 1;
+                    let placeholder = format!("${}", param_idx);
+                    having_parts.push(template.replacen('?', &placeholder, 1));
+                }
+                sql.push_str(&having_parts.join(" AND "));
             }
 
             format!("SELECT COUNT(*) FROM ({}) AS t", sql)
@@ -551,7 +472,8 @@ impl QueryBuilder {
     pub fn build(&self) -> BuiltQuery<'_> {
         BuiltQuery {
             sql: self.build_sql_internal(false),
-            params: &self.params,
+            where_params: self.where_builder.params_ref(),
+            having_params: &self.having_params,
         }
     }
 
@@ -559,7 +481,8 @@ impl QueryBuilder {
     pub fn build_count(&self) -> BuiltQuery<'_> {
         BuiltQuery {
             sql: self.to_count_sql(),
-            params: &self.params,
+            where_params: self.where_builder.params_ref(),
+            having_params: &self.having_params,
         }
     }
 
@@ -579,13 +502,17 @@ impl SqlBuilder for QueryBuilder {
     }
 
     fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
-        self.params
-            .iter()
-            .map(|v| &**v as &(dyn ToSql + Sync))
-            .collect()
+        let mut params = self.where_builder.params_ref();
+        for p in &self.having_params {
+            params.push(&**p as &(dyn ToSql + Sync));
+        }
+        params
     }
 
     fn validate(&self) -> OrmResult<()> {
+        if let Some(err) = self.where_builder.build_error() {
+            return Err(OrmError::Validation(err.to_string()));
+        }
         if let Some(err) = &self.build_error {
             return Err(OrmError::Validation(err.clone()));
         }
@@ -596,7 +523,8 @@ impl SqlBuilder for QueryBuilder {
 /// Built query holding SQL and param references.
 pub struct BuiltQuery<'a> {
     sql: String,
-    params: &'a [Box<dyn ToSql + Sync + Send>],
+    where_params: Vec<&'a (dyn ToSql + Sync)>,
+    having_params: &'a [Box<dyn ToSql + Sync + Send>],
 }
 
 impl BuiltQuery<'_> {
@@ -605,9 +533,10 @@ impl BuiltQuery<'_> {
     }
 
     pub fn params(&self) -> Vec<&(dyn ToSql + Sync)> {
-        self.params
-            .iter()
-            .map(|b| &**b as &(dyn ToSql + Sync))
-            .collect()
+        let mut params = self.where_params.clone();
+        for p in self.having_params {
+            params.push(&**p as &(dyn ToSql + Sync));
+        }
+        params
     }
 }

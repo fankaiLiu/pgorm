@@ -16,6 +16,9 @@ pub mod select;
 pub mod table;
 pub mod traits;
 pub mod update;
+pub mod where_builder;
+
+pub use where_builder::WhereBuilder;
 
 pub use delete::DeleteBuilder;
 pub use insert::InsertBuilder;
