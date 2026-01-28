@@ -116,7 +116,7 @@ SELECT
   c.relname AS table_name,
   c.relkind AS relkind,
   a.attname AS column_name,
-  a.attnum AS ordinal,
+  a.attnum::integer AS ordinal,
   pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
   a.attnotnull AS not_null,
   pg_get_expr(ad.adbin, ad.adrelid) AS default_expr

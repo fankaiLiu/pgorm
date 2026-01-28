@@ -25,6 +25,7 @@ optional = true
 [dev-dependencies]
 tokio.workspace = true
 dotenvy = "0.15"
+colored = "2"
 
 [[example]]
 name = "sql_check"
