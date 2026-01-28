@@ -10,12 +10,14 @@
 //! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
 
 pub mod client;
+pub mod condition;
 pub mod error;
 pub mod query;
 pub mod row;
 pub mod sql;
 
 pub use client::GenericClient;
+pub use condition::{Condition, Op};
 pub use error::{OrmError, OrmResult};
 pub use query::query;
 pub use row::{FromRow, RowExt};

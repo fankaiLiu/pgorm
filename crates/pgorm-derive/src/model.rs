@@ -5,6 +5,16 @@ use quote::{format_ident, quote};
 use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Fields, Result};
 
+/// Query field info for generating the Query struct
+struct QueryFieldInfo {
+    /// The field name in the struct
+    name: syn::Ident,
+    /// The column name in the database
+    column: String,
+    /// Whether this field comes from a joined table (skip in query struct)
+    is_joined: bool,
+}
+
 /// Represents a has_many relationship: Parent has many Children
 struct HasManyRelation {
     /// The related model type (e.g., Review)
@@ -74,10 +84,12 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let mut id_column: Option<String> = None;
     let mut id_field_type: Option<&syn::Type> = None;
     let mut fk_fields: std::collections::HashMap<String, &syn::Type> = std::collections::HashMap::new();
+    let mut query_fields: Vec<QueryFieldInfo> = Vec::new();
 
     for field in fields.iter() {
         let field_name = field.ident.as_ref().unwrap().to_string();
         let field_info = get_field_info(field, &table_name);
+        let is_id = is_id_field(field);
 
         column_names.push(field_info.column.clone());
 
@@ -99,14 +111,27 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         };
         qualified_columns.push(qualified);
 
-        if is_id_field(field) {
+        if is_id {
             id_column = Some(field_info.column.clone());
             id_field_type = Some(&field.ty);
         }
 
         // Track all fields for belongs_to foreign key lookups
-        fk_fields.insert(field_name, &field.ty);
-        fk_fields.insert(field_info.column, &field.ty);
+        fk_fields.insert(field_name.clone(), &field.ty);
+        fk_fields.insert(field_info.column.clone(), &field.ty);
+
+        // Collect query field info
+        // Skip fields that come from a different table (joined tables)
+        let is_joined = match &field_info.table {
+            Some(tbl) => tbl != &table_name, // Different table = joined
+            None => false,                    // No table specified = main table
+        };
+
+        query_fields.push(QueryFieldInfo {
+            name: field.ident.clone().unwrap(),
+            column: field_info.column,
+            is_joined,
+        });
     }
 
     // Build SELECT list based on whether we have JOINs
@@ -295,6 +320,9 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    // Generate Query struct for dynamic queries
+    let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
+
     Ok(quote! {
         impl #name {
             pub const TABLE: &'static str = #table_name;
@@ -318,6 +346,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
             #(#belongs_to_methods)*
         }
+
+        #query_struct
     })
 }
 
@@ -712,5 +742,255 @@ impl syn::parse::Parse for BelongsToAttr {
             foreign_key: fk,
             method_name: name,
         })
+    }
+}
+
+/// Generate the Query struct for dynamic queries
+fn generate_query_struct(
+    model_name: &syn::Ident,
+    table_name: &str,
+    fields: &[QueryFieldInfo],
+    has_joins: bool,
+) -> TokenStream {
+    let query_name = format_ident!("{}Query", model_name);
+
+    // Filter out joined table fields for the query struct
+    let query_fields: Vec<_> = fields.iter().filter(|f| !f.is_joined).collect();
+
+    // Generate column constant for each field
+    let column_consts: Vec<_> = query_fields
+        .iter()
+        .map(|f| {
+            let const_name = format_ident!("{}", f.name.to_string().to_uppercase());
+            let col = &f.column;
+            quote! {
+                pub const #const_name: &'static str = #col;
+            }
+        })
+        .collect();
+
+    // Generate the base SQL depending on whether we have JOINs
+    let base_sql = if has_joins {
+        quote! {
+            format!(
+                "SELECT {} FROM {} {}",
+                #model_name::SELECT_LIST,
+                #model_name::TABLE,
+                #model_name::JOIN_CLAUSE
+            )
+        }
+    } else {
+        quote! {
+            format!(
+                "SELECT {} FROM {}",
+                #model_name::SELECT_LIST,
+                #model_name::TABLE
+            )
+        }
+    };
+
+    quote! {
+        /// Dynamic query builder for #model_name.
+        ///
+        /// Supports flexible filtering with various operators (eq, ne, like, gt, lt, in, etc.)
+        /// and pagination.
+        ///
+        /// # Example
+        /// ```ignore
+        /// use pgorm::Op;
+        ///
+        /// // Simple equality
+        /// let products = Product::query()
+        ///     .and("name", Op::eq("Laptop"))
+        ///     .find(&client).await?;
+        ///
+        /// // LIKE query
+        /// let products = Product::query()
+        ///     .and("name", Op::ilike("%phone%"))
+        ///     .find(&client).await?;
+        ///
+        /// // Range query
+        /// let products = Product::query()
+        ///     .and("price_cents", Op::gte(1000))
+        ///     .and("price_cents", Op::lt(5000))
+        ///     .find(&client).await?;
+        ///
+        /// // IN query
+        /// let products = Product::query()
+        ///     .and("category_id", Op::in_list(vec![1_i64, 2, 3]))
+        ///     .find(&client).await?;
+        ///
+        /// // Pagination
+        /// let products = Product::query()
+        ///     .page(1)
+        ///     .per_page(10)
+        ///     .order_by("created_at DESC")
+        ///     .find(&client).await?;
+        /// ```
+        #[derive(Debug, Clone)]
+        pub struct #query_name {
+            conditions: Vec<pgorm::Condition>,
+            page: Option<i64>,
+            per_page: Option<i64>,
+            order_by: Option<String>,
+        }
+
+        impl #query_name {
+            /// Column name constants
+            #(#column_consts)*
+        }
+
+        impl Default for #query_name {
+            fn default() -> Self {
+                Self {
+                    conditions: Vec::new(),
+                    page: None,
+                    per_page: None,
+                    order_by: None,
+                }
+            }
+        }
+
+        impl #query_name {
+            /// Create a new empty query.
+            pub fn new() -> Self {
+                Self::default()
+            }
+
+            /// Add an AND condition.
+            pub fn and<T>(mut self, column: &str, op: pgorm::Op<T>) -> Self
+            where
+                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+            {
+                self.conditions.push(pgorm::Condition::new(column, op));
+                self
+            }
+
+            /// Add a raw SQL condition (be careful with SQL injection).
+            pub fn and_raw(mut self, sql: &str) -> Self {
+                self.conditions.push(pgorm::Condition::raw(sql));
+                self
+            }
+
+            /// Set the page number (1-based).
+            pub fn page(mut self, page: i64) -> Self {
+                self.page = Some(page);
+                self
+            }
+
+            /// Set the number of items per page.
+            pub fn per_page(mut self, per_page: i64) -> Self {
+                self.per_page = Some(per_page);
+                self
+            }
+
+            /// Set the order by clause.
+            pub fn order_by(mut self, order_by: impl Into<String>) -> Self {
+                self.order_by = Some(order_by.into());
+                self
+            }
+
+            /// Build the WHERE clause and collect parameters.
+            fn build_where(&self) -> (String, Vec<&(dyn tokio_postgres::types::ToSql + Sync)>) {
+                if self.conditions.is_empty() {
+                    return (String::new(), Vec::new());
+                }
+
+                let mut sql_parts: Vec<String> = Vec::new();
+                let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
+                let mut param_idx = 0_usize;
+
+                for cond in &self.conditions {
+                    let (sql, cond_params) = cond.build(&mut param_idx);
+                    sql_parts.push(sql);
+                    params.extend(cond_params);
+                }
+
+                let where_clause = format!(" WHERE {}", sql_parts.join(" AND "));
+                (where_clause, params)
+            }
+
+            /// Execute the query and return matching records.
+            pub async fn find(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Vec<#model_name>>
+            where
+                #model_name: pgorm::FromRow,
+            {
+                let (where_clause, params) = self.build_where();
+                let mut sql = #base_sql;
+                sql.push_str(&where_clause);
+
+                if let Some(ref order) = self.order_by {
+                    sql.push_str(" ORDER BY ");
+                    sql.push_str(order);
+                }
+
+                if let Some(per_page) = self.per_page {
+                    let page = self.page.unwrap_or(1).max(1);
+                    let offset = (page - 1) * per_page;
+                    sql.push_str(&format!(" LIMIT {} OFFSET {}", per_page, offset));
+                }
+
+                let rows = conn.query(&sql, &params).await?;
+                rows.iter().map(pgorm::FromRow::from_row).collect()
+            }
+
+            /// Count the number of matching records.
+            pub async fn count(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<i64> {
+                let (where_clause, params) = self.build_where();
+                let sql = format!("SELECT COUNT(*) FROM {}{}", #table_name, where_clause);
+                let row = conn.query_one(&sql, &params).await?;
+                Ok(row.get(0))
+            }
+
+            /// Execute the query and return the first matching record.
+            pub async fn find_one(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<#model_name>
+            where
+                #model_name: pgorm::FromRow,
+            {
+                let (where_clause, params) = self.build_where();
+                let mut sql = #base_sql;
+                sql.push_str(&where_clause);
+
+                if let Some(ref order) = self.order_by {
+                    sql.push_str(" ORDER BY ");
+                    sql.push_str(order);
+                }
+
+                sql.push_str(" LIMIT 1");
+
+                let row = conn.query_one(&sql, &params).await?;
+                pgorm::FromRow::from_row(&row)
+            }
+
+            /// Execute the query and return the first matching record, or None if not found.
+            pub async fn find_one_opt(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Option<#model_name>>
+            where
+                #model_name: pgorm::FromRow,
+            {
+                let (where_clause, params) = self.build_where();
+                let mut sql = #base_sql;
+                sql.push_str(&where_clause);
+
+                if let Some(ref order) = self.order_by {
+                    sql.push_str(" ORDER BY ");
+                    sql.push_str(order);
+                }
+
+                sql.push_str(" LIMIT 1");
+
+                let row = conn.query_opt(&sql, &params).await?;
+                match row {
+                    Some(r) => Ok(Some(pgorm::FromRow::from_row(&r)?)),
+                    None => Ok(None),
+                }
+            }
+        }
+
+        impl #model_name {
+            /// Create a new query builder for dynamic queries.
+            pub fn query() -> #query_name {
+                #query_name::new()
+            }
+        }
     }
 }
