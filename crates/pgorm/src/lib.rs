@@ -57,8 +57,12 @@ pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};
 // SQL checking and linting
 pub mod check;
 
-// Checked client with auto-registration
+// Checked client with auto-registration (lower-level)
 pub mod checked_client;
+
+// Unified PgClient (recommended)
+#[cfg(feature = "check")]
+pub mod pg_client;
 
 pub use check::{
     ColumnMeta, SchemaIssue, SchemaIssueKind, SchemaIssueLevel, SchemaRegistry, TableMeta,
@@ -68,11 +72,15 @@ pub use check::{
 // Re-export inventory for use by derive macros
 pub use inventory;
 
-// Re-export CheckedClient and related types
-pub use checked_client::{CheckMode, ModelRegistration};
+// Re-export CheckedClient and related types (lower-level API)
+pub use checked_client::ModelRegistration;
 
 #[cfg(feature = "check")]
 pub use checked_client::CheckedClient;
+
+// Re-export PgClient (recommended API)
+#[cfg(feature = "check")]
+pub use pg_client::{CheckMode, PgClient, PgClientConfig};
 
 #[cfg(feature = "check")]
 pub use check::{
