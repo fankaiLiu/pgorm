@@ -478,3 +478,139 @@ mod tests {
         }
     }
 }
+
+/// Check multiple models against a schema registry and return results.
+///
+/// This macro simplifies batch model validation by automatically checking
+/// each model's generated SQL against the registry.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{check_models, SchemaRegistry, Model, FromRow};
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "users")]
+/// struct User { #[orm(id)] id: i64, name: String }
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "orders")]
+/// struct Order { #[orm(id)] id: i64, user_id: i64 }
+///
+/// let registry = SchemaRegistry::new();
+/// // ... register tables ...
+///
+/// // Check all models at once
+/// let results = check_models!(registry, User, Order);
+/// for (name, issues) in &results {
+///     if issues.is_empty() {
+///         println!("✓ {}", name);
+///     } else {
+///         println!("✗ {} ({} issues)", name, issues.len());
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! check_models {
+    ($registry:expr, $($model:ty),+ $(,)?) => {{
+        let mut results: Vec<(&'static str, std::collections::HashMap<&'static str, Vec<$crate::SchemaIssue>>)> = Vec::new();
+        $(
+            results.push((stringify!($model), <$model>::check_schema(&$registry)));
+        )+
+        results
+    }};
+}
+
+/// Check models and panic if any have schema issues.
+///
+/// Useful for startup validation to catch schema mismatches early.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{assert_models_valid, SchemaRegistry, Model, FromRow};
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "users")]
+/// struct User { #[orm(id)] id: i64, name: String }
+///
+/// let registry = SchemaRegistry::new();
+/// // ... register tables ...
+///
+/// // Panics if any model has schema issues
+/// assert_models_valid!(registry, User);
+/// ```
+#[macro_export]
+macro_rules! assert_models_valid {
+    ($registry:expr, $($model:ty),+ $(,)?) => {{
+        let mut all_issues: Vec<(&'static str, Vec<String>)> = Vec::new();
+        $(
+            let issues = <$model>::check_schema(&$registry);
+            if !issues.is_empty() {
+                let messages: Vec<String> = issues
+                    .iter()
+                    .flat_map(|(sql_name, issue_list)| {
+                        issue_list.iter().map(move |i| format!("{}: {}", sql_name, i.message))
+                    })
+                    .collect();
+                all_issues.push((stringify!($model), messages));
+            }
+        )+
+        if !all_issues.is_empty() {
+            let mut msg = String::from("Schema validation failed:\n");
+            for (model, issues) in &all_issues {
+                msg.push_str(&format!("\n{}:\n", model));
+                for issue in issues {
+                    msg.push_str(&format!("  - {}\n", issue));
+                }
+            }
+            panic!("{}", msg);
+        }
+    }};
+}
+
+/// Print schema check results for multiple models.
+///
+/// A convenient macro for debugging and validation output.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{print_model_check, SchemaRegistry, Model, FromRow};
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "users")]
+/// struct User { #[orm(id)] id: i64, name: String }
+///
+/// let registry = SchemaRegistry::new();
+/// // ... register tables ...
+///
+/// // Prints validation results
+/// print_model_check!(registry, User);
+/// // Output:
+/// // Model Schema Validation:
+/// //   ✓ User
+/// ```
+#[macro_export]
+macro_rules! print_model_check {
+    ($registry:expr, $($model:ty),+ $(,)?) => {{
+        println!("Model Schema Validation:");
+        let mut all_valid = true;
+        $(
+            let issues = <$model>::check_schema(&$registry);
+            if issues.is_empty() {
+                println!("  ✓ {}", stringify!($model));
+            } else {
+                all_valid = false;
+                let total: usize = issues.values().map(|v| v.len()).sum();
+                println!("  ✗ {} ({} issues)", stringify!($model), total);
+                for (sql_name, issue_list) in &issues {
+                    for issue in issue_list {
+                        println!("      {}: {:?} - {}", sql_name, issue.kind, issue.message);
+                    }
+                }
+            }
+        )+
+        all_valid
+    }};
+}

@@ -1,14 +1,13 @@
-//! Example demonstrating Model::check_schema() for automatic SQL validation
+//! Example demonstrating Model::check_schema() with macros
 //!
-//! Run with: cargo run --example model_check -p pgorm --features "derive,pool,check"
+//! Run with: cargo run --example model_check -p pgorm --features "derive,check"
 //!
-//! This example shows how to use the auto-generated `generated_sql()` and `check_schema()`
-//! methods to validate that a Model's SQL matches the registered schema.
+//! This example shows how to use macros to simplify schema validation.
 
-use pgorm::{FromRow, Model, SchemaRegistry};
+use pgorm::{assert_models_valid, check_models, print_model_check, FromRow, Model, SchemaRegistry};
 
 // ============================================
-// Define models that match the schema
+// Define models
 // ============================================
 
 #[derive(Debug, FromRow, Model)]
@@ -33,10 +32,7 @@ struct Order {
     status: String,
 }
 
-// ============================================
-// Define a model with WRONG columns (mismatch)
-// ============================================
-
+// Model with wrong columns (for testing)
 #[derive(Debug, FromRow, Model)]
 #[orm(table = "users")]
 #[allow(dead_code)]
@@ -44,15 +40,11 @@ struct UserWithWrongColumns {
     #[orm(id)]
     id: i64,
     name: String,
-    // These columns don't exist in the real schema!
-    phone: String,          // wrong column
-    address: String,        // wrong column
+    phone: String,   // doesn't exist
+    address: String, // doesn't exist
 }
 
-// ============================================
-// Define a model pointing to non-existent table
-// ============================================
-
+// Model with non-existent table
 #[derive(Debug, FromRow, Model)]
 #[orm(table = "nonexistent_table")]
 #[allow(dead_code)]
@@ -63,133 +55,56 @@ struct NonExistentModel {
 }
 
 fn main() {
-    println!("=== Model Schema Check Demo ===\n");
+    println!("=== Model Schema Check with Macros ===\n");
 
-    // Create a registry with the "real" database schema
-    // In production, this would be auto-populated from #[derive(Model)]
-    // Here we manually create it to simulate the "expected" schema
+    // Create registry with correct schema
     let mut registry = SchemaRegistry::new();
-
-    // Register the correct schema for "users" table
     registry.register::<User>();
-    // Register the correct schema for "orders" table
     registry.register::<Order>();
 
-    println!("Registered tables in schema:");
-    for table in registry.tables() {
-        println!(
-            "  - {}: {:?}",
-            table.name,
-            table.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
-        );
-    }
+    // ============================================
+    // Method 1: print_model_check! - prints results
+    // ============================================
+    println!("--- Using print_model_check! ---\n");
+
+    // Check valid models
+    let all_valid = print_model_check!(registry, User, Order);
+    println!("\nAll valid: {}\n", all_valid);
+
+    // Check including invalid models
+    println!("--- Including invalid models ---\n");
+    let all_valid = print_model_check!(registry, User, Order, UserWithWrongColumns, NonExistentModel);
+    println!("\nAll valid: {}\n", all_valid);
 
     // ============================================
-    // Example 1: Check a correct model
+    // Method 2: check_models! - returns results
     // ============================================
-    println!("\n--- Example 1: Correct Model (User) ---");
+    println!("--- Using check_models! ---\n");
 
-    println!("\nUser::generated_sql():");
-    for (name, sql) in User::generated_sql() {
-        println!("  {}: {}", name, sql);
-    }
+    let results = check_models!(registry, User, Order, UserWithWrongColumns);
 
-    let issues = User::check_schema(&registry);
-    if issues.is_empty() {
-        println!("\n✓ User model: All SQL checks passed!");
-    } else {
-        println!("\n✗ User model: Found issues:");
-        for (name, issue_list) in &issues {
-            println!("  {} ({} issues):", name, issue_list.len());
-            for issue in issue_list {
-                println!("    - {:?}: {}", issue.kind, issue.message);
-            }
+    for (name, issues) in &results {
+        if issues.is_empty() {
+            println!("  {} - OK", name);
+        } else {
+            let count: usize = issues.values().map(|v| v.len()).sum();
+            println!("  {} - {} issues", name, count);
         }
     }
 
     // ============================================
-    // Example 2: Check a model with wrong columns
+    // Method 3: assert_models_valid! - panics on error
     // ============================================
-    println!("\n--- Example 2: Model with Wrong Columns ---");
+    println!("\n--- Using assert_models_valid! ---\n");
 
-    println!("\nUserWithWrongColumns::generated_sql():");
-    for (name, sql) in UserWithWrongColumns::generated_sql() {
-        println!("  {}: {}", name, sql);
-    }
+    // This will succeed
+    println!("Checking valid models...");
+    assert_models_valid!(registry, User, Order);
+    println!("✓ Valid models passed!\n");
 
-    let issues = UserWithWrongColumns::check_schema(&registry);
-    if issues.is_empty() {
-        println!("\n✓ UserWithWrongColumns: All SQL checks passed!");
-    } else {
-        println!("\n✗ UserWithWrongColumns: Found issues:");
-        for (name, issue_list) in &issues {
-            println!("  {} ({} issues):", name, issue_list.len());
-            for issue in issue_list {
-                println!("    - {:?}: {}", issue.kind, issue.message);
-            }
-        }
-    }
+    // Uncomment to see panic:
+    // println!("Checking with invalid model (will panic)...");
+    // assert_models_valid!(registry, User, UserWithWrongColumns);
 
-    // ============================================
-    // Example 3: Check a model with non-existent table
-    // ============================================
-    println!("\n--- Example 3: Model with Non-existent Table ---");
-
-    println!("\nNonExistentModel::generated_sql():");
-    for (name, sql) in NonExistentModel::generated_sql() {
-        println!("  {}: {}", name, sql);
-    }
-
-    let issues = NonExistentModel::check_schema(&registry);
-    if issues.is_empty() {
-        println!("\n✓ NonExistentModel: All SQL checks passed!");
-    } else {
-        println!("\n✗ NonExistentModel: Found issues:");
-        for (name, issue_list) in &issues {
-            println!("  {} ({} issues):", name, issue_list.len());
-            for issue in issue_list {
-                println!("    - {:?}: {}", issue.kind, issue.message);
-            }
-        }
-    }
-
-    // ============================================
-    // Example 4: Check all models at startup
-    // ============================================
-    println!("\n--- Example 4: Check All Models at Startup ---");
-
-    fn check_all_models(registry: &SchemaRegistry) -> bool {
-        let mut all_ok = true;
-
-        // Check each model
-        let models: Vec<(&str, std::collections::HashMap<&str, Vec<pgorm::SchemaIssue>>)> = vec![
-            ("User", User::check_schema(registry)),
-            ("Order", Order::check_schema(registry)),
-            ("UserWithWrongColumns", UserWithWrongColumns::check_schema(registry)),
-            ("NonExistentModel", NonExistentModel::check_schema(registry)),
-        ];
-
-        for (model_name, issues) in models {
-            if issues.is_empty() {
-                println!("  ✓ {}", model_name);
-            } else {
-                all_ok = false;
-                let total_issues: usize = issues.values().map(|v| v.len()).sum();
-                println!("  ✗ {} ({} issues)", model_name, total_issues);
-            }
-        }
-
-        all_ok
-    }
-
-    println!("\nModel validation results:");
-    let all_valid = check_all_models(&registry);
-
-    if all_valid {
-        println!("\n✓ All models are valid!");
-    } else {
-        println!("\n✗ Some models have schema issues!");
-    }
-
-    println!("\n=== Done ===");
+    println!("=== Done ===");
 }
