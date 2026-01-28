@@ -37,7 +37,11 @@ async fn main() -> Result<(), OrmError> {
 
     // Setup: Drop and recreate table
     client
-        .execute("DROP TABLE IF EXISTS products", &[])
+        .execute("DROP TABLE IF EXISTS reviews", &[])
+        .await
+        .map_err(OrmError::from_db_error)?;
+    client
+        .execute("DROP TABLE IF EXISTS products CASCADE", &[])
         .await
         .map_err(OrmError::from_db_error)?;
 

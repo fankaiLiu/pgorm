@@ -25,12 +25,31 @@ struct BelongsToRelation {
     method_name: String,
 }
 
+/// Represents a JOIN clause
+struct JoinClause {
+    /// The table to join
+    table: String,
+    /// The ON condition
+    on: String,
+    /// Join type: inner, left, right, full
+    join_type: String,
+}
+
+/// Field info with table source
+struct FieldInfo {
+    /// The table this field comes from (None means main table)
+    table: Option<String>,
+    /// The column name in the database
+    column: String,
+}
+
 pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
 
     let table_name = get_table_name(&input)?;
     let has_many_relations = get_has_many_relations(&input)?;
     let belongs_to_relations = get_belongs_to_relations(&input)?;
+    let join_clauses = get_join_clauses(&input)?;
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
@@ -51,26 +70,69 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
 
     let mut column_names = Vec::new();
+    let mut qualified_columns = Vec::new(); // table.column AS field_name format
     let mut id_column: Option<String> = None;
     let mut id_field_type: Option<&syn::Type> = None;
     let mut fk_fields: std::collections::HashMap<String, &syn::Type> = std::collections::HashMap::new();
 
     for field in fields.iter() {
         let field_name = field.ident.as_ref().unwrap().to_string();
-        let column_name = get_column_name(field);
-        column_names.push(column_name.clone());
+        let field_info = get_field_info(field, &table_name);
+
+        column_names.push(field_info.column.clone());
+
+        // Build qualified column name with alias (table.column AS field_name)
+        let qualified = if let Some(ref tbl) = field_info.table {
+            // If field_name differs from column, use AS alias
+            if field_name != field_info.column {
+                format!("{}.{} AS {}", tbl, field_info.column, field_name)
+            } else {
+                format!("{}.{}", tbl, field_info.column)
+            }
+        } else {
+            // Main table
+            if field_name != field_info.column {
+                format!("{}.{} AS {}", table_name, field_info.column, field_name)
+            } else {
+                format!("{}.{}", table_name, field_info.column)
+            }
+        };
+        qualified_columns.push(qualified);
 
         if is_id_field(field) {
-            id_column = Some(column_name.clone());
+            id_column = Some(field_info.column.clone());
             id_field_type = Some(&field.ty);
         }
 
         // Track all fields for belongs_to foreign key lookups
         fk_fields.insert(field_name, &field.ty);
-        fk_fields.insert(column_name, &field.ty);
+        fk_fields.insert(field_info.column, &field.ty);
     }
 
-    let select_list = column_names.join(", ");
+    // Build SELECT list based on whether we have JOINs
+    let has_joins = !join_clauses.is_empty();
+    let select_list = if has_joins {
+        qualified_columns.join(", ")
+    } else {
+        column_names.join(", ")
+    };
+
+    // Build JOIN clause string
+    let join_sql = join_clauses
+        .iter()
+        .map(|j| {
+            let jt = match j.join_type.to_lowercase().as_str() {
+                "left" => "LEFT JOIN",
+                "right" => "RIGHT JOIN",
+                "full" => "FULL OUTER JOIN",
+                "cross" => "CROSS JOIN",
+                _ => "INNER JOIN",
+            };
+            format!("{} {} ON {}", jt, j.table, j.on)
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
     let id_const = if let Some(id) = &id_column {
         quote! { pub const ID: &'static str = #id; }
     } else {
@@ -81,25 +143,51 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
     // Generate select_one method only if there's an ID field
     let select_one_method = if let (Some(id_col), Some(id_ty)) = (&id_column, id_field_type) {
-        quote! {
-            /// Fetch a single record by its primary key.
-            ///
-            /// Returns `OrmError::NotFound` if no record is found.
-            pub async fn select_one(
-                conn: &impl pgorm::GenericClient,
-                id: #id_ty,
-            ) -> pgorm::OrmResult<Self>
-            where
-                Self: pgorm::FromRow,
-            {
-                let sql = format!(
-                    "SELECT {} FROM {} WHERE {} = $1",
-                    Self::SELECT_LIST,
-                    Self::TABLE,
-                    #id_col
-                );
-                let row = conn.query_one(&sql, &[&id]).await?;
-                pgorm::FromRow::from_row(&row)
+        let id_col_qualified = format!("{}.{}", table_name, id_col);
+        if has_joins {
+            quote! {
+                /// Fetch a single record by its primary key.
+                ///
+                /// Returns `OrmError::NotFound` if no record is found.
+                pub async fn select_one(
+                    conn: &impl pgorm::GenericClient,
+                    id: #id_ty,
+                ) -> pgorm::OrmResult<Self>
+                where
+                    Self: pgorm::FromRow,
+                {
+                    let sql = format!(
+                        "SELECT {} FROM {} {} WHERE {} = $1",
+                        Self::SELECT_LIST,
+                        Self::TABLE,
+                        Self::JOIN_CLAUSE,
+                        #id_col_qualified
+                    );
+                    let row = conn.query_one(&sql, &[&id]).await?;
+                    pgorm::FromRow::from_row(&row)
+                }
+            }
+        } else {
+            quote! {
+                /// Fetch a single record by its primary key.
+                ///
+                /// Returns `OrmError::NotFound` if no record is found.
+                pub async fn select_one(
+                    conn: &impl pgorm::GenericClient,
+                    id: #id_ty,
+                ) -> pgorm::OrmResult<Self>
+                where
+                    Self: pgorm::FromRow,
+                {
+                    let sql = format!(
+                        "SELECT {} FROM {} WHERE {} = $1",
+                        Self::SELECT_LIST,
+                        Self::TABLE,
+                        #id_col
+                    );
+                    let row = conn.query_one(&sql, &[&id]).await?;
+                    pgorm::FromRow::from_row(&row)
+                }
             }
         }
     } else {
@@ -174,20 +262,27 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         })
         .collect();
 
-    Ok(quote! {
-        impl #name {
-            pub const TABLE: &'static str = #table_name;
-            #id_const
-            pub const SELECT_LIST: &'static str = #select_list;
+    // Generate JOIN_CLAUSE constant and modified select_all if joins exist
+    let join_const = if has_joins {
+        quote! { pub const JOIN_CLAUSE: &'static str = #join_sql; }
+    } else {
+        quote! { pub const JOIN_CLAUSE: &'static str = ""; }
+    };
 
-            pub fn select_list_as(alias: &str) -> String {
-                [#(#column_names_for_alias),*]
-                    .iter()
-                    .map(|col| format!("{}.{}", alias, col))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+    let select_all_method = if has_joins {
+        quote! {
+            /// Fetch all records from the table (with JOINs if defined).
+            pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Vec<Self>>
+            where
+                Self: pgorm::FromRow,
+            {
+                let sql = format!("SELECT {} FROM {} {}", Self::SELECT_LIST, Self::TABLE, Self::JOIN_CLAUSE);
+                let rows = conn.query(&sql, &[]).await?;
+                rows.iter().map(pgorm::FromRow::from_row).collect()
             }
-
+        }
+    } else {
+        quote! {
             /// Fetch all records from the table.
             pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Vec<Self>>
             where
@@ -197,6 +292,25 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 let rows = conn.query(&sql, &[]).await?;
                 rows.iter().map(pgorm::FromRow::from_row).collect()
             }
+        }
+    };
+
+    Ok(quote! {
+        impl #name {
+            pub const TABLE: &'static str = #table_name;
+            #id_const
+            pub const SELECT_LIST: &'static str = #select_list;
+            #join_const
+
+            pub fn select_list_as(alias: &str) -> String {
+                [#(#column_names_for_alias),*]
+                    .iter()
+                    .map(|col| format!("{}.{}", alias, col))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+
+            #select_all_method
 
             #select_one_method
 
@@ -229,9 +343,27 @@ fn get_table_name(input: &DeriveInput) -> Result<String> {
     ))
 }
 
-fn get_column_name(field: &syn::Field) -> String {
+/// Get field info including table source and column name
+/// Supports: #[orm(table = "categories", column = "name")]
+fn get_field_info(field: &syn::Field, _default_table: &str) -> FieldInfo {
+    let mut table: Option<String> = None;
+    let mut column: Option<String> = None;
+
     for attr in &field.attrs {
         if attr.path().is_ident("orm") {
+            // Try to parse as a list of key=value pairs
+            if let syn::Meta::List(meta_list) = &attr.meta {
+                let tokens = meta_list.tokens.clone();
+                if let Ok(parsed) = syn::parse2::<FieldAttr>(tokens) {
+                    if parsed.table.is_some() {
+                        table = parsed.table;
+                    }
+                    if parsed.column.is_some() {
+                        column = parsed.column;
+                    }
+                }
+            }
+            // Also try single key=value for backward compatibility
             if let Ok(nested) = attr.parse_args::<syn::MetaNameValue>() {
                 if nested.path.is_ident("column") {
                     if let syn::Expr::Lit(syn::ExprLit {
@@ -239,20 +371,90 @@ fn get_column_name(field: &syn::Field) -> String {
                         ..
                     }) = &nested.value
                     {
-                        return lit.value();
+                        column = Some(lit.value());
+                    }
+                } else if nested.path.is_ident("table") {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(lit),
+                        ..
+                    }) = &nested.value
+                    {
+                        table = Some(lit.value());
                     }
                 }
             }
         }
     }
-    field.ident.as_ref().unwrap().to_string()
+
+    FieldInfo {
+        table,
+        column: column.unwrap_or_else(|| field.ident.as_ref().unwrap().to_string()),
+    }
+}
+
+/// Helper struct for parsing field attributes
+struct FieldAttr {
+    table: Option<String>,
+    column: Option<String>,
+}
+
+impl syn::parse::Parse for FieldAttr {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let mut table = None;
+        let mut column = None;
+
+        // Parse comma-separated key=value pairs or single identifiers
+        loop {
+            if input.is_empty() {
+                break;
+            }
+
+            // Check for 'id' keyword first
+            if input.peek(syn::Ident) {
+                let ident: syn::Ident = input.parse()?;
+                if ident == "id" {
+                    // Skip 'id' marker
+                    if input.peek(syn::Token![,]) {
+                        let _: syn::Token![,] = input.parse()?;
+                    }
+                    continue;
+                }
+                // Otherwise it's a key = value
+                let _: syn::Token![=] = input.parse()?;
+                let value: syn::LitStr = input.parse()?;
+
+                if ident == "table" {
+                    table = Some(value.value());
+                } else if ident == "column" {
+                    column = Some(value.value());
+                }
+            }
+
+            if input.peek(syn::Token![,]) {
+                let _: syn::Token![,] = input.parse()?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(FieldAttr { table, column })
+    }
 }
 
 fn is_id_field(field: &syn::Field) -> bool {
     for attr in &field.attrs {
         if attr.path().is_ident("orm") {
+            // Try simple format: #[orm(id)]
             if let Ok(path) = attr.parse_args::<syn::Path>() {
                 if path.is_ident("id") {
+                    return true;
+                }
+            }
+            // Try list format: #[orm(id, table = "...", column = "...")]
+            if let syn::Meta::List(meta_list) = &attr.meta {
+                let tokens_str = meta_list.tokens.to_string();
+                // Check if 'id' appears as the first token or after a comma
+                if tokens_str.starts_with("id") || tokens_str.contains(", id") || tokens_str.contains(",id") {
                     return true;
                 }
             }
@@ -307,6 +509,91 @@ fn get_belongs_to_relations(input: &DeriveInput) -> Result<Vec<BelongsToRelation
     }
 
     Ok(relations)
+}
+
+/// Parse join clauses from struct attributes.
+/// Example: #[orm(join(table = "categories", on = "products.category_id = categories.id", type = "inner"))]
+fn get_join_clauses(input: &DeriveInput) -> Result<Vec<JoinClause>> {
+    let mut joins = Vec::new();
+
+    for attr in &input.attrs {
+        if attr.path().is_ident("orm") {
+            if let syn::Meta::List(meta_list) = &attr.meta {
+                let tokens = meta_list.tokens.clone();
+                if let Ok(parsed) = syn::parse2::<JoinAttr>(tokens) {
+                    joins.push(JoinClause {
+                        table: parsed.table,
+                        on: parsed.on,
+                        join_type: parsed.join_type,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(joins)
+}
+
+/// Helper struct for parsing join attribute
+struct JoinAttr {
+    table: String,
+    on: String,
+    join_type: String,
+}
+
+impl syn::parse::Parse for JoinAttr {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let ident: syn::Ident = input.parse()?;
+        if ident != "join" {
+            return Err(syn::Error::new(ident.span(), "expected join"));
+        }
+
+        let content;
+        syn::parenthesized!(content in input);
+
+        let mut table: Option<String> = None;
+        let mut on: Option<String> = None;
+        let mut join_type = "inner".to_string();
+
+        // Parse key = value pairs
+        loop {
+            if content.is_empty() {
+                break;
+            }
+
+            let key = syn::Ident::parse_any(&content)?;
+            let _: syn::Token![=] = content.parse()?;
+            let value: syn::LitStr = content.parse()?;
+
+            if key == "table" {
+                table = Some(value.value());
+            } else if key == "on" {
+                on = Some(value.value());
+            } else if key == "type" {
+                join_type = value.value();
+            }
+
+            if content.peek(syn::Token![,]) {
+                let _: syn::Token![,] = content.parse()?;
+            } else {
+                break;
+            }
+        }
+
+        let table = table.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "join requires table = \"...\"")
+        })?;
+
+        let on = on.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "join requires on = \"...\"")
+        })?;
+
+        Ok(JoinAttr {
+            table,
+            on,
+            join_type,
+        })
+    }
 }
 
 /// Helper struct for parsing has_many attribute
