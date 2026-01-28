@@ -32,6 +32,8 @@
 //! assert_eq!(delete_has_where("DELETE FROM users WHERE id = 1"), Some(true));
 //! ```
 
+pub mod client;
+pub mod error;
 pub mod schema_cache;
 pub mod schema_introspect;
 
@@ -41,6 +43,8 @@ pub mod sql_check;
 #[cfg(feature = "sql")]
 pub mod sql_lint;
 
+pub use client::{CheckClient, RowExt};
+pub use error::{CheckError, CheckResult};
 pub use schema_cache::{SchemaCache, SchemaCacheConfig, SchemaCacheLoad};
 pub use schema_introspect::{ColumnInfo, DbSchema, RelationKind, TableInfo};
 

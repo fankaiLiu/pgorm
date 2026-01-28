@@ -1,6 +1,7 @@
+use crate::client::CheckClient;
+use crate::error::{CheckError, CheckResult};
 use crate::schema_introspect::{load_schema_from_db, schema_fingerprint, DbSchema};
 use chrono::{DateTime, Utc};
-use pgorm::{GenericClient, OrmError, OrmResult};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -50,10 +51,10 @@ impl SchemaCache {
         config.cache_dir.join(&config.cache_file_name)
     }
 
-    pub async fn load_or_refresh<C: GenericClient>(
+    pub async fn load_or_refresh<C: CheckClient>(
         client: &C,
         config: &SchemaCacheConfig,
-    ) -> OrmResult<(Self, SchemaCacheLoad)> {
+    ) -> CheckResult<(Self, SchemaCacheLoad)> {
         let cache_path = Self::cache_path(config);
 
         if let Ok(cached) = read_cache_file(&cache_path) {
@@ -79,28 +80,30 @@ impl SchemaCache {
     }
 }
 
-fn read_cache_file(path: &Path) -> OrmResult<SchemaCache> {
+fn read_cache_file(path: &Path) -> CheckResult<SchemaCache> {
     let data = match std::fs::read(path) {
         Ok(d) => d,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(OrmError::Other(e.to_string())),
-        Err(e) => return Err(OrmError::Other(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CheckError::Other(e.to_string()))
+        }
+        Err(e) => return Err(CheckError::Other(e.to_string())),
     };
 
     serde_json::from_slice::<SchemaCache>(&data)
-        .map_err(|e| OrmError::Serialization(format!("Failed to parse schema cache: {e}")))
+        .map_err(|e| CheckError::Serialization(format!("Failed to parse schema cache: {e}")))
 }
 
-fn write_cache_file(path: &Path, cache: &SchemaCache) -> OrmResult<()> {
+fn write_cache_file(path: &Path, cache: &SchemaCache) -> CheckResult<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| OrmError::Other(e.to_string()))?;
+        std::fs::create_dir_all(parent).map_err(|e| CheckError::Other(e.to_string()))?;
     }
 
     let tmp_path = path.with_extension("json.tmp");
     let data = serde_json::to_vec_pretty(cache)
-        .map_err(|e| OrmError::Serialization(format!("Failed to serialize schema cache: {e}")))?;
+        .map_err(|e| CheckError::Serialization(format!("Failed to serialize schema cache: {e}")))?;
 
-    std::fs::write(&tmp_path, data).map_err(|e| OrmError::Other(e.to_string()))?;
-    std::fs::rename(&tmp_path, path).map_err(|e| OrmError::Other(e.to_string()))?;
+    std::fs::write(&tmp_path, data).map_err(|e| CheckError::Other(e.to_string()))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| CheckError::Other(e.to_string()))?;
     Ok(())
 }
 

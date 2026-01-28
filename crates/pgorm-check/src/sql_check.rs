@@ -1,6 +1,7 @@
+use crate::client::CheckClient;
+use crate::error::{CheckError, CheckResult};
 use crate::schema_cache::{SchemaCache, SchemaCacheConfig, SchemaCacheLoad};
 use crate::schema_introspect::DbSchema;
-use pgorm::{GenericClient, OrmError, OrmResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,9 +30,9 @@ pub struct SqlCheckIssue {
     pub location: Option<i32>,
 }
 
-pub fn check_sql(schema: &DbSchema, sql: &str) -> OrmResult<Vec<SqlCheckIssue>> {
+pub fn check_sql(schema: &DbSchema, sql: &str) -> CheckResult<Vec<SqlCheckIssue>> {
     let parsed = pg_query::parse(sql).map_err(|e| {
-        OrmError::Validation(format!("pg_query parse failed: {e}"))
+        CheckError::Validation(format!("pg_query parse failed: {e}"))
     })?;
 
     let mut issues = Vec::<SqlCheckIssue>::new();
@@ -247,11 +248,11 @@ pub fn check_sql(schema: &DbSchema, sql: &str) -> OrmResult<Vec<SqlCheckIssue>> 
     Ok(issues)
 }
 
-pub async fn check_sql_cached<C: GenericClient>(
+pub async fn check_sql_cached<C: CheckClient>(
     client: &C,
     config: &SchemaCacheConfig,
     sql: &str,
-) -> OrmResult<(SchemaCacheLoad, Vec<SqlCheckIssue>)> {
+) -> CheckResult<(SchemaCacheLoad, Vec<SqlCheckIssue>)> {
     let (cache, load) = SchemaCache::load_or_refresh(client, config).await?;
     let issues = check_sql(&cache.schema, sql)?;
     Ok((load, issues))

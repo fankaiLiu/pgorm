@@ -1,4 +1,5 @@
-use pgorm::{GenericClient, OrmError, OrmResult, RowExt};
+use crate::client::{CheckClient, RowExt};
+use crate::error::{CheckError, CheckResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,10 +58,10 @@ impl DbSchema {
     }
 }
 
-pub async fn schema_fingerprint<C: GenericClient>(
+pub async fn schema_fingerprint<C: CheckClient>(
     client: &C,
     schemas: &[String],
-) -> OrmResult<String> {
+) -> CheckResult<String> {
     let row = client
         .query_one(
             r#"
@@ -102,10 +103,10 @@ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
     row.try_get_column::<String>("fingerprint")
 }
 
-pub async fn load_schema_from_db<C: GenericClient>(
+pub async fn load_schema_from_db<C: CheckClient>(
     client: &C,
     schemas: &[String],
-) -> OrmResult<(DbSchema, String)> {
+) -> CheckResult<(DbSchema, String)> {
     let fingerprint = schema_fingerprint(client, schemas).await?;
 
     let rows = client
@@ -148,7 +149,7 @@ ORDER BY n.nspname, c.relname, a.attnum
         let not_null: bool = row.try_get_column("not_null")?;
         let default_expr: Option<String> = row
             .try_get::<_, Option<String>>("default_expr")
-            .map_err(|e| OrmError::decode("default_expr", e.to_string()))?;
+            .map_err(|e| CheckError::decode("default_expr", e.to_string()))?;
 
         let key = (schema_name.clone(), table_name.clone());
 
@@ -171,7 +172,7 @@ ORDER BY n.nspname, c.relname, a.attnum
     let tables = tables.into_values().collect::<Vec<_>>();
 
     if tables.is_empty() {
-        return Err(OrmError::Validation(
+        return Err(CheckError::Validation(
             "No tables found in the selected schemas".to_string(),
         ));
     }

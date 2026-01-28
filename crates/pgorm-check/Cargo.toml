@@ -6,11 +6,11 @@ license.workspace = true
 description = "Runtime SQL vs schema checks for pgorm (with optional local schema cache)"
 
 [dependencies]
-pgorm.workspace = true
 tokio-postgres.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
+async-trait = "0.1"
 
 [features]
 default = []
@@ -26,6 +26,8 @@ optional = true
 tokio.workspace = true
 dotenvy = "0.15"
 colored = "2"
+deadpool-postgres.workspace = true
+async-trait = "0.1"
 
 [[example]]
 name = "sql_check"

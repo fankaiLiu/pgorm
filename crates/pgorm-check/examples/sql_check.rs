@@ -7,19 +7,56 @@
 //! DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
 use colored::Colorize;
-use pgorm::{create_pool, OrmError};
-use pgorm_check::{check_sql_cached, SchemaCache, SchemaCacheConfig, SchemaCacheLoad, SqlCheckLevel, SqlCheckIssueKind};
+use deadpool_postgres::{Config, Runtime};
+use pgorm_check::{
+    check_sql_cached, CheckClient, CheckError, SchemaCache, SchemaCacheConfig, SchemaCacheLoad,
+    SqlCheckIssueKind, SqlCheckLevel,
+};
 use std::{env, path::PathBuf};
+use tokio_postgres::NoTls;
+
+// Implement CheckClient for deadpool's pooled client
+struct PoolClient(deadpool_postgres::Client);
+
+#[async_trait::async_trait]
+impl CheckClient for PoolClient {
+    async fn query(
+        &self,
+        sql: &str,
+        params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> pgorm_check::CheckResult<Vec<tokio_postgres::Row>> {
+        self.0.query(sql, params).await.map_err(CheckError::from)
+    }
+
+    async fn query_one(
+        &self,
+        sql: &str,
+        params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> pgorm_check::CheckResult<tokio_postgres::Row> {
+        self.0.query_one(sql, params).await.map_err(CheckError::from)
+    }
+
+    async fn execute(
+        &self,
+        sql: &str,
+        params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> pgorm_check::CheckResult<u64> {
+        self.0.execute(sql, params).await.map_err(CheckError::from)
+    }
+}
 
 #[tokio::main]
-async fn main() -> Result<(), OrmError> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
 
-    let database_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set in .env or environment variable");
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env or environment variable");
 
-    let pool = create_pool(&database_url)?;
-    let client = pool.get().await?;
+    // Create connection pool
+    let mut cfg = Config::new();
+    cfg.url = Some(database_url);
+    let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
+    let client = PoolClient(pool.get().await?);
 
     // Setup: ensure table exists
     client
@@ -32,8 +69,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 "#,
             &[],
         )
-        .await
-        .map_err(OrmError::from_db_error)?;
+        .await?;
 
     // Cache schema under the current working directory (configurable).
     let mut config = SchemaCacheConfig::default();
@@ -43,7 +79,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     println!(
         "{} {}",
         "Cache path:".dimmed(),
-        SchemaCache::cache_path(&config).display().to_string().cyan()
+        SchemaCache::cache_path(&config)
+            .display()
+            .to_string()
+            .cyan()
     );
     println!();
 

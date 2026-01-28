@@ -689,7 +689,7 @@ dependencies = [
  "chrono",
  "deadpool-postgres",
  "dotenvy",
- "pg_query",
+ "pgorm-check",
  "pgorm-derive",
  "serde",
  "serde_json",
@@ -703,11 +703,12 @@ dependencies = [
 name = "pgorm-check"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "colored",
+ "deadpool-postgres",
  "dotenvy",
  "pg_query",
- "pgorm",
  "serde",
  "serde_json",
  "tokio",
