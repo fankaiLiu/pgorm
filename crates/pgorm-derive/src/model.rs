@@ -2,6 +2,7 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
+use std::collections::HashMap;
 use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Fields, Result};
 
@@ -68,68 +69,88 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     &input,
                     "Model can only be derived for structs with named fields",
-                ))
+                ));
             }
         },
         _ => {
             return Err(syn::Error::new_spanned(
                 &input,
                 "Model can only be derived for structs",
-            ))
+            ));
         }
     };
 
-    let mut column_names = Vec::new();
-    let mut qualified_columns = Vec::new(); // table.column AS field_name format
+    let mut column_names = Vec::with_capacity(fields.len());
+    let mut columns_for_alias = Vec::with_capacity(fields.len());
+    let mut qualified_columns = Vec::with_capacity(fields.len()); // table.column AS field_name format
     let mut id_column: Option<String> = None;
     let mut id_field_type: Option<&syn::Type> = None;
-    let mut fk_fields: std::collections::HashMap<String, &syn::Type> = std::collections::HashMap::new();
-    let mut query_fields: Vec<QueryFieldInfo> = Vec::new();
+    let mut id_field_ident: Option<syn::Ident> = None;
+    let mut fk_field_types: HashMap<String, &syn::Type> = HashMap::with_capacity(fields.len() * 2);
+    let mut fk_field_idents: HashMap<String, syn::Ident> = HashMap::with_capacity(fields.len() * 2);
+    let mut query_fields: Vec<QueryFieldInfo> = Vec::with_capacity(fields.len());
 
     for field in fields.iter() {
-        let field_name = field.ident.as_ref().unwrap().to_string();
+        let field_ident = field.ident.clone().unwrap();
+        let field_name = field_ident.to_string();
         let field_info = get_field_info(field, &table_name);
+        let column_name = field_info.column.clone();
         let is_id = is_id_field(field);
+        let is_main_table = match &field_info.table {
+            Some(tbl) => tbl == &table_name,
+            None => true,
+        };
 
-        column_names.push(field_info.column.clone());
+        column_names.push(column_name.clone());
+        if is_main_table {
+            columns_for_alias.push(column_name.clone());
+        }
 
         // Build qualified column name with alias (table.column AS field_name)
         let qualified = if let Some(ref tbl) = field_info.table {
             // If field_name differs from column, use AS alias
-            if field_name != field_info.column {
-                format!("{}.{} AS {}", tbl, field_info.column, field_name)
+            if field_name != column_name {
+                format!("{}.{} AS {}", tbl, column_name, field_name)
             } else {
-                format!("{}.{}", tbl, field_info.column)
+                format!("{}.{}", tbl, column_name)
             }
         } else {
             // Main table
-            if field_name != field_info.column {
-                format!("{}.{} AS {}", table_name, field_info.column, field_name)
+            if field_name != column_name {
+                format!("{}.{} AS {}", table_name, column_name, field_name)
             } else {
-                format!("{}.{}", table_name, field_info.column)
+                format!("{}.{}", table_name, column_name)
             }
         };
         qualified_columns.push(qualified);
 
         if is_id {
-            id_column = Some(field_info.column.clone());
+            id_column = Some(column_name.clone());
             id_field_type = Some(&field.ty);
+            id_field_ident = Some(field_ident.clone());
         }
 
-        // Track all fields for belongs_to foreign key lookups
-        fk_fields.insert(field_name.clone(), &field.ty);
-        fk_fields.insert(field_info.column.clone(), &field.ty);
+        // Track fields for belongs_to foreign key lookups.
+        //
+        // Only include columns that originate from the model's main table; joined-table fields
+        // are not valid foreign keys for this model.
+        if is_main_table {
+            fk_field_types.insert(field_name.clone(), &field.ty);
+            fk_field_types.insert(column_name.clone(), &field.ty);
+            fk_field_idents.insert(field_name.clone(), field_ident.clone());
+            fk_field_idents.insert(column_name.clone(), field_ident.clone());
+        }
 
         // Collect query field info
         // Skip fields that come from a different table (joined tables)
         let is_joined = match &field_info.table {
             Some(tbl) => tbl != &table_name, // Different table = joined
-            None => false,                    // No table specified = main table
+            None => false,                   // No table specified = main table
         };
 
         query_fields.push(QueryFieldInfo {
-            name: field.ident.clone().unwrap(),
-            column: field_info.column,
+            name: field_ident,
+            column: column_name,
             is_joined,
         });
     }
@@ -163,8 +184,6 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     } else {
         quote! {}
     };
-
-    let column_names_for_alias = column_names.clone();
 
     // Generate select_one method only if there's an ID field
     let select_one_method = if let (Some(id_col), Some(id_ty)) = (&id_column, id_field_type) {
@@ -220,49 +239,50 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Generate has_many methods (requires ID field)
-    let has_many_methods: Vec<TokenStream> = if let Some(id_ty) = id_field_type {
-        has_many_relations
-            .iter()
-            .map(|rel| {
-                let method_name = format_ident!("select_{}", rel.method_name);
-                let related_model = &rel.model;
-                let fk = &rel.foreign_key;
+    let has_many_methods: Vec<TokenStream> =
+        if let (Some(id_ty), Some(id_field)) = (id_field_type, id_field_ident.as_ref()) {
+            has_many_relations
+                .iter()
+                .map(|rel| {
+                    let method_name = format_ident!("select_{}", rel.method_name);
+                    let related_model = &rel.model;
+                    let fk = &rel.foreign_key;
 
-                quote! {
-                    /// Fetch all related records (has_many relationship).
-                    pub async fn #method_name(
-                        &self,
-                        conn: &impl pgorm::GenericClient,
-                    ) -> pgorm::OrmResult<Vec<#related_model>>
-                    where
-                        #related_model: pgorm::FromRow,
-                        #id_ty: tokio_postgres::types::ToSql + Sync,
-                    {
-                        let sql = format!(
-                            "SELECT {} FROM {} WHERE {} = $1",
-                            #related_model::SELECT_LIST,
-                            #related_model::TABLE,
-                            #fk
-                        );
-                        let rows = conn.query(&sql, &[&self.id]).await?;
-                        rows.iter().map(pgorm::FromRow::from_row).collect()
+                    quote! {
+                        /// Fetch all related records (has_many relationship).
+                        pub async fn #method_name(
+                            &self,
+                            conn: &impl pgorm::GenericClient,
+                        ) -> pgorm::OrmResult<Vec<#related_model>>
+                        where
+                            #related_model: pgorm::FromRow,
+                            #id_ty: tokio_postgres::types::ToSql + Sync,
+                        {
+                            let sql = format!(
+                                "SELECT {} FROM {} WHERE {} = $1",
+                                #related_model::SELECT_LIST,
+                                #related_model::TABLE,
+                                #fk
+                            );
+                            let rows = conn.query(&sql, &[&self.#id_field]).await?;
+                            rows.iter().map(pgorm::FromRow::from_row).collect()
+                        }
                     }
-                }
-            })
-            .collect()
-    } else {
-        vec![]
-    };
+                })
+                .collect()
+        } else {
+            vec![]
+        };
 
     // Generate belongs_to methods
     let belongs_to_methods: Vec<TokenStream> = belongs_to_relations
         .iter()
         .filter_map(|rel| {
             // Find the field type for the foreign key
-            let fk_type = fk_fields.get(&rel.foreign_key)?;
+            let fk_type = fk_field_types.get(&rel.foreign_key)?;
+            let fk_field = fk_field_idents.get(&rel.foreign_key)?;
             let method_name = format_ident!("select_{}", rel.method_name);
             let related_model = &rel.model;
-            let fk_field = format_ident!("{}", rel.foreign_key.replace('-', "_"));
 
             Some(quote! {
                 /// Fetch the related parent record (belongs_to relationship).
@@ -331,7 +351,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #join_const
 
             pub fn select_list_as(alias: &str) -> String {
-                [#(#column_names_for_alias),*]
+                [#(#columns_for_alias),*]
                     .iter()
                     .map(|col| format!("{}.{}", alias, col))
                     .collect::<Vec<_>>()
@@ -424,12 +444,14 @@ fn get_field_info(field: &syn::Field, _default_table: &str) -> FieldInfo {
 
 /// Helper struct for parsing field attributes
 struct FieldAttr {
+    is_id: bool,
     table: Option<String>,
     column: Option<String>,
 }
 
 impl syn::parse::Parse for FieldAttr {
     fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let mut is_id = false;
         let mut table = None;
         let mut column = None;
 
@@ -444,6 +466,7 @@ impl syn::parse::Parse for FieldAttr {
                 let ident: syn::Ident = input.parse()?;
                 if ident == "id" {
                     // Skip 'id' marker
+                    is_id = true;
                     if input.peek(syn::Token![,]) {
                         let _: syn::Token![,] = input.parse()?;
                     }
@@ -467,25 +490,23 @@ impl syn::parse::Parse for FieldAttr {
             }
         }
 
-        Ok(FieldAttr { table, column })
+        Ok(FieldAttr {
+            is_id,
+            table,
+            column,
+        })
     }
 }
 
 fn is_id_field(field: &syn::Field) -> bool {
     for attr in &field.attrs {
         if attr.path().is_ident("orm") {
-            // Try simple format: #[orm(id)]
-            if let Ok(path) = attr.parse_args::<syn::Path>() {
-                if path.is_ident("id") {
-                    return true;
-                }
-            }
-            // Try list format: #[orm(id, table = "...", column = "...")]
             if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens_str = meta_list.tokens.to_string();
-                // Check if 'id' appears as the first token or after a comma
-                if tokens_str.starts_with("id") || tokens_str.contains(", id") || tokens_str.contains(",id") {
-                    return true;
+                let tokens = meta_list.tokens.clone();
+                if let Ok(parsed) = syn::parse2::<FieldAttr>(tokens) {
+                    if parsed.is_id {
+                        return true;
+                    }
                 }
             }
         }
@@ -610,13 +631,11 @@ impl syn::parse::Parse for JoinAttr {
             }
         }
 
-        let table = table.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "join requires table = \"...\"")
-        })?;
+        let table = table
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "join requires table = \"...\""))?;
 
-        let on = on.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "join requires on = \"...\"")
-        })?;
+        let on =
+            on.ok_or_else(|| syn::Error::new(Span::call_site(), "join requires on = \"...\""))?;
 
         Ok(JoinAttr {
             table,
@@ -757,15 +776,63 @@ fn generate_query_struct(
     // Filter out joined table fields for the query struct
     let query_fields: Vec<_> = fields.iter().filter(|f| !f.is_joined).collect();
 
-    // Generate column constant for each field (lowercase for Rust convention)
+    // Generate column constants for each field.
+    //
+    // We generate two forms:
+    // - `<field_name>` (lowercase) for ergonomics when it doesn't conflict with methods.
+    // - `COL_<FIELD_NAME>` (uppercase) as a conflict-free fallback.
     let column_consts: Vec<_> = query_fields
         .iter()
         .map(|f| {
-            let const_name = &f.name; // Use field name directly (lowercase)
-            let col = &f.column;
-            quote! {
-                #[allow(non_upper_case_globals)]
-                pub const #const_name: &'static str = #col;
+            let field_ident = &f.name;
+            let field_name = f.name.unraw().to_string();
+            let col = if has_joins && !f.column.contains('.') {
+                format!("{}.{}", table_name, f.column)
+            } else {
+                f.column.clone()
+            };
+
+            let upper_const_name = format_ident!("COL_{}", field_name.to_uppercase());
+            let is_reserved = matches!(
+                field_name.as_str(),
+                "new"
+                    | "eq"
+                    | "ne"
+                    | "gt"
+                    | "gte"
+                    | "lt"
+                    | "lte"
+                    | "like"
+                    | "ilike"
+                    | "not_like"
+                    | "not_ilike"
+                    | "is_null"
+                    | "is_not_null"
+                    | "in_list"
+                    | "not_in"
+                    | "between"
+                    | "not_between"
+                    | "raw"
+                    | "page"
+                    | "per_page"
+                    | "order_by"
+                    | "build_where"
+                    | "find"
+                    | "count"
+                    | "find_one"
+                    | "find_one_opt"
+            );
+
+            if is_reserved {
+                quote! {
+                    pub const #upper_const_name: &'static str = #col;
+                }
+            } else {
+                quote! {
+                    #[allow(non_upper_case_globals)]
+                    pub const #field_ident: &'static str = #col;
+                    pub const #upper_const_name: &'static str = #col;
+                }
             }
         })
         .collect();
@@ -1072,7 +1139,16 @@ fn generate_query_struct(
             /// Count the number of matching records.
             pub async fn count(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<i64> {
                 let (where_clause, params) = self.build_where();
-                let sql = format!("SELECT COUNT(*) FROM {}{}", #table_name, where_clause);
+                let mut sql = if #has_joins {
+                    format!(
+                        "SELECT COUNT(*) FROM {} {}",
+                        #model_name::TABLE,
+                        #model_name::JOIN_CLAUSE
+                    )
+                } else {
+                    format!("SELECT COUNT(*) FROM {}", #model_name::TABLE)
+                };
+                sql.push_str(&where_clause);
                 let row = conn.query_one(&sql, &params).await?;
                 Ok(row.get(0))
             }

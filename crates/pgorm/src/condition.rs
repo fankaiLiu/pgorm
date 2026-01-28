@@ -3,6 +3,7 @@
 //! This module provides `Op` (operator) and `Condition` types for building
 //! flexible WHERE clauses with various comparison operators.
 
+use std::sync::Arc;
 use tokio_postgres::types::ToSql;
 
 /// Query operator for building conditions.
@@ -156,48 +157,22 @@ impl<T> Op<T> {
 }
 
 /// Internal enum to hold boxed values for conditions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ConditionValue {
-    Single(Box<dyn ToSql + Send + Sync>),
-    Pair(Box<dyn ToSql + Send + Sync>, Box<dyn ToSql + Send + Sync>),
-    List(Vec<Box<dyn ToSql + Send + Sync>>),
+    Single(Arc<dyn ToSql + Send + Sync>),
+    Pair(Arc<dyn ToSql + Send + Sync>, Arc<dyn ToSql + Send + Sync>),
+    List(Vec<Arc<dyn ToSql + Send + Sync>>),
     None,
 }
 
-impl Clone for ConditionValue {
-    fn clone(&self) -> Self {
-        // ConditionValue cannot be cloned due to dyn ToSql
-        // We'll handle this in Condition's Clone impl
-        panic!("ConditionValue cannot be cloned directly")
-    }
-}
-
 /// A query condition with column, operator, and values.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Condition {
     column: String,
     operator: &'static str,
     value: ConditionValue,
     is_raw: bool,
     raw_sql: Option<String>,
-}
-
-impl Clone for Condition {
-    fn clone(&self) -> Self {
-        if self.is_raw {
-            Condition {
-                column: self.column.clone(),
-                operator: self.operator,
-                value: ConditionValue::None,
-                is_raw: true,
-                raw_sql: self.raw_sql.clone(),
-            }
-        } else {
-            // For non-raw conditions, we can't clone the boxed values
-            // This is a limitation - conditions with values cannot be cloned
-            panic!("Condition with values cannot be cloned. Use raw conditions or rebuild the query.")
-        }
-    }
 }
 
 impl Condition {
@@ -207,35 +182,35 @@ impl Condition {
         T: ToSql + Send + Sync + 'static,
     {
         let (operator, value) = match op {
-            Op::Eq(v) => ("=", ConditionValue::Single(Box::new(v))),
-            Op::Ne(v) => ("!=", ConditionValue::Single(Box::new(v))),
-            Op::Gt(v) => (">", ConditionValue::Single(Box::new(v))),
-            Op::Gte(v) => (">=", ConditionValue::Single(Box::new(v))),
-            Op::Lt(v) => ("<", ConditionValue::Single(Box::new(v))),
-            Op::Lte(v) => ("<=", ConditionValue::Single(Box::new(v))),
-            Op::Like(v) => ("LIKE", ConditionValue::Single(Box::new(v))),
-            Op::Ilike(v) => ("ILIKE", ConditionValue::Single(Box::new(v))),
-            Op::NotLike(v) => ("NOT LIKE", ConditionValue::Single(Box::new(v))),
-            Op::NotIlike(v) => ("NOT ILIKE", ConditionValue::Single(Box::new(v))),
+            Op::Eq(v) => ("=", ConditionValue::Single(Arc::new(v))),
+            Op::Ne(v) => ("!=", ConditionValue::Single(Arc::new(v))),
+            Op::Gt(v) => (">", ConditionValue::Single(Arc::new(v))),
+            Op::Gte(v) => (">=", ConditionValue::Single(Arc::new(v))),
+            Op::Lt(v) => ("<", ConditionValue::Single(Arc::new(v))),
+            Op::Lte(v) => ("<=", ConditionValue::Single(Arc::new(v))),
+            Op::Like(v) => ("LIKE", ConditionValue::Single(Arc::new(v))),
+            Op::Ilike(v) => ("ILIKE", ConditionValue::Single(Arc::new(v))),
+            Op::NotLike(v) => ("NOT LIKE", ConditionValue::Single(Arc::new(v))),
+            Op::NotIlike(v) => ("NOT ILIKE", ConditionValue::Single(Arc::new(v))),
             Op::IsNull => ("IS NULL", ConditionValue::None),
             Op::IsNotNull => ("IS NOT NULL", ConditionValue::None),
             Op::In(vals) => {
-                let boxed: Vec<Box<dyn ToSql + Send + Sync>> =
-                    vals.into_iter().map(|v| Box::new(v) as _).collect();
-                ("IN", ConditionValue::List(boxed))
+                let values: Vec<Arc<dyn ToSql + Send + Sync>> =
+                    vals.into_iter().map(|v| Arc::new(v) as _).collect();
+                ("IN", ConditionValue::List(values))
             }
             Op::NotIn(vals) => {
-                let boxed: Vec<Box<dyn ToSql + Send + Sync>> =
-                    vals.into_iter().map(|v| Box::new(v) as _).collect();
-                ("NOT IN", ConditionValue::List(boxed))
+                let values: Vec<Arc<dyn ToSql + Send + Sync>> =
+                    vals.into_iter().map(|v| Arc::new(v) as _).collect();
+                ("NOT IN", ConditionValue::List(values))
             }
             Op::Between(from, to) => (
                 "BETWEEN",
-                ConditionValue::Pair(Box::new(from), Box::new(to)),
+                ConditionValue::Pair(Arc::new(from), Arc::new(to)),
             ),
             Op::NotBetween(from, to) => (
                 "NOT BETWEEN",
-                ConditionValue::Pair(Box::new(from), Box::new(to)),
+                ConditionValue::Pair(Arc::new(from), Arc::new(to)),
             ),
         };
 
