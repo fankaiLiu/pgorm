@@ -11,6 +11,7 @@ license = "MIT"
 # Internal crates
 pgorm = { path = "crates/pgorm" }
 pgorm-derive = { path = "crates/pgorm-derive", version = "0.1.0" }
+pgorm-check = { path = "crates/pgorm-check", version = "0.1.0" }
 
 # External dependencies
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }

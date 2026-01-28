@@ -1,0 +1,31 @@
+[package]
+name = "pgorm-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runtime SQL vs schema checks for pgorm (with optional local schema cache)"
+
+[dependencies]
+pgorm.workspace = true
+tokio-postgres.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+[features]
+default = []
+
+# Enable SQL parsing via libpg_query bindings.
+sql = ["dep:pg_query"]
+
+[dependencies.pg_query]
+version = "6.1"
+optional = true
+
+[dev-dependencies]
+tokio.workspace = true
+dotenvy = "0.15"
+
+[[example]]
+name = "sql_check"
+required-features = ["sql"]
