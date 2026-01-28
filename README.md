@@ -4,6 +4,34 @@ A PostgreSQL ORM library for Rust.
 
 > **Note:** This project is under active development and not yet ready for production use.
 
+## Quick start (SQL-first)
+
+`pgorm` is Postgres-only and keeps SQL explicit:
+
+- Use `query()` when you already have a full SQL string with `$1, $2, ...`
+- Use `sql()` when you want to compose SQL dynamically without manually tracking `$n`
+
+```rust
+use pgorm::{query, sql, FromRow};
+
+#[derive(FromRow)]
+struct User {
+    id: i64,
+    username: String,
+}
+
+// Hand-written SQL
+let user: User = query("SELECT id, username FROM users WHERE id = $1")
+    .bind(1_i64)
+    .fetch_one_as(&client)
+    .await?;
+
+// Dynamic SQL composition (placeholders are generated automatically)
+let mut q = sql("SELECT id, username FROM users WHERE 1=1");
+q.push(" AND username ILIKE ").push_bind("%admin%");
+let users: Vec<User> = q.fetch_all_as(&client).await?;
+```
+
 ## Crates
 
 - `pgorm` - Core ORM with connection pooling and query builder

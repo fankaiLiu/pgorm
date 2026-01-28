@@ -4,7 +4,7 @@
 //!
 //! ## Features
 //!
-//! - **SQL explicit**: SQL is a first-class citizen (use `query()` or the optional builders)
+//! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()` or the optional builders)
 //! - **Type-safe mapping**: Row → Struct via `FromRow` trait
 //! - **Minimal magic**: Traits and macros only for boilerplate reduction
 //! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
@@ -13,11 +13,13 @@ pub mod client;
 pub mod error;
 pub mod query;
 pub mod row;
+pub mod sql;
 
 pub use client::GenericClient;
 pub use error::{OrmError, OrmResult};
 pub use query::query;
 pub use row::{FromRow, RowExt};
+pub use sql::{sql, Sql};
 
 #[cfg(feature = "pool")]
 pub mod pool;
