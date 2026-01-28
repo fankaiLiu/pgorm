@@ -146,10 +146,12 @@ struct ProductPatch {
 当未指定 `returning`：
 
 - `insert(self, conn) -> OrmResult<u64>`：返回影响行数（消费 `self`，避免对字段值额外 Clone）
+- `insert_many(conn, rows: Vec<Self>) -> OrmResult<u64>`：批量插入（优先使用 `UNNEST` 单语句批量插入）
 
 当指定 `#[orm(returning = "T")]`：
 
 - `insert_returning(self, conn) -> OrmResult<T>`
+- `insert_many_returning(conn, rows: Vec<Self>) -> OrmResult<Vec<T>>`
 
 可选补充：
 
@@ -167,10 +169,12 @@ struct ProductPatch {
 当未指定 `returning`：
 
 - `update_by_id(self, conn, id: impl ToSql) -> OrmResult<u64>`
+- `update_by_ids(self, conn, ids: Vec<impl ToSql>) -> OrmResult<u64>`：批量更新（同一个 patch 应用于多行）
 
 当指定 `#[orm(returning = "T")]`：
 
 - `update_by_id_returning(self, conn, id: impl ToSql) -> OrmResult<T>`
+- `update_by_ids_returning(self, conn, ids: Vec<impl ToSql>) -> OrmResult<Vec<T>>`
 
 **重要约束**
 
@@ -182,9 +186,21 @@ struct ProductPatch {
 ### 5.3 ViewModel 生成的删除方法
 
 - `delete_by_id(conn, id) -> OrmResult<u64>`
+- `delete_by_ids(conn, ids: Vec<ID>) -> OrmResult<u64>`
 - `delete_by_id_returning(conn, id) -> OrmResult<Self>`（或返回指定类型）
+- `delete_by_ids_returning(conn, ids: Vec<ID>) -> OrmResult<Vec<Self>>`
 
 > `delete_returning` 是否返回“view（含 JOIN）”见下一节 SQL 方案。
+
+### 5.4 InsertModel 的 UPSERT（新增或更新）
+
+当 InsertModel 结构体包含 `#[orm(id)]` 字段时，会额外生成：
+
+- `upsert(self, conn) -> OrmResult<u64>`：`INSERT .. ON CONFLICT (id) DO UPDATE`
+- `upsert_many(conn, rows: Vec<Self>) -> OrmResult<u64>`：批量 UPSERT（`UNNEST` + `ON CONFLICT`）
+- 若配置了 `#[orm(returning = "T")]`：
+  - `upsert_returning(self, conn) -> OrmResult<T>`
+  - `upsert_many_returning(conn, rows: Vec<Self>) -> OrmResult<Vec<T>>`
 
 ---
 

@@ -294,6 +294,49 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    let update_by_ids_method = quote! {
+        /// Update columns by primary key for multiple rows (patch-style).
+        ///
+        /// The same patch is applied to every matched row.
+        pub async fn update_by_ids<I>(
+            self,
+            conn: &impl pgorm::GenericClient,
+            ids: Vec<I>,
+        ) -> pgorm::OrmResult<u64>
+        where
+            I: tokio_postgres::types::ToSql + Sync + Send + 'static,
+        {
+            if ids.is_empty() {
+                return Ok(0);
+            }
+
+            #destructure
+
+            let mut q = pgorm::sql("UPDATE ");
+            q.push(#table_name);
+            q.push(" SET ");
+
+            let mut first = true;
+            #(#set_stmts)*
+
+            if first {
+                return Err(pgorm::OrmError::Validation(
+                    "UpdateModel: no fields to update".to_string(),
+                ));
+            }
+
+            q.push(" WHERE ");
+            q.push(#table_name);
+            q.push(".");
+            q.push(#id_col_expr);
+            q.push(" = ANY(");
+            q.push_bind(ids);
+            q.push(")");
+
+            q.execute(conn).await
+        }
+    };
+
     let update_by_id_returning_method = if let Some(returning_ty) = attrs.returning.as_ref() {
         quote! {
             /// Update columns by primary key and return the updated row mapped as the configured returning type.
@@ -340,6 +383,59 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
                 q.fetch_one_as::<#returning_ty>(conn).await
             }
+
+            /// Update columns by primary key for multiple rows and return updated rows
+            /// mapped as the configured returning type.
+            ///
+            /// The same patch is applied to every matched row.
+            pub async fn update_by_ids_returning<I>(
+                self,
+                conn: &impl pgorm::GenericClient,
+                ids: Vec<I>,
+            ) -> pgorm::OrmResult<Vec<#returning_ty>>
+            where
+                I: tokio_postgres::types::ToSql + Sync + Send + 'static,
+                #returning_ty: pgorm::FromRow,
+            {
+                if ids.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                #destructure
+
+                let mut q = pgorm::Sql::empty();
+                q.push("WITH ");
+                q.push(#table_name);
+                q.push(" AS (UPDATE ");
+                q.push(#table_name);
+                q.push(" SET ");
+
+                let mut first = true;
+                #(#set_stmts)*
+
+                if first {
+                    return Err(pgorm::OrmError::Validation(
+                        "UpdateModel: no fields to update".to_string(),
+                    ));
+                }
+
+                q.push(" WHERE ");
+                q.push(#table_name);
+                q.push(".");
+                q.push(#id_col_expr);
+                q.push(" = ANY(");
+                q.push_bind(ids);
+                q.push(")");
+
+                q.push(" RETURNING *) SELECT ");
+                q.push(#returning_ty::SELECT_LIST);
+                q.push(" FROM ");
+                q.push(#table_name);
+                q.push(" ");
+                q.push(#returning_ty::JOIN_CLAUSE);
+
+                q.fetch_all_as::<#returning_ty>(conn).await
+            }
         }
     } else {
         quote! {}
@@ -350,6 +446,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             pub const TABLE: &'static str = #table_name;
 
             #update_by_id_method
+
+            #update_by_ids_method
 
             #update_by_id_returning_method
         }

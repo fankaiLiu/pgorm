@@ -254,6 +254,25 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 conn.execute(&sql, &[&id]).await
             }
 
+            /// Delete multiple records by their primary keys.
+            ///
+            /// Returns the number of affected rows.
+            pub async fn delete_by_ids(
+                conn: &impl pgorm::GenericClient,
+                ids: Vec<#id_ty>,
+            ) -> pgorm::OrmResult<u64> {
+                if ids.is_empty() {
+                    return Ok(0);
+                }
+
+                let sql = format!(
+                    "DELETE FROM {} WHERE {} = ANY($1)",
+                    Self::TABLE,
+                    #id_col_qualified
+                );
+                conn.execute(&sql, &[&ids]).await
+            }
+
             /// Delete a single record by its primary key and return the deleted row.
             ///
             /// Returns `OrmError::NotFound` if no record is found.
@@ -274,6 +293,30 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 );
                 let row = conn.query_one(&sql, &[&id]).await?;
                 pgorm::FromRow::from_row(&row)
+            }
+
+            /// Delete multiple records by their primary keys and return deleted rows.
+            pub async fn delete_by_ids_returning(
+                conn: &impl pgorm::GenericClient,
+                ids: Vec<#id_ty>,
+            ) -> pgorm::OrmResult<Vec<Self>>
+            where
+                Self: pgorm::FromRow,
+            {
+                if ids.is_empty() {
+                    return Ok(Vec::new());
+                }
+
+                let sql = format!(
+                    "WITH {table} AS (DELETE FROM {table} WHERE {id_qualified} = ANY($1) RETURNING *) \
+        SELECT {} FROM {table} {}",
+                    Self::SELECT_LIST,
+                    Self::JOIN_CLAUSE,
+                    table = Self::TABLE,
+                    id_qualified = #id_col_qualified,
+                );
+                let rows = conn.query(&sql, &[&ids]).await?;
+                rows.iter().map(pgorm::FromRow::from_row).collect()
             }
         }
     } else {
