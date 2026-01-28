@@ -9,10 +9,12 @@
 //! - **Minimal magic**: Traits and macros only for boilerplate reduction
 //! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
 //! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
+//! - **Query monitoring**: Built-in support for timing, logging, and hooking SQL execution
 
 pub mod client;
 pub mod condition;
 pub mod error;
+pub mod monitor;
 pub mod query;
 pub mod row;
 pub mod sql;
@@ -21,6 +23,10 @@ pub mod transaction;
 pub use client::GenericClient;
 pub use condition::{Condition, Op};
 pub use error::{OrmError, OrmResult};
+pub use monitor::{
+    CompositeHook, CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, NoopMonitor,
+    QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType, StatsMonitor,
+};
 pub use query::query;
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Sql, sql};

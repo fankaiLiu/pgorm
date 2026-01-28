@@ -68,6 +68,11 @@ impl OrmError {
         Self::NotFound(message.into())
     }
 
+    /// Create a validation error
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::Validation(message.into())
+    }
+
     /// Check if this is a unique violation error
     pub fn is_unique_violation(&self) -> bool {
         matches!(self, Self::UniqueViolation(_))

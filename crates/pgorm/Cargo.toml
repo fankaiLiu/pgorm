@@ -35,6 +35,12 @@ required-features = ["pool"]
 [[example]]
 name = "dynamic_sql"
 
+[[example]]
+name = "monitor"
+
+[[example]]
+name = "hooks"
+
 [features]
 default = ["pool", "derive", "builder"]
 

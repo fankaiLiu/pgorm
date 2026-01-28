@@ -213,3 +213,24 @@ impl GenericClient for PoolClient {
         GenericClient::execute(&self.0, sql, params).await
     }
 }
+
+// ===== Reference implementations =====
+// These allow InstrumentedClient to wrap &Client instead of owned Client
+
+impl<C: GenericClient> GenericClient for &C {
+    async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+        (*self).query(sql, params).await
+    }
+
+    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+        (*self).query_one(sql, params).await
+    }
+
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        (*self).query_opt(sql, params).await
+    }
+
+    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+        (*self).execute(sql, params).await
+    }
+}
