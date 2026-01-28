@@ -58,7 +58,7 @@ required-features = ["derive", "pool", "check"]
 
 [[example]]
 name = "model_check"
-required-features = ["derive", "check"]
+required-features = ["derive", "pool", "check"]
 
 [[example]]
 name = "comprehensive"

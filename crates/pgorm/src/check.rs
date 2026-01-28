@@ -236,6 +236,8 @@ pub use pgorm_check::{
     DbSchema, SchemaCache, SchemaCacheConfig, SchemaCacheLoad,
     SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel,
     ColumnInfo, RelationKind, TableInfo,
+    // Schema introspection
+    schema_introspect::load_schema_from_db,
 };
 
 // Schema checking with lint features
@@ -612,5 +614,114 @@ macro_rules! print_model_check {
             }
         )+
         all_valid
+    }};
+}
+
+/// Check models against the actual database schema.
+///
+/// This macro loads the schema from the database and checks each model
+/// to ensure its columns match the actual table structure.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{check_models_db, PgClient, Model, FromRow};
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "users")]
+/// struct User { #[orm(id)] id: i64, name: String }
+///
+/// let pg = PgClient::new(client);
+///
+/// // Check models against actual database
+/// let results = check_models_db!(pg, User, Order).await?;
+/// for result in &results {
+///     result.print();
+/// }
+/// ```
+#[macro_export]
+macro_rules! check_models_db {
+    ($client:expr, $($model:ty),+ $(,)?) => {{
+        async {
+            let db_schema = $client.load_db_schema().await?;
+            let mut results: Vec<$crate::ModelCheckResult> = Vec::new();
+            $(
+                results.push($crate::ModelCheckResult::check::<$model>(&db_schema));
+            )+
+            Ok::<_, $crate::OrmError>(results)
+        }
+    }};
+}
+
+/// Check models against database and print results.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{print_models_db_check, PgClient, Model, FromRow};
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "users")]
+/// struct User { #[orm(id)] id: i64, name: String }
+///
+/// let pg = PgClient::new(client);
+///
+/// // Check and print results
+/// let all_valid = print_models_db_check!(pg, User, Order).await?;
+/// ```
+#[macro_export]
+macro_rules! print_models_db_check {
+    ($client:expr, $($model:ty),+ $(,)?) => {{
+        async {
+            let db_schema = $client.load_db_schema().await?;
+            println!("Model Database Validation:");
+            let mut all_valid = true;
+            $(
+                let result = $crate::ModelCheckResult::check::<$model>(&db_schema);
+                if !result.is_valid() {
+                    all_valid = false;
+                }
+                result.print();
+            )+
+            Ok::<_, $crate::OrmError>(all_valid)
+        }
+    }};
+}
+
+/// Assert that all models match the database schema, panic if not.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{assert_models_db_valid, PgClient, Model, FromRow};
+///
+/// #[derive(Debug, FromRow, Model)]
+/// #[orm(table = "users")]
+/// struct User { #[orm(id)] id: i64, name: String }
+///
+/// let pg = PgClient::new(client);
+///
+/// // Panics if any model doesn't match the database
+/// assert_models_db_valid!(pg, User, Order).await?;
+/// ```
+#[macro_export]
+macro_rules! assert_models_db_valid {
+    ($client:expr, $($model:ty),+ $(,)?) => {{
+        async {
+            let db_schema = $client.load_db_schema().await?;
+            let mut errors: Vec<String> = Vec::new();
+            $(
+                let result = $crate::ModelCheckResult::check::<$model>(&db_schema);
+                if !result.table_found {
+                    errors.push(format!("{}: table '{}' not found", result.model, result.table));
+                } else if !result.missing_in_db.is_empty() {
+                    errors.push(format!("{}: missing columns {:?}", result.model, result.missing_in_db));
+                }
+            )+
+            if !errors.is_empty() {
+                panic!("Schema validation failed:\n  {}", errors.join("\n  "));
+            }
+            Ok::<_, $crate::OrmError>(())
+        }
     }};
 }

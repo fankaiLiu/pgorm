@@ -80,7 +80,7 @@ pub use checked_client::CheckedClient;
 
 // Re-export PgClient (recommended API)
 #[cfg(feature = "check")]
-pub use pg_client::{CheckMode, PgClient, PgClientConfig};
+pub use pg_client::{CheckMode, ModelCheckResult, PgClient, PgClientConfig};
 
 #[cfg(feature = "check")]
 pub use check::{
@@ -92,4 +92,6 @@ pub use check::{
     check_sql, check_sql_cached, CheckClient, CheckError, CheckResult, ColumnInfo, DbSchema,
     RelationKind, SchemaCache, SchemaCacheConfig, SchemaCacheLoad, SqlCheckIssue, SqlCheckIssueKind,
     SqlCheckLevel, TableInfo,
+    // Schema introspection
+    load_schema_from_db,
 };

@@ -1,10 +1,14 @@
-//! Example demonstrating Model::check_schema() with macros
+//! Example demonstrating Model schema validation against the database
 //!
-//! Run with: cargo run --example model_check -p pgorm --features "derive,check"
+//! Run with: cargo run --example model_check -p pgorm --features "derive,pool,check"
 //!
-//! This example shows how to use macros to simplify schema validation.
+//! Set DATABASE_URL in .env file or environment variable.
 
-use pgorm::{assert_models_valid, check_models, print_model_check, FromRow, Model, SchemaRegistry};
+use pgorm::{
+    assert_models_db_valid, check_models_db, create_pool, print_models_db_check, FromRow, Model,
+    OrmError, PgClient,
+};
+use std::env;
 
 // ============================================
 // Define models
@@ -18,7 +22,6 @@ struct User {
     id: i64,
     name: String,
     email: String,
-    created_at: String,
 }
 
 #[derive(Debug, FromRow, Model)]
@@ -29,7 +32,6 @@ struct Order {
     id: i64,
     user_id: i64,
     total: i64,
-    status: String,
 }
 
 // Model with wrong columns (for testing)
@@ -40,11 +42,11 @@ struct UserWithWrongColumns {
     #[orm(id)]
     id: i64,
     name: String,
-    phone: String,   // doesn't exist
-    address: String, // doesn't exist
+    phone: String,   // doesn't exist in DB
+    address: String, // doesn't exist in DB
 }
 
-// Model with non-existent table
+// Model pointing to non-existent table
 #[derive(Debug, FromRow, Model)]
 #[orm(table = "nonexistent_table")]
 #[allow(dead_code)]
@@ -54,57 +56,110 @@ struct NonExistentModel {
     data: String,
 }
 
-fn main() {
-    println!("=== Model Schema Check with Macros ===\n");
+#[tokio::main]
+async fn main() -> Result<(), OrmError> {
+    dotenvy::dotenv().ok();
 
-    // Create registry with correct schema
-    let mut registry = SchemaRegistry::new();
-    registry.register::<User>();
-    registry.register::<Order>();
+    let database_url =
+        env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env or environment");
+
+    let pool = create_pool(&database_url)?;
+    let client = pool.get().await?;
+
+    // Create test tables
+    client
+        .execute("DROP TABLE IF EXISTS orders CASCADE", &[])
+        .await
+        .map_err(OrmError::from_db_error)?;
+    client
+        .execute("DROP TABLE IF EXISTS users CASCADE", &[])
+        .await
+        .map_err(OrmError::from_db_error)?;
+
+    client
+        .execute(
+            "CREATE TABLE users (
+                id BIGSERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL
+            )",
+            &[],
+        )
+        .await
+        .map_err(OrmError::from_db_error)?;
+
+    client
+        .execute(
+            "CREATE TABLE orders (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                total BIGINT NOT NULL
+            )",
+            &[],
+        )
+        .await
+        .map_err(OrmError::from_db_error)?;
+
+    println!("=== Model Database Schema Check ===\n");
+
+    // Create PgClient
+    let pg = PgClient::new(&client);
 
     // ============================================
-    // Method 1: print_model_check! - prints results
+    // Method 1: print_models_db_check! - prints results
     // ============================================
-    println!("--- Using print_model_check! ---\n");
+    println!("--- Using print_models_db_check! ---\n");
 
-    // Check valid models
-    let all_valid = print_model_check!(registry, User, Order);
+    let all_valid = print_models_db_check!(pg, User, Order).await?;
     println!("\nAll valid: {}\n", all_valid);
 
-    // Check including invalid models
+    // Check with invalid models
     println!("--- Including invalid models ---\n");
-    let all_valid = print_model_check!(registry, User, Order, UserWithWrongColumns, NonExistentModel);
+    let all_valid = print_models_db_check!(pg, User, Order, UserWithWrongColumns, NonExistentModel).await?;
     println!("\nAll valid: {}\n", all_valid);
 
     // ============================================
-    // Method 2: check_models! - returns results
+    // Method 2: check_models_db! - returns results
     // ============================================
-    println!("--- Using check_models! ---\n");
+    println!("--- Using check_models_db! ---\n");
 
-    let results = check_models!(registry, User, Order, UserWithWrongColumns);
-
-    for (name, issues) in &results {
-        if issues.is_empty() {
-            println!("  {} - OK", name);
+    let results = check_models_db!(pg, User, Order, UserWithWrongColumns).await?;
+    for result in &results {
+        if result.is_valid() {
+            println!("  {} - OK", result.model);
+        } else if !result.table_found {
+            println!("  {} - table not found", result.model);
         } else {
-            let count: usize = issues.values().map(|v| v.len()).sum();
-            println!("  {} - {} issues", name, count);
+            println!("  {} - missing: {:?}", result.model, result.missing_in_db);
         }
     }
 
     // ============================================
-    // Method 3: assert_models_valid! - panics on error
+    // Method 3: Check single model
     // ============================================
-    println!("\n--- Using assert_models_valid! ---\n");
+    println!("\n--- Single model check ---\n");
 
-    // This will succeed
+    let result = pg.check_model::<User>().await?;
+    println!("User model check:");
+    println!("  Table found: {}", result.table_found);
+    println!("  Model columns: {:?}", result.model_columns);
+    println!("  DB columns: {:?}", result.db_columns);
+    println!("  Missing in DB: {:?}", result.missing_in_db);
+    println!("  Extra in DB: {:?}", result.extra_in_db);
+
+    // ============================================
+    // Method 4: assert_models_db_valid!
+    // ============================================
+    println!("\n--- Using assert_models_db_valid! ---\n");
+
     println!("Checking valid models...");
-    assert_models_valid!(registry, User, Order);
+    assert_models_db_valid!(pg, User, Order).await?;
     println!("✓ Valid models passed!\n");
 
     // Uncomment to see panic:
-    // println!("Checking with invalid model (will panic)...");
-    // assert_models_valid!(registry, User, UserWithWrongColumns);
+    // assert_models_db_valid!(pg, User, UserWithWrongColumns).await?;
 
     println!("=== Done ===");
+
+    Ok(())
 }
