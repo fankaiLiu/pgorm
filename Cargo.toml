@@ -27,3 +27,7 @@ tokio = { version = "1", features = ["full"] }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
+
+# CLI / formatting
+colored = "3"
+comfy-table = "7"

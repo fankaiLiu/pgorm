@@ -21,9 +21,11 @@ inventory = "0.3"
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 dotenvy = "0.15"
+colored.workspace = true
+comfy-table.workspace = true
 
 [features]
-default = ["pool", "derive"]
+default = ["pool", "derive", "check"]
 
 pool = ["deadpool-postgres"]
 derive = ["pgorm-derive"]
