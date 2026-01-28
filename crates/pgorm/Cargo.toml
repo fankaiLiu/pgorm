@@ -57,6 +57,10 @@ name = "pg_client"
 required-features = ["derive", "pool", "check"]
 
 [[example]]
+name = "model_check"
+required-features = ["derive", "check"]
+
+[[example]]
 name = "comprehensive"
 required-features = ["derive", "pool", "builder"]
 

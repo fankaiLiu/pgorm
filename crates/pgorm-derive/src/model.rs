@@ -432,6 +432,106 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    // Generate generated_sql method
+    let generated_sql_method = if let Some(id_col) = &id_column {
+        quote! {
+            /// Returns all SQL statements this model generates.
+            ///
+            /// This includes SELECT, DELETE, and relationship queries.
+            /// Useful for schema validation and SQL auditing.
+            pub fn generated_sql() -> Vec<(&'static str, String)> {
+                let mut sqls = Vec::new();
+
+                // select_all
+                let select_all = format!(
+                    "SELECT {} FROM {} {}",
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE
+                ).trim().to_string();
+                sqls.push(("select_all", select_all));
+
+                // select_one (by id)
+                let select_one = format!(
+                    "SELECT {} FROM {} {} WHERE {}.{} = $1",
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE,
+                    Self::TABLE,
+                    #id_col
+                ).trim().to_string();
+                sqls.push(("select_one", select_one));
+
+                // delete_by_id
+                let delete_by_id = format!(
+                    "DELETE FROM {} WHERE {} = $1",
+                    Self::TABLE,
+                    #id_col
+                );
+                sqls.push(("delete_by_id", delete_by_id));
+
+                // delete_by_id_returning
+                let delete_returning = format!(
+                    "WITH {} AS (DELETE FROM {} WHERE {}.{} = $1 RETURNING *) SELECT {} FROM {} {}",
+                    Self::TABLE,
+                    Self::TABLE,
+                    Self::TABLE,
+                    #id_col,
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE
+                ).trim().to_string();
+                sqls.push(("delete_by_id_returning", delete_returning));
+
+                sqls
+            }
+
+            /// Check all generated SQL against the provided registry.
+            ///
+            /// Returns a map of SQL name to issues found.
+            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> std::collections::HashMap<&'static str, Vec<pgorm::SchemaIssue>> {
+                let mut results = std::collections::HashMap::new();
+                for (name, sql) in Self::generated_sql() {
+                    let issues = registry.check_sql(&sql);
+                    if !issues.is_empty() {
+                        results.insert(name, issues);
+                    }
+                }
+                results
+            }
+        }
+    } else {
+        quote! {
+            /// Returns all SQL statements this model generates.
+            pub fn generated_sql() -> Vec<(&'static str, String)> {
+                let mut sqls = Vec::new();
+
+                // select_all (no id, so only this method)
+                let select_all = format!(
+                    "SELECT {} FROM {} {}",
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE
+                ).trim().to_string();
+                sqls.push(("select_all", select_all));
+
+                sqls
+            }
+
+            /// Check all generated SQL against the provided registry.
+            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> std::collections::HashMap<&'static str, Vec<pgorm::SchemaIssue>> {
+                let mut results = std::collections::HashMap::new();
+                for (name, sql) in Self::generated_sql() {
+                    let issues = registry.check_sql(&sql);
+                    if !issues.is_empty() {
+                        results.insert(name, issues);
+                    }
+                }
+                results
+            }
+        }
+    };
+
     // Generate Query struct for dynamic queries
     let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
 
@@ -459,6 +559,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #(#has_many_methods)*
 
             #(#belongs_to_methods)*
+
+            #generated_sql_method
         }
 
         impl pgorm::TableMeta for #name {
