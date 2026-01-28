@@ -757,13 +757,14 @@ fn generate_query_struct(
     // Filter out joined table fields for the query struct
     let query_fields: Vec<_> = fields.iter().filter(|f| !f.is_joined).collect();
 
-    // Generate column constant for each field
+    // Generate column constant for each field (lowercase for Rust convention)
     let column_consts: Vec<_> = query_fields
         .iter()
         .map(|f| {
-            let const_name = format_ident!("{}", f.name.to_string().to_uppercase());
+            let const_name = &f.name; // Use field name directly (lowercase)
             let col = &f.column;
             quote! {
+                #[allow(non_upper_case_globals)]
                 pub const #const_name: &'static str = #col;
             }
         })
@@ -836,7 +837,8 @@ fn generate_query_struct(
         }
 
         impl #query_name {
-            /// Column name constants
+            /// Column name constants for type-safe queries.
+            /// Use these instead of string literals to avoid typos.
             #(#column_consts)*
         }
 

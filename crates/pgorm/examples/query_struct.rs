@@ -285,8 +285,8 @@ async fn main() -> Result<(), OrmError> {
     println!("\n=== Using column constants ===\n");
 
     let using_const = Product::query()
-        .and(ProductQuery::NAME, Op::ilike("%keyboard%".to_string()))
-        .and(ProductQuery::IN_STOCK, Op::eq(false))
+        .and(ProductQuery::name, Op::ilike("%keyboard%".to_string()))
+        .and(ProductQuery::in_stock, Op::eq(false))
         .find(&client)
         .await?;
 
