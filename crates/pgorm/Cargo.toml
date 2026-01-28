@@ -22,56 +22,11 @@ inventory = "0.3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 dotenvy = "0.15"
 
-[[example]]
-name = "basic"
-
-[[example]]
-name = "builder"
-
-[[example]]
-name = "transaction"
-
-[[example]]
-name = "transaction_pool"
-required-features = ["pool"]
-
-[[example]]
-name = "dynamic_sql"
-
-[[example]]
-name = "monitor"
-
-[[example]]
-name = "hooks"
-
-[[example]]
-name = "check"
-required-features = ["check"]
-
-[[example]]
-name = "checked_client"
-required-features = ["derive", "pool", "check"]
-
-[[example]]
-name = "pg_client"
-required-features = ["derive", "pool", "check"]
-
-[[example]]
-name = "model_check"
-required-features = ["derive", "pool", "check"]
-
-[[example]]
-name = "comprehensive"
-required-features = ["derive", "pool", "builder"]
-
 [features]
-default = ["pool", "derive", "builder"]
+default = ["pool", "derive"]
 
 pool = ["deadpool-postgres"]
 derive = ["pgorm-derive"]
-
-# Structured SQL builders (SELECT/INSERT/UPDATE/DELETE)
-builder = []
 
 # SQL schema checking and linting (via pgorm-check)
 check = ["pgorm-check"]

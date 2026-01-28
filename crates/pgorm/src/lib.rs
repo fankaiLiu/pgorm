@@ -4,18 +4,55 @@
 //!
 //! ## Features
 //!
-//! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()` or the optional builders)
+//! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()` or the query builders)
 //! - **Type-safe mapping**: Row → Struct via `FromRow` trait
 //! - **Minimal magic**: Traits and macros only for boilerplate reduction
 //! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
 //! - **Safe defaults**: DELETE requires WHERE, UPDATE requires SET
 //! - **Query monitoring**: Built-in support for timing, logging, and hooking SQL execution
 //! - **SQL checking**: Validate SQL against registered schemas and lint for common issues
+//!
+//! ## Query Builder (qb)
+//!
+//! The `qb` module provides a unified query builder system:
+//!
+//! ```ignore
+//! use pgorm::qb;
+//!
+//! // SELECT
+//! let users = qb::select("users")
+//!     .eq("status", "active")
+//!     .order_by("created_at DESC")
+//!     .limit(10)
+//!     .fetch_all::<User>(&client)
+//!     .await?;
+//!
+//! // INSERT
+//! qb::insert("users")
+//!     .set("username", "alice")
+//!     .set("email", "alice@example.com")
+//!     .execute(&client)
+//!     .await?;
+//!
+//! // UPDATE
+//! qb::update("users")
+//!     .set("status", "inactive")
+//!     .eq("id", user_id)
+//!     .execute(&client)
+//!     .await?;
+//!
+//! // DELETE
+//! qb::delete("users")
+//!     .eq("id", user_id)
+//!     .execute(&client)
+//!     .await?;
+//! ```
 
 pub mod client;
 pub mod condition;
 pub mod error;
 pub mod monitor;
+pub mod qb;
 pub mod query;
 pub mod row;
 pub mod sql;
@@ -33,6 +70,12 @@ pub use query::query;
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Sql, sql};
 
+// Re-export qb module for easy access
+pub use qb::{
+    delete, delete_from, insert, insert_into, select, select_from, update,
+    DeleteQb, Expr, ExprGroup, InsertQb, MutationQb, SelectQb, SqlQb, UpdateQb,
+};
+
 #[cfg(feature = "pool")]
 pub mod pool;
 
@@ -41,15 +84,6 @@ pub use client::PoolClient;
 
 #[cfg(feature = "pool")]
 pub use pool::{create_pool, create_pool_with_config};
-
-#[cfg(feature = "builder")]
-pub mod builder;
-
-#[cfg(feature = "builder")]
-pub use builder::{
-    BuiltQuery, DeleteBuilder, InsertBuilder, MutationBuilder, QueryBuilder, SqlBuilder, Table,
-    UpdateBuilder,
-};
 
 #[cfg(feature = "derive")]
 pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};
