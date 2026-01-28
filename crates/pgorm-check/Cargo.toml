@@ -30,3 +30,7 @@ colored = "2"
 [[example]]
 name = "sql_check"
 required-features = ["sql"]
+
+[[example]]
+name = "sql_lint"
+required-features = ["sql"]
