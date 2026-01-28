@@ -47,6 +47,10 @@ name = "hooks"
 name = "check"
 required-features = ["check"]
 
+[[example]]
+name = "comprehensive"
+required-features = ["derive", "pool", "builder"]
+
 [features]
 default = ["pool", "derive", "builder"]
 
