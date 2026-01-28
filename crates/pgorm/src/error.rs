@@ -49,6 +49,10 @@ pub enum OrmError {
     #[error("Pool error: {0}")]
     Pool(String),
 
+    /// Query timeout error
+    #[error("Query timeout after {0:?}")]
+    Timeout(std::time::Duration),
+
     /// Other errors
     #[error("{0}")]
     Other(String),
@@ -81,6 +85,11 @@ impl OrmError {
     /// Check if this is a not found error
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound(_))
+    }
+
+    /// Check if this is a timeout error
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::Timeout(_))
     }
 
     /// Parse a tokio_postgres error into a more specific OrmError

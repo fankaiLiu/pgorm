@@ -11,10 +11,13 @@
 //! - CompositeMonitor for combining multiple monitors
 //! - Custom monitor implementation
 //! - Slow query detection
+//! - Query timeout configuration
+//! - MonitorConfig for centralized configuration
+//! - Enabling/disabling monitoring at runtime
 
 use pgorm::{
     create_pool, query, CompositeMonitor, FromRow, InstrumentedClient, LoggingMonitor, Model,
-    OrmError, QueryContext, QueryMonitor, QueryResult, StatsMonitor,
+    MonitorConfig, OrmError, QueryContext, QueryMonitor, QueryResult, StatsMonitor,
 };
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -107,7 +110,10 @@ async fn main() -> Result<(), OrmError> {
         .prefix("[SQL]")
         .max_sql_length(80);
 
-    let client = InstrumentedClient::new(&*raw_client).with_monitor(logging_monitor);
+    // Note: monitoring must be explicitly enabled
+    let client = InstrumentedClient::new(&*raw_client)
+        .with_monitor(logging_monitor)
+        .enable_monitoring(); // Must enable monitoring!
 
     // These queries will be logged to stderr
     query("INSERT INTO users (username, email) VALUES ($1, $2) RETURNING *")
@@ -128,7 +134,8 @@ async fn main() -> Result<(), OrmError> {
 
     let stats_monitor = Arc::new(StatsMonitor::new());
     let client = InstrumentedClient::new(&*raw_client)
-        .with_monitor_arc(Arc::clone(&stats_monitor) as Arc<dyn QueryMonitor>);
+        .with_monitor_arc(Arc::clone(&stats_monitor) as Arc<dyn QueryMonitor>)
+        .enable_monitoring();
 
     // Run some queries
     for i in 0..5 {
@@ -174,7 +181,9 @@ async fn main() -> Result<(), OrmError> {
         .add_arc(Arc::clone(&stats) as Arc<dyn QueryMonitor>)
         .add(LoggingMonitor::new().prefix("[COMPOSITE]").max_sql_length(60));
 
-    let client = InstrumentedClient::new(&*raw_client).with_monitor(composite);
+    let client = InstrumentedClient::new(&*raw_client)
+        .with_monitor(composite)
+        .enable_monitoring();
 
     // Run various queries
     let _: Vec<User> = query("SELECT * FROM users").fetch_all_as(&client).await?;
@@ -203,17 +212,22 @@ async fn main() -> Result<(), OrmError> {
     println!("\nStatsMonitor total: {} queries", s.total_queries);
 
     // ============================================
-    // Example 4: Slow query detection
+    // Example 4: Slow query detection with MonitorConfig
     // ============================================
     println!("\n=== Example 4: Slow Query Detection ===\n");
 
+    // Using MonitorConfig for centralized configuration
+    let config = MonitorConfig::new()
+        .with_slow_query_threshold(Duration::from_micros(100))
+        .enable_monitoring();
+
     let client = InstrumentedClient::new(&*raw_client)
+        .with_config(config)
         .with_monitor(
             LoggingMonitor::new()
                 .prefix("[SLOW]")
                 .min_duration(Duration::from_micros(1)), // Very low threshold for demo
-        )
-        .with_slow_query_threshold(Duration::from_micros(100));
+        );
 
     // Run a query (will likely trigger slow query warning)
     let _: Vec<User> = query("SELECT * FROM users ORDER BY id")
@@ -230,7 +244,9 @@ async fn main() -> Result<(), OrmError> {
         .prefix("[SLOW-ONLY]")
         .min_duration(Duration::from_millis(10));
 
-    let client = InstrumentedClient::new(&*raw_client).with_monitor(filtered_monitor);
+    let client = InstrumentedClient::new(&*raw_client)
+        .with_monitor(filtered_monitor)
+        .enable_monitoring();
 
     // Fast query - won't be logged
     let _: Option<User> = query("SELECT * FROM users WHERE id = $1")
@@ -272,9 +288,13 @@ async fn main() -> Result<(), OrmError> {
         }
     }
 
+    let config = MonitorConfig::new()
+        .with_slow_query_threshold(Duration::from_micros(500))
+        .enable_monitoring();
+
     let client = InstrumentedClient::new(&*raw_client)
-        .with_monitor(AlertingMonitor)
-        .with_slow_query_threshold(Duration::from_micros(500));
+        .with_config(config)
+        .with_monitor(AlertingMonitor);
 
     // Run queries
     query("INSERT INTO users (username) VALUES ($1)")
@@ -287,6 +307,85 @@ async fn main() -> Result<(), OrmError> {
     query("DELETE FROM users WHERE username = $1")
         .bind("alert_user")
         .execute(&client)
+        .await?;
+
+    // ============================================
+    // Example 7: Query timeout configuration
+    // ============================================
+    println!("\n=== Example 7: Query Timeout ===\n");
+
+    // Configure a 30 second timeout (default is no timeout)
+    let config = MonitorConfig::new()
+        .with_query_timeout(Duration::from_secs(30))
+        .enable_monitoring();
+
+    let client = InstrumentedClient::new(&*raw_client)
+        .with_config(config)
+        .with_monitor(LoggingMonitor::new().prefix("[TIMEOUT]"));
+
+    // This query should complete well within the timeout
+    let _: Vec<User> = query("SELECT * FROM users").fetch_all_as(&client).await?;
+
+    println!("Query completed within timeout");
+
+    // Example of handling timeout error:
+    // let config_short = MonitorConfig::new()
+    //     .with_query_timeout(Duration::from_millis(1)) // Very short timeout
+    //     .enable_monitoring();
+    // let client = InstrumentedClient::new(&*raw_client).with_config(config_short);
+    // match query("SELECT pg_sleep(1)").execute(&client).await {
+    //     Err(OrmError::Timeout(d)) => println!("Query timed out after {:?}", d),
+    //     Ok(_) => println!("Query completed"),
+    //     Err(e) => println!("Other error: {}", e),
+    // }
+
+    // ============================================
+    // Example 8: Runtime monitoring toggle
+    // ============================================
+    println!("\n=== Example 8: Runtime Monitoring Toggle ===\n");
+
+    // Start with monitoring disabled
+    let mut client = InstrumentedClient::new(&*raw_client)
+        .with_monitor(LoggingMonitor::new().prefix("[TOGGLE]"));
+
+    println!("Monitoring enabled: {}", client.is_monitoring_enabled());
+
+    // Query won't be logged (monitoring disabled)
+    let _: Vec<User> = query("SELECT * FROM users LIMIT 1")
+        .fetch_all_as(&client)
+        .await?;
+    println!("Query 1 executed (no logging - monitoring disabled)");
+
+    // Enable monitoring at runtime
+    client.config_mut().monitoring_enabled = true;
+    println!("Monitoring enabled: {}", client.is_monitoring_enabled());
+
+    // This query WILL be logged
+    let _: Vec<User> = query("SELECT * FROM users LIMIT 1")
+        .fetch_all_as(&client)
+        .await?;
+    println!("Query 2 executed (logged - monitoring enabled)");
+
+    // Disable again
+    client.config_mut().monitoring_enabled = false;
+    let _: Vec<User> = query("SELECT * FROM users LIMIT 1")
+        .fetch_all_as(&client)
+        .await?;
+    println!("Query 3 executed (no logging - monitoring disabled again)");
+
+    // ============================================
+    // Example 9: Using shortcut methods
+    // ============================================
+    println!("\n=== Example 9: Shortcut Methods ===\n");
+
+    // Alternative to MonitorConfig - use shortcut methods directly
+    let client = InstrumentedClient::new(&*raw_client)
+        .with_query_timeout(Duration::from_secs(60))
+        .enable_monitoring()
+        .with_monitor(LoggingMonitor::new().prefix("[SHORTCUT]"));
+
+    let _: Vec<User> = query("SELECT * FROM users LIMIT 3")
+        .fetch_all_as(&client)
         .await?;
 
     println!("\n=== Monitor Examples Complete ===");

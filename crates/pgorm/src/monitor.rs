@@ -4,11 +4,12 @@
 //! - Monitoring SQL execution time
 //! - Hooking into SQL execution lifecycle (before/after execution)
 //! - Logging and metrics collection
+//! - Query timeout with automatic cancellation
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use pgorm::monitor::{QueryMonitor, QueryHook, QueryContext, HookAction, InstrumentedClient};
+//! use pgorm::monitor::{QueryMonitor, QueryHook, QueryContext, HookAction, InstrumentedClient, MonitorConfig};
 //! use std::time::Duration;
 //!
 //! // Simple logging monitor
@@ -21,7 +22,13 @@
 //! }
 //!
 //! // Use with instrumented client
+//! let config = MonitorConfig::new()
+//!     .with_query_timeout(Duration::from_secs(30))
+//!     .with_slow_query_threshold(Duration::from_secs(5))
+//!     .enable_monitoring();
+//!
 //! let client = InstrumentedClient::new(db_client)
+//!     .with_config(config)
 //!     .with_monitor(LoggingMonitor);
 //! ```
 
@@ -437,12 +444,75 @@ impl QueryHook for CompositeHook {
     }
 }
 
+/// Configuration for query monitoring and timeouts.
+///
+/// By default, monitoring is disabled and must be explicitly enabled.
+#[derive(Debug, Clone)]
+pub struct MonitorConfig {
+    /// Query timeout duration. `None` means no timeout (default).
+    pub query_timeout: Option<Duration>,
+    /// Slow query threshold for alerting.
+    pub slow_query_threshold: Option<Duration>,
+    /// Whether monitoring is enabled.
+    pub monitoring_enabled: bool,
+}
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self {
+            query_timeout: None,
+            slow_query_threshold: None,
+            monitoring_enabled: false,
+        }
+    }
+}
+
+impl MonitorConfig {
+    /// Create a new configuration with defaults (monitoring disabled, no timeout).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the query timeout duration.
+    ///
+    /// Queries exceeding this duration will be cancelled and return a timeout error.
+    /// Default is `None` (no timeout).
+    pub fn with_query_timeout(mut self, timeout: Duration) -> Self {
+        self.query_timeout = Some(timeout);
+        self
+    }
+
+    /// Set the slow query threshold.
+    ///
+    /// Queries exceeding this duration will trigger `on_slow_query` callbacks.
+    pub fn with_slow_query_threshold(mut self, threshold: Duration) -> Self {
+        self.slow_query_threshold = Some(threshold);
+        self
+    }
+
+    /// Enable monitoring.
+    ///
+    /// Monitoring must be explicitly enabled for monitors to receive events.
+    pub fn enable_monitoring(mut self) -> Self {
+        self.monitoring_enabled = true;
+        self
+    }
+
+    /// Disable monitoring.
+    pub fn disable_monitoring(mut self) -> Self {
+        self.monitoring_enabled = false;
+        self
+    }
+}
+
 /// An instrumented database client that wraps a `GenericClient` with monitoring.
+///
+/// Monitoring must be explicitly enabled via `MonitorConfig::enable_monitoring()`.
 pub struct InstrumentedClient<C> {
     client: C,
     monitor: Arc<dyn QueryMonitor>,
     hook: Option<Arc<dyn QueryHook>>,
-    slow_query_threshold: Option<Duration>,
+    config: MonitorConfig,
 }
 
 impl<C: GenericClient> InstrumentedClient<C> {
@@ -452,8 +522,14 @@ impl<C: GenericClient> InstrumentedClient<C> {
             client,
             monitor: Arc::new(NoopMonitor),
             hook: None,
-            slow_query_threshold: None,
+            config: MonitorConfig::default(),
         }
+    }
+
+    /// Set the monitor configuration.
+    pub fn with_config(mut self, config: MonitorConfig) -> Self {
+        self.config = config;
+        self
     }
 
     /// Set the query monitor.
@@ -483,9 +559,45 @@ impl<C: GenericClient> InstrumentedClient<C> {
     /// Set the slow query threshold.
     ///
     /// Queries taking longer than this will trigger `on_slow_query`.
+    #[deprecated(since = "0.2.0", note = "Use `with_config(MonitorConfig::new().with_slow_query_threshold(...))` instead")]
     pub fn with_slow_query_threshold(mut self, threshold: Duration) -> Self {
-        self.slow_query_threshold = Some(threshold);
+        self.config.slow_query_threshold = Some(threshold);
         self
+    }
+
+    /// Set the query timeout.
+    ///
+    /// Queries exceeding this duration will be cancelled.
+    pub fn with_query_timeout(mut self, timeout: Duration) -> Self {
+        self.config.query_timeout = Some(timeout);
+        self
+    }
+
+    /// Enable monitoring.
+    pub fn enable_monitoring(mut self) -> Self {
+        self.config.monitoring_enabled = true;
+        self
+    }
+
+    /// Disable monitoring.
+    pub fn disable_monitoring(mut self) -> Self {
+        self.config.monitoring_enabled = false;
+        self
+    }
+
+    /// Check if monitoring is enabled.
+    pub fn is_monitoring_enabled(&self) -> bool {
+        self.config.monitoring_enabled
+    }
+
+    /// Get the current configuration.
+    pub fn config(&self) -> &MonitorConfig {
+        &self.config
+    }
+
+    /// Get a mutable reference to the configuration.
+    pub fn config_mut(&mut self) -> &mut MonitorConfig {
+        &mut self.config
     }
 
     /// Get a reference to the inner client.
@@ -514,16 +626,34 @@ impl<C: GenericClient> InstrumentedClient<C> {
     }
 
     fn report_result(&self, ctx: &QueryContext, duration: Duration, result: &QueryResult) {
+        if !self.config.monitoring_enabled {
+            return;
+        }
+
         if let Some(hook) = &self.hook {
             hook.after_query(ctx, duration, result);
         }
 
         self.monitor.on_query_complete(ctx, duration, result);
 
-        if let Some(threshold) = self.slow_query_threshold {
+        if let Some(threshold) = self.config.slow_query_threshold {
             if duration > threshold {
                 self.monitor.on_slow_query(ctx, duration);
             }
+        }
+    }
+
+    async fn execute_with_timeout<T, F>(&self, future: F) -> OrmResult<T>
+    where
+        F: std::future::Future<Output = OrmResult<T>>,
+    {
+        match self.config.query_timeout {
+            Some(timeout) => {
+                tokio::time::timeout(timeout, future)
+                    .await
+                    .map_err(|_| OrmError::Timeout(timeout))?
+            }
+            None => future.await,
         }
     }
 }
@@ -531,17 +661,23 @@ impl<C: GenericClient> InstrumentedClient<C> {
 impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
     async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
         let ctx = QueryContext::new(sql, params.len());
-        self.monitor.on_query_start(&ctx);
+
+        if self.config.monitoring_enabled {
+            self.monitor.on_query_start(&ctx);
+        }
 
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
         let start = Instant::now();
-        let result = self.client.query(effective_sql, params).await;
+        let result = self
+            .execute_with_timeout(self.client.query(effective_sql, params))
+            .await;
         let duration = start.elapsed();
 
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 
@@ -551,18 +687,24 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
 
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         let ctx = QueryContext::new(sql, params.len());
-        self.monitor.on_query_start(&ctx);
+
+        if self.config.monitoring_enabled {
+            self.monitor.on_query_start(&ctx);
+        }
 
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
         let start = Instant::now();
-        let result = self.client.query_one(effective_sql, params).await;
+        let result = self
+            .execute_with_timeout(self.client.query_one(effective_sql, params))
+            .await;
         let duration = start.elapsed();
 
         let query_result = match &result {
             Ok(_) => QueryResult::OptionalRow(true),
             Err(OrmError::NotFound { .. }) => QueryResult::OptionalRow(false),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 
@@ -572,18 +714,24 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
 
     async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
         let ctx = QueryContext::new(sql, params.len());
-        self.monitor.on_query_start(&ctx);
+
+        if self.config.monitoring_enabled {
+            self.monitor.on_query_start(&ctx);
+        }
 
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
         let start = Instant::now();
-        let result = self.client.query_opt(effective_sql, params).await;
+        let result = self
+            .execute_with_timeout(self.client.query_opt(effective_sql, params))
+            .await;
         let duration = start.elapsed();
 
         let query_result = match &result {
             Ok(Some(_)) => QueryResult::OptionalRow(true),
             Ok(None) => QueryResult::OptionalRow(false),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 
@@ -593,17 +741,23 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
 
     async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
         let ctx = QueryContext::new(sql, params.len());
-        self.monitor.on_query_start(&ctx);
+
+        if self.config.monitoring_enabled {
+            self.monitor.on_query_start(&ctx);
+        }
 
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
         let start = Instant::now();
-        let result = self.client.execute(effective_sql, params).await;
+        let result = self
+            .execute_with_timeout(self.client.execute(effective_sql, params))
+            .await;
         let duration = start.elapsed();
 
         let query_result = match &result {
             Ok(n) => QueryResult::Affected(*n),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 

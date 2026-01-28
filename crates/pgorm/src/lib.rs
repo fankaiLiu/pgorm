@@ -24,8 +24,9 @@ pub use client::GenericClient;
 pub use condition::{Condition, Op};
 pub use error::{OrmError, OrmResult};
 pub use monitor::{
-    CompositeHook, CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, NoopMonitor,
-    QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType, StatsMonitor,
+    CompositeHook, CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig,
+    NoopMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType,
+    StatsMonitor,
 };
 pub use query::query;
 pub use row::{FromRow, PgType, RowExt};
