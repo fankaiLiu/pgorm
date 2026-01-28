@@ -17,6 +17,19 @@ pgorm-derive = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true
+dotenvy = "0.15"
+
+[[example]]
+name = "basic"
+
+[[example]]
+name = "builder"
+
+[[example]]
+name = "transaction"
+
+[[example]]
+name = "dynamic_sql"
 
 [features]
 default = ["pool", "derive", "builder"]
