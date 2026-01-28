@@ -20,7 +20,7 @@ pub use client::GenericClient;
 pub use condition::{Condition, Op};
 pub use error::{OrmError, OrmResult};
 pub use query::query;
-pub use row::{FromRow, RowExt};
+pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Sql, sql};
 
 #[cfg(feature = "pool")]

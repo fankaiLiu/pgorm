@@ -3,6 +3,111 @@
 use crate::error::OrmResult;
 use tokio_postgres::Row;
 
+/// Trait that maps Rust types to PostgreSQL type names for UNNEST casts.
+///
+/// This is used by derive macros to generate correct type casts in batch operations.
+pub trait PgType {
+    /// Returns the PostgreSQL array type name (e.g., "text[]", "bigint[]")
+    fn pg_array_type() -> &'static str;
+}
+
+// Primitive type implementations
+impl PgType for i16 {
+    fn pg_array_type() -> &'static str {
+        "smallint[]"
+    }
+}
+
+impl PgType for i32 {
+    fn pg_array_type() -> &'static str {
+        "integer[]"
+    }
+}
+
+impl PgType for i64 {
+    fn pg_array_type() -> &'static str {
+        "bigint[]"
+    }
+}
+
+impl PgType for f32 {
+    fn pg_array_type() -> &'static str {
+        "real[]"
+    }
+}
+
+impl PgType for f64 {
+    fn pg_array_type() -> &'static str {
+        "double precision[]"
+    }
+}
+
+impl PgType for bool {
+    fn pg_array_type() -> &'static str {
+        "boolean[]"
+    }
+}
+
+impl PgType for String {
+    fn pg_array_type() -> &'static str {
+        "text[]"
+    }
+}
+
+impl PgType for &str {
+    fn pg_array_type() -> &'static str {
+        "text[]"
+    }
+}
+
+impl PgType for Vec<u8> {
+    fn pg_array_type() -> &'static str {
+        "bytea[]"
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl PgType for uuid::Uuid {
+    fn pg_array_type() -> &'static str {
+        "uuid[]"
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl PgType for chrono::NaiveDate {
+    fn pg_array_type() -> &'static str {
+        "date[]"
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl PgType for chrono::NaiveTime {
+    fn pg_array_type() -> &'static str {
+        "time[]"
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl PgType for chrono::NaiveDateTime {
+    fn pg_array_type() -> &'static str {
+        "timestamp[]"
+    }
+}
+
+#[cfg(feature = "chrono")]
+impl<Tz: chrono::TimeZone> PgType for chrono::DateTime<Tz> {
+    fn pg_array_type() -> &'static str {
+        "timestamptz[]"
+    }
+}
+
+// Option<T> delegates to inner type
+impl<T: PgType> PgType for Option<T> {
+    fn pg_array_type() -> &'static str {
+        T::pg_array_type()
+    }
+}
+
 /// Trait for converting a database row into a Rust struct.
 ///
 /// This trait should typically be derived using `#[derive(FromRow)]`

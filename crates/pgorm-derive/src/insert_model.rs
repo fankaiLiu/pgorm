@@ -251,14 +251,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     } else {
         let batch_columns: Vec<String> = batch_bind_fields.iter().map(|f| f.column.clone()).collect();
-        let placeholders: Vec<String> = (1..=batch_bind_fields.len()).map(|i| format!("${}", i)).collect();
-        let batch_insert_sql = format!(
-            "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
-            table_name,
-            batch_columns.join(", "),
-            placeholders.join(", ")
-        );
-
+        let batch_columns_str = batch_columns.join(", ");
         let list_idents: Vec<syn::Ident> = batch_bind_fields
             .iter()
             .map(|f| format_ident!("__pgorm_insert_{}_list", f.ident))
@@ -280,8 +273,18 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             .map(|(list_ident, field_ident)| quote! { #list_ident.push(#field_ident); })
             .collect();
 
+        // Generate type casts using PgType trait at runtime
+        let type_cast_exprs: Vec<TokenStream> = field_tys
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| {
+                let idx = i + 1;
+                quote! { format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
+            })
+            .collect();
+
         let bind_lists_expr = list_idents.iter().fold(
-            quote! { pgorm::query(#batch_insert_sql) },
+            quote! { pgorm::query(&sql) },
             |acc, list_ident| quote! { #acc.bind(#list_ident) },
         );
 
@@ -301,6 +304,14 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     let Self { #(#field_idents),*, .. } = row;
                     #(#push_lists)*
                 }
+
+                let type_casts: Vec<String> = vec![#(#type_cast_exprs),*];
+                let sql = format!(
+                    "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
+                    #table_name,
+                    #batch_columns_str,
+                    type_casts.join(", ")
+                );
 
                 #bind_lists_expr.execute(conn).await
             }
@@ -328,15 +339,6 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
         let upsert_sql = format!(
             "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}",
-            table_name,
-            upsert_columns.join(", "),
-            placeholders.join(", "),
-            id_col,
-            update_assignments.join(", ")
-        );
-
-        let upsert_batch_sql = format!(
-            "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
             table_name,
             upsert_columns.join(", "),
             placeholders.join(", "),
@@ -380,10 +382,23 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             .map(|(list_ident, field_ident)| quote! { #list_ident.push(#field_ident); })
             .collect();
 
+        // Generate type casts for upsert batch using PgType trait
+        let upsert_type_cast_exprs: Vec<TokenStream> = upsert_batch_field_tys
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| {
+                let idx = i + 1;
+                quote! { format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
+            })
+            .collect();
+
         let upsert_many_query_expr = upsert_batch_list_idents.iter().fold(
-            quote! { pgorm::query(#upsert_batch_sql) },
+            quote! { pgorm::query(&upsert_batch_sql) },
             |acc, list_ident| quote! { #acc.bind(#list_ident) },
         );
+
+        let upsert_columns_str = upsert_columns.join(", ");
+        let update_assignments_str = update_assignments.join(", ");
 
         let upsert_many_method = quote! {
             /// Insert or update multiple rows using a single statement (UNNEST + ON CONFLICT).
@@ -401,6 +416,16 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     let Self { #(#upsert_bind_idents),*, .. } = row;
                     #(#upsert_batch_push_lists)*
                 }
+
+                let type_casts: Vec<String> = vec![#(#upsert_type_cast_exprs),*];
+                let upsert_batch_sql = format!(
+                    "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
+                    #table_name,
+                    #upsert_columns_str,
+                    type_casts.join(", "),
+                    #id_col,
+                    #update_assignments_str
+                );
 
                 #upsert_many_query_expr.execute(conn).await
             }
@@ -455,12 +480,22 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         #(#upsert_batch_push_lists)*
                     }
 
+                    let type_casts: Vec<String> = vec![#(#upsert_type_cast_exprs),*];
+                    let upsert_batch_sql = format!(
+                        "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
+                        #table_name,
+                        #upsert_columns_str,
+                        type_casts.join(", "),
+                        #id_col,
+                        #update_assignments_str
+                    );
+
                     let sql = format!(
                         "WITH {table} AS ({upsert} RETURNING *) SELECT {} FROM {table} {}",
                         #returning_ty::SELECT_LIST,
                         #returning_ty::JOIN_CLAUSE,
                         table = #table_name,
-                        upsert = #upsert_batch_sql,
+                        upsert = upsert_batch_sql,
                     );
 
                     #upsert_many_returning_query_expr.fetch_all_as::<#returning_ty>(conn).await
@@ -513,15 +548,6 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         } else {
             let batch_columns: Vec<String> =
                 batch_bind_fields.iter().map(|f| f.column.clone()).collect();
-            let placeholders: Vec<String> = (1..=batch_bind_fields.len())
-                .map(|i| format!("${}", i))
-                .collect();
-            let batch_insert_sql = format!(
-                "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
-                table_name,
-                batch_columns.join(", "),
-                placeholders.join(", ")
-            );
 
             let list_idents: Vec<syn::Ident> = batch_bind_fields
                 .iter()
@@ -546,9 +572,21 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 .collect();
 
             let batch_returning_query_expr = list_idents.iter().fold(
-                quote! { pgorm::query(sql) },
+                quote! { pgorm::query(&sql) },
                 |acc, list_ident| quote! { #acc.bind(#list_ident) },
             );
+
+            // Generate type casts for batch insert returning using PgType trait
+            let batch_type_cast_exprs: Vec<TokenStream> = field_tys
+                .iter()
+                .enumerate()
+                .map(|(i, ty)| {
+                    let idx = i + 1;
+                    quote! { format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
+                })
+                .collect();
+
+            let batch_columns_str = batch_columns.join(", ");
 
             quote! {
                 /// Insert multiple rows and return created rows mapped as the configured returning type.
@@ -570,12 +608,20 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         #(#push_lists)*
                     }
 
+                    let type_casts: Vec<String> = vec![#(#batch_type_cast_exprs),*];
+                    let batch_insert_sql = format!(
+                        "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
+                        #table_name,
+                        #batch_columns_str,
+                        type_casts.join(", ")
+                    );
+
                     let sql = format!(
                         "WITH {table} AS ({insert} RETURNING *) SELECT {} FROM {table} {}",
                         #returning_ty::SELECT_LIST,
                         #returning_ty::JOIN_CLAUSE,
                         table = #table_name,
-                        insert = #batch_insert_sql,
+                        insert = batch_insert_sql,
                     );
 
                     #batch_returning_query_expr.fetch_all_as::<#returning_ty>(conn).await
