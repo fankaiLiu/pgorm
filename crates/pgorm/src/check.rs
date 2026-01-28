@@ -227,9 +227,9 @@ pub struct SchemaIssue {
 #[cfg(feature = "check")]
 pub use pgorm_check::{
     // Lint types
-    LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
+    ColumnRef, LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
     // Lint functions
-    delete_has_where, detect_statement_kind, get_table_names, is_valid_sql,
+    delete_has_where, detect_statement_kind, get_column_refs, get_table_names, is_valid_sql,
     lint_select_many, lint_sql, select_has_limit, select_has_star, update_has_where,
     // Schema check from database
     check_sql, check_sql_cached, CheckClient, CheckError, CheckResult,
@@ -242,6 +242,10 @@ pub use pgorm_check::{
 #[cfg(feature = "check")]
 impl SchemaRegistry {
     /// Check SQL against this registry's schema.
+    ///
+    /// Validates:
+    /// - Tables referenced in the SQL exist in the registry
+    /// - Columns referenced in the SQL exist in the appropriate tables
     pub fn check_sql(&self, sql: &str) -> Vec<SchemaIssue> {
         let mut issues = Vec::new();
 
@@ -259,8 +263,11 @@ impl SchemaRegistry {
             return issues;
         }
 
-        // Get referenced tables
+        // Get referenced tables and build a map of qualifier -> table
         let tables = get_table_names(sql);
+        let mut qualifier_to_table: std::collections::HashMap<String, &TableSchema> =
+            std::collections::HashMap::new();
+        let mut visible_tables: Vec<&TableSchema> = Vec::new();
 
         for table_ref in &tables {
             // Handle schema.table format
@@ -271,14 +278,61 @@ impl SchemaRegistry {
                 ("public", table_ref.as_str())
             };
 
-            if !self.has_table(schema, table_name) {
-                // Try to find in any schema
-                if self.find_table(table_name).is_none() {
-                    issues.push(SchemaIssue {
-                        level: SchemaIssueLevel::Error,
-                        kind: SchemaIssueKind::MissingTable,
-                        message: format!("Table not found in registry: {}", table_ref),
-                    });
+            if let Some(table) = self.get_table(schema, table_name) {
+                qualifier_to_table.insert(table_name.to_string(), table);
+                visible_tables.push(table);
+            } else if let Some(table) = self.find_table(table_name) {
+                qualifier_to_table.insert(table_name.to_string(), table);
+                visible_tables.push(table);
+            } else {
+                issues.push(SchemaIssue {
+                    level: SchemaIssueLevel::Error,
+                    kind: SchemaIssueKind::MissingTable,
+                    message: format!("Table not found in registry: {}", table_ref),
+                });
+            }
+        }
+
+        // Check column references
+        let column_refs = get_column_refs(sql);
+        for col_ref in &column_refs {
+            match &col_ref.qualifier {
+                Some(qualifier) => {
+                    // Qualified column reference: qualifier.column
+                    if let Some(table) = qualifier_to_table.get(qualifier) {
+                        if !table.has_column(&col_ref.column) {
+                            issues.push(SchemaIssue {
+                                level: SchemaIssueLevel::Error,
+                                kind: SchemaIssueKind::MissingColumn,
+                                message: format!(
+                                    "Column not found: {}.{} (table '{}' has columns: {:?})",
+                                    qualifier,
+                                    col_ref.column,
+                                    table.name,
+                                    table.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
+                                ),
+                            });
+                        }
+                    }
+                    // If qualifier not found, it's either an alias we didn't track or unknown
+                }
+                None => {
+                    // Unqualified column reference - must exist in one of the visible tables
+                    let matches: Vec<_> = visible_tables
+                        .iter()
+                        .filter(|t| t.has_column(&col_ref.column))
+                        .collect();
+
+                    if matches.is_empty() && !visible_tables.is_empty() {
+                        issues.push(SchemaIssue {
+                            level: SchemaIssueLevel::Error,
+                            kind: SchemaIssueKind::MissingColumn,
+                            message: format!(
+                                "Column not found: {} (not in any of the referenced tables)",
+                                col_ref.column
+                            ),
+                        });
+                    }
                 }
             }
         }

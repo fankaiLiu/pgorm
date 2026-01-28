@@ -90,6 +90,13 @@ async fn main() -> Result<(), OrmError> {
         "   Registered {} tables automatically",
         pg.registry().len()
     );
+    for table in pg.registry().tables() {
+        println!(
+            "   - Table '{}': columns = {:?}",
+            table.name,
+            table.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+    }
 
     // Insert some data
     query("INSERT INTO products (name, price_cents, in_stock) VALUES ($1, $2, $3)")
@@ -112,58 +119,125 @@ async fn main() -> Result<(), OrmError> {
 
     // Get statistics
     let stats = pg.stats();
-    println!("   Stats: {} queries, {:?} total time", stats.total_queries, stats.total_duration);
-
-    // ============================================
-    // Example 2: With logging enabled
-    // ============================================
-    println!("\n2. With logging enabled:");
-
-    let pg_logged = PgClient::with_config(
-        &client,
-        PgClientConfig::new().with_logging(),
+    println!(
+        "   Stats: {} queries, {:?} total time",
+        stats.total_queries, stats.total_duration
     );
 
-    println!("   Running query (will be logged to stderr):");
-    let _ = Product::select_all(&pg_logged).await?;
-
     // ============================================
-    // Example 3: Strict mode
+    // Example 2: Schema mismatch detection - Missing Table
     // ============================================
-    println!("\n3. Strict mode:");
+    println!("\n2. Schema mismatch detection - Missing Table:");
 
     let pg_strict = PgClient::with_config(&client, PgClientConfig::new().strict());
 
-    // Valid query works
-    let products = Product::select_all(&pg_strict).await?;
-    println!("   Valid query succeeded: {} products", products.len());
-
-    // Invalid query returns error
-    println!("   Querying unregistered table:");
-    let result = query("SELECT * FROM nonexistent").fetch_all(&pg_strict).await;
+    println!("   Querying non-existent table 'orders':");
+    let result = query("SELECT id, total FROM orders").fetch_all(&pg_strict).await;
     match result {
         Ok(_) => println!("   Query succeeded (unexpected!)"),
         Err(OrmError::Validation(msg)) => println!("   Validation error: {}", msg),
-        Err(e) => println!("   Other error: {}", e),
+        Err(e) => println!("   DB error: {}", e),
     }
 
     // ============================================
-    // Example 4: With timeout
+    // Example 3: Schema mismatch detection - Missing Column
     // ============================================
-    println!("\n4. With timeout:");
+    println!("\n3. Schema mismatch detection - Missing Column:");
 
-    let pg_timeout = PgClient::with_config(
-        &client,
-        PgClientConfig::new().timeout(Duration::from_secs(5)),
-    );
+    println!("   Querying non-existent column 'description' from products:");
+    let result = query("SELECT id, name, description FROM products")
+        .fetch_all(&pg_strict)
+        .await;
+    match result {
+        Ok(_) => println!("   Query succeeded (unexpected!)"),
+        Err(OrmError::Validation(msg)) => println!("   Validation error: {}", msg),
+        Err(e) => println!("   DB error: {}", e),
+    }
 
-    let products = Product::select_all(&pg_timeout).await?;
-    println!("   Query with timeout succeeded: {} products", products.len());
+    println!("\n   Querying non-existent column with table qualifier:");
+    let result = query("SELECT products.id, products.nonexistent_column FROM products")
+        .fetch_all(&pg_strict)
+        .await;
+    match result {
+        Ok(_) => println!("   Query succeeded (unexpected!)"),
+        Err(OrmError::Validation(msg)) => println!("   Validation error: {}", msg),
+        Err(e) => println!("   DB error: {}", e),
+    }
 
     // ============================================
-    // Example 5: Full configuration
+    // Example 4: Valid queries pass
     // ============================================
-    println!("\n5. Full configuration:");
+    println!("\n4. Valid queries pass:");
+
+    println!("   Querying existing columns:");
+    let result = query("SELECT id, name, price_cents FROM products")
+        .fetch_all(&pg_strict)
+        .await;
+    match result {
+        Ok(rows) => println!("   Query succeeded: {} rows", rows.len()),
+        Err(e) => println!("   Error: {}", e),
+    }
+
+    println!("\n   Querying with table qualifier:");
+    let result = query("SELECT products.id, products.name FROM products")
+        .fetch_all(&pg_strict)
+        .await;
+    match result {
+        Ok(rows) => println!("   Query succeeded: {} rows", rows.len()),
+        Err(e) => println!("   Error: {}", e),
+    }
+
+    // ============================================
+    // Example 5: WarnOnly mode (logs but doesn't block)
+    // ============================================
+    println!("\n5. WarnOnly mode (logs but doesn't block):");
+
+    let pg_warn = PgClient::with_config(&client, PgClientConfig::new());
+    println!("   Querying with invalid column (check mode = WarnOnly):");
+    println!("   (Watch stderr for warning messages)");
+
+    // This will print a warning but still try to execute
+    let result = query("SELECT id, nonexistent FROM products")
+        .fetch_all(&pg_warn)
+        .await;
+    match result {
+        Ok(_) => println!("   Query was attempted (passed validation)"),
+        Err(e) => println!("   DB error (as expected): {}", e),
+    }
+
+    // ============================================
+    // Example 6: Direct registry access for checking
+    // ============================================
+    println!("\n6. Direct registry access:");
+
+    let registry = pg.registry();
+
+    let test_queries = [
+        ("SELECT id, name FROM products", "valid"),
+        ("SELECT id, email FROM products", "invalid column 'email'"),
+        ("SELECT * FROM products JOIN categories ON true", "valid JOIN"),
+        (
+            "SELECT products.id, categories.id FROM products, categories",
+            "valid multi-table",
+        ),
+    ];
+
+    for (sql, desc) in test_queries {
+        let issues = registry.check_sql(sql);
+        println!("   Check '{}' ({}):", desc, sql);
+        if issues.is_empty() {
+            println!("     OK - no issues");
+        } else {
+            for issue in &issues {
+                println!("     {:?}: {}", issue.kind, issue.message);
+            }
+        }
+    }
+
+    // ============================================
+    // Example 7: Full configuration
+    // ============================================
+    println!("\n7. Full configuration:");
 
     let pg_full = PgClient::with_config(
         &client,
@@ -186,18 +260,6 @@ async fn main() -> Result<(), OrmError> {
     println!("     Total duration: {:?}", stats.total_duration);
     println!("     SELECT count: {}", stats.select_count);
     println!("     Max duration: {:?}", stats.max_duration);
-
-    // ============================================
-    // Example 6: Comparing with raw client
-    // ============================================
-    println!("\n6. Comparison - PgClient vs raw client:");
-    println!("   PgClient provides:");
-    println!("   - Auto model registration");
-    println!("   - SQL validation");
-    println!("   - Query statistics");
-    println!("   - Timeout handling");
-    println!("   - Slow query logging");
-    println!("   All in one unified interface!");
 
     println!("\n=== Done ===");
 

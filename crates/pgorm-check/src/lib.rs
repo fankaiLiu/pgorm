@@ -55,7 +55,7 @@ pub use sql_check::{
 
 #[cfg(feature = "sql")]
 pub use sql_lint::{
-    LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
-    delete_has_where, detect_statement_kind, get_table_names, is_valid_sql,
+    ColumnRef, LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
+    delete_has_where, detect_statement_kind, get_column_refs, get_table_names, is_valid_sql,
     lint_select_many, lint_sql, select_has_limit, select_has_star, update_has_where,
 };

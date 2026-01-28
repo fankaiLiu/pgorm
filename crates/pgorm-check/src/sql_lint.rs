@@ -466,6 +466,81 @@ pub fn lint_select_many(sql: &str) -> LintResult {
     result
 }
 
+/// Column reference extracted from SQL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnRef {
+    /// Table qualifier (alias or table name), if present.
+    pub qualifier: Option<String>,
+    /// Column name.
+    pub column: String,
+}
+
+/// Get all column references from a SQL query.
+///
+/// Returns a list of (qualifier, column) pairs. The qualifier is the table alias
+/// or table name if specified, or None for unqualified column references.
+///
+/// # Example
+/// ```
+/// use pgorm_check::get_column_refs;
+///
+/// let cols = get_column_refs("SELECT id, u.name FROM users u WHERE u.status = 'active'");
+/// assert!(cols.iter().any(|c| c.column == "id" && c.qualifier.is_none()));
+/// assert!(cols.iter().any(|c| c.column == "name" && c.qualifier == Some("u".to_string())));
+/// assert!(cols.iter().any(|c| c.column == "status" && c.qualifier == Some("u".to_string())));
+/// ```
+pub fn get_column_refs(sql: &str) -> Vec<ColumnRef> {
+    let mut columns = Vec::new();
+
+    let Ok(parsed) = pg_query::parse(sql) else {
+        return columns;
+    };
+
+    for (node, _depth, _context, _has_filter_columns) in parsed.protobuf.nodes() {
+        if let pg_query::NodeRef::ColumnRef(c) = node {
+            let mut parts: Vec<String> = Vec::new();
+            let mut has_star = false;
+
+            for f in &c.fields {
+                match f.node.as_ref() {
+                    Some(pg_query::NodeEnum::String(s)) => parts.push(s.sval.clone()),
+                    Some(pg_query::NodeEnum::AStar(_)) => has_star = true,
+                    _ => {}
+                }
+            }
+
+            // Skip SELECT * or table.*
+            if has_star || parts.is_empty() {
+                continue;
+            }
+
+            let col_ref = match parts.len() {
+                1 => ColumnRef {
+                    qualifier: None,
+                    column: parts[0].clone(),
+                },
+                2 => ColumnRef {
+                    qualifier: Some(parts[0].clone()),
+                    column: parts[1].clone(),
+                },
+                3 => ColumnRef {
+                    // schema.table.column -> qualifier = table
+                    qualifier: Some(parts[1].clone()),
+                    column: parts[2].clone(),
+                },
+                _ => continue,
+            };
+
+            // Avoid duplicates
+            if !columns.contains(&col_ref) {
+                columns.push(col_ref);
+            }
+        }
+    }
+
+    columns
+}
+
 /// Extract error location from pg_query error message.
 fn extract_error_location(error: &str) -> Option<usize> {
     // Format: "... at position N" or similar

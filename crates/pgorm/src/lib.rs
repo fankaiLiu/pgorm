@@ -85,12 +85,11 @@ pub use pg_client::{CheckMode, PgClient, PgClientConfig};
 #[cfg(feature = "check")]
 pub use check::{
     // Lint types and functions
-    delete_has_where, detect_statement_kind, get_table_names, is_valid_sql, lint_select_many,
-    lint_sql, select_has_limit, select_has_star, update_has_where, LintIssue, LintLevel,
-    LintResult, ParseResult, StatementKind,
+    ColumnRef, delete_has_where, detect_statement_kind, get_column_refs, get_table_names,
+    is_valid_sql, lint_select_many, lint_sql, select_has_limit, select_has_star, update_has_where,
+    LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
     // Database schema check
-    check_sql, check_sql_cached, CheckClient, CheckError, CheckResult,
-    DbSchema, SchemaCache, SchemaCacheConfig, SchemaCacheLoad,
-    SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel,
-    ColumnInfo, RelationKind, TableInfo,
+    check_sql, check_sql_cached, CheckClient, CheckError, CheckResult, ColumnInfo, DbSchema,
+    RelationKind, SchemaCache, SchemaCacheConfig, SchemaCacheLoad, SqlCheckIssue, SqlCheckIssueKind,
+    SqlCheckLevel, TableInfo,
 };
