@@ -66,6 +66,18 @@ impl PgType for Vec<u8> {
     }
 }
 
+impl PgType for serde_json::Value {
+    fn pg_array_type() -> &'static str {
+        "jsonb[]"
+    }
+}
+
+impl<T> PgType for tokio_postgres::types::Json<T> {
+    fn pg_array_type() -> &'static str {
+        "jsonb[]"
+    }
+}
+
 impl PgType for uuid::Uuid {
     fn pg_array_type() -> &'static str {
         "uuid[]"

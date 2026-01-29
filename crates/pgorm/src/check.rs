@@ -119,10 +119,12 @@ impl TableSchema {
 /// Registry for table schemas.
 ///
 /// Use this to register all your model tables and then check SQL against them.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SchemaRegistry {
     /// Map of (schema, table) -> TableSchema
     tables: HashMap<(String, String), TableSchema>,
+    #[cfg(feature = "check")]
+    parse_cache: std::sync::Arc<pgorm_check::SqlParseCache>,
 }
 
 impl SchemaRegistry {
@@ -190,6 +192,16 @@ impl SchemaRegistry {
     }
 }
 
+impl Default for SchemaRegistry {
+    fn default() -> Self {
+        Self {
+            tables: HashMap::new(),
+            #[cfg(feature = "check")]
+            parse_cache: std::sync::Arc::new(pgorm_check::SqlParseCache::default()),
+        }
+    }
+}
+
 /// Level of a schema issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaIssueLevel {
@@ -210,6 +222,10 @@ pub enum SchemaIssueKind {
     MissingTable,
     /// Referenced column not found.
     MissingColumn,
+    /// Column reference is ambiguous across visible tables.
+    AmbiguousColumn,
+    /// SQL feature not supported by the checker.
+    Unsupported,
 }
 
 /// A schema validation issue.
@@ -230,24 +246,32 @@ pub use pgorm_check::{
     CheckError,
     CheckResult,
     ColumnInfo,
+    ColumnRefFull,
     // Lint types
     ColumnRef,
     DbSchema,
+    InsertAnalysis,
     LintIssue,
     LintLevel,
     LintResult,
+    OnConflictAnalysis,
     ParseResult,
     RelationKind,
     SchemaCache,
     SchemaCacheConfig,
     SchemaCacheLoad,
+    SqlAnalysis,
     SqlCheckIssue,
     SqlCheckIssueKind,
     SqlCheckLevel,
+    SqlParseCache,
     StatementKind,
     TableInfo,
+    TargetColumn,
+    UpdateAnalysis,
     // Schema check from database
     check_sql,
+    check_sql_analysis,
     check_sql_cached,
     // Lint functions
     delete_has_where,
@@ -275,92 +299,306 @@ impl SchemaRegistry {
     pub fn check_sql(&self, sql: &str) -> Vec<SchemaIssue> {
         let mut issues = Vec::new();
 
-        // First check if SQL is valid
-        let parse_result = is_valid_sql(sql);
-        if !parse_result.valid {
+        let analysis = self.parse_cache.analyze(sql);
+        if !analysis.parse_result.valid {
             issues.push(SchemaIssue {
                 level: SchemaIssueLevel::Error,
                 kind: SchemaIssueKind::ParseError,
                 message: format!(
                     "SQL syntax error: {}",
-                    parse_result.error.unwrap_or_default()
+                    analysis.parse_result.error.clone().unwrap_or_default()
                 ),
             });
             return issues;
         }
 
-        // Get referenced tables and build a map of qualifier -> table
-        let tables = get_table_names(sql);
+        // System columns exist on every table but are not modeled in TableMeta.
+        let system_columns: std::collections::HashSet<&'static str> =
+            ["ctid", "xmin", "xmax", "cmin", "cmax", "tableoid"]
+                .into_iter()
+                .collect();
+
+        // Build a map of qualifier -> table using RangeVar + alias info.
         let mut qualifier_to_table: std::collections::HashMap<String, &TableSchema> =
             std::collections::HashMap::new();
         let mut visible_tables: Vec<&TableSchema> = Vec::new();
 
-        for table_ref in &tables {
-            // Handle schema.table format
-            let (schema, table_name) = if table_ref.contains('.') {
-                let parts: Vec<&str> = table_ref.splitn(2, '.').collect();
-                (parts[0], parts[1])
+        for rv in &analysis.range_vars {
+            // Skip CTE references.
+            if analysis.cte_names.contains(&rv.table) {
+                continue;
+            }
+
+            let rel_schema = rv.schema.as_deref();
+            let rel_name = rv.table.as_str();
+            let qualifier = rv.alias.as_deref().unwrap_or(rel_name);
+
+            let table = if let Some(s) = rel_schema {
+                self.get_table(s, rel_name)
             } else {
-                ("public", table_ref.as_str())
+                self.find_table(rel_name)
             };
 
-            if let Some(table) = self.get_table(schema, table_name) {
-                qualifier_to_table.insert(table_name.to_string(), table);
-                visible_tables.push(table);
-            } else if let Some(table) = self.find_table(table_name) {
-                qualifier_to_table.insert(table_name.to_string(), table);
-                visible_tables.push(table);
-            } else {
-                issues.push(SchemaIssue {
-                    level: SchemaIssueLevel::Error,
-                    kind: SchemaIssueKind::MissingTable,
-                    message: format!("Table not found in registry: {}", table_ref),
-                });
+            match table {
+                Some(t) => {
+                    // If an alias exists, the base name should not be visible.
+                    if qualifier_to_table
+                        .insert(qualifier.to_string(), t)
+                        .is_none()
+                    {
+                        visible_tables.push(t);
+                    }
+                }
+                None => {
+                    let name = match rel_schema {
+                        Some(s) => format!("{s}.{rel_name}"),
+                        None => rel_name.to_string(),
+                    };
+                    issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::MissingTable,
+                        message: format!("Table not found in registry: {name}"),
+                    });
+                }
             }
         }
 
-        // Check column references
-        let column_refs = get_column_refs(sql);
-        for col_ref in &column_refs {
-            match &col_ref.qualifier {
-                Some(qualifier) => {
-                    // Qualified column reference: qualifier.column
-                    if let Some(table) = qualifier_to_table.get(qualifier) {
-                        if !table.has_column(&col_ref.column) {
+        // Validate target columns for INSERT/UPDATE/ON CONFLICT.
+        if let Some(insert) = &analysis.insert {
+            if let Some(target) = &insert.target {
+                let table = if let Some(s) = target.schema.as_deref() {
+                    self.get_table(s, &target.table)
+                } else {
+                    self.find_table(&target.table)
+                };
+
+                if let Some(t) = table {
+                    for col in &insert.columns {
+                        if system_columns.contains(col.name.as_str()) {
+                            continue;
+                        }
+                        if !t.has_column(&col.name) {
                             issues.push(SchemaIssue {
                                 level: SchemaIssueLevel::Error,
                                 kind: SchemaIssueKind::MissingColumn,
                                 message: format!(
-                                    "Column not found: {}.{} (table '{}' has columns: {:?})",
-                                    qualifier,
-                                    col_ref.column,
-                                    table.name,
-                                    table.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
+                                    "Column not found: {}.{} (INSERT target table '{}')",
+                                    t.name, col.name, t.name
                                 ),
                             });
                         }
                     }
-                    // If qualifier not found, it's either an alias we didn't track or unknown
-                }
-                None => {
-                    // Unqualified column reference - must exist in one of the visible tables
-                    let matches: Vec<_> = visible_tables
-                        .iter()
-                        .filter(|t| t.has_column(&col_ref.column))
-                        .collect();
 
-                    if matches.is_empty() && !visible_tables.is_empty() {
+                    if let Some(oc) = &insert.on_conflict {
+                        if oc.has_inference_expressions {
+                            issues.push(SchemaIssue {
+                                level: SchemaIssueLevel::Warning,
+                                kind: SchemaIssueKind::Unsupported,
+                                message: "ON CONFLICT inference uses expressions; only simple column targets are checked".to_string(),
+                            });
+                        }
+
+                        for col in &oc.inference_columns {
+                            if system_columns.contains(col.name.as_str()) {
+                                continue;
+                            }
+                            if !t.has_column(&col.name) {
+                                issues.push(SchemaIssue {
+                                    level: SchemaIssueLevel::Error,
+                                    kind: SchemaIssueKind::MissingColumn,
+                                    message: format!(
+                                        "Column not found: {}.{} (ON CONFLICT target table '{}')",
+                                        t.name, col.name, t.name
+                                    ),
+                                });
+                            }
+                        }
+
+                        for col in &oc.update_set_columns {
+                            if system_columns.contains(col.name.as_str()) {
+                                continue;
+                            }
+                            if !t.has_column(&col.name) {
+                                issues.push(SchemaIssue {
+                                    level: SchemaIssueLevel::Error,
+                                    kind: SchemaIssueKind::MissingColumn,
+                                    message: format!(
+                                        "Column not found: {}.{} (ON CONFLICT DO UPDATE SET on table '{}')",
+                                        t.name, col.name, t.name
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    let name = match target.schema.as_deref() {
+                        Some(s) => format!("{s}.{}", target.table),
+                        None => target.table.clone(),
+                    };
+                    issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::MissingTable,
+                        message: format!("Table not found in registry: {name}"),
+                    });
+                }
+            }
+        }
+
+        if let Some(update) = &analysis.update {
+            if let Some(target) = &update.target {
+                let table = if let Some(s) = target.schema.as_deref() {
+                    self.get_table(s, &target.table)
+                } else {
+                    self.find_table(&target.table)
+                };
+
+                if let Some(t) = table {
+                    for col in &update.set_columns {
+                        if system_columns.contains(col.name.as_str()) {
+                            continue;
+                        }
+                        if !t.has_column(&col.name) {
+                            issues.push(SchemaIssue {
+                                level: SchemaIssueLevel::Error,
+                                kind: SchemaIssueKind::MissingColumn,
+                                message: format!(
+                                    "Column not found: {}.{} (UPDATE target table '{}')",
+                                    t.name, col.name, t.name
+                                ),
+                            });
+                        }
+                    }
+                } else {
+                    let name = match target.schema.as_deref() {
+                        Some(s) => format!("{s}.{}", target.table),
+                        None => target.table.clone(),
+                    };
+                    issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::MissingTable,
+                        message: format!("Table not found in registry: {name}"),
+                    });
+                }
+            }
+        }
+
+        // Validate column references from expressions (SELECT list, WHERE, JOIN ON, etc).
+        for c in &analysis.column_refs {
+            if c.has_star || c.parts.is_empty() {
+                continue;
+            }
+
+            // Unqualified: col
+            if c.parts.len() == 1 {
+                let col = c.parts[0].as_str();
+                if system_columns.contains(col) {
+                    continue;
+                }
+
+                let matches = visible_tables
+                    .iter()
+                    .filter(|t| t.has_column(col))
+                    .count();
+
+                match matches {
+                    0 => {
+                        if !visible_tables.is_empty() {
+                            issues.push(SchemaIssue {
+                                level: SchemaIssueLevel::Error,
+                                kind: SchemaIssueKind::MissingColumn,
+                                message: format!(
+                                    "Column not found: {col} (not in any referenced tables)"
+                                ),
+                            });
+                        }
+                    }
+                    1 => {}
+                    _ => issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::AmbiguousColumn,
+                        message: format!(
+                            "Ambiguous column reference: {col} (found in multiple tables)"
+                        ),
+                    }),
+                }
+
+                continue;
+            }
+
+            // Qualified: qualifier.col
+            if c.parts.len() == 2 {
+                let qualifier = c.parts[0].as_str();
+                let col = c.parts[1].as_str();
+
+                if system_columns.contains(col) {
+                    continue;
+                }
+
+                if let Some(t) = qualifier_to_table.get(qualifier) {
+                    if !t.has_column(col) {
                         issues.push(SchemaIssue {
                             level: SchemaIssueLevel::Error,
                             kind: SchemaIssueKind::MissingColumn,
                             message: format!(
-                                "Column not found: {} (not in any of the referenced tables)",
-                                col_ref.column
+                                "Column not found: {qualifier}.{col} (table resolved to '{}')",
+                                t.name
                             ),
                         });
                     }
+                } else {
+                    issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::MissingTable,
+                        message: format!("Unknown table/alias qualifier: {qualifier}"),
+                    });
                 }
+
+                continue;
             }
+
+            // schema.table.col OR catalog.schema.table.col
+            if c.parts.len() == 3 || c.parts.len() == 4 {
+                let (schema_part, table_part, col_part) = if c.parts.len() == 3 {
+                    (&c.parts[0], &c.parts[1], &c.parts[2])
+                } else {
+                    (&c.parts[1], &c.parts[2], &c.parts[3])
+                };
+
+                if system_columns.contains(col_part.as_str()) {
+                    continue;
+                }
+
+                let Some(t) = self.get_table(schema_part, table_part) else {
+                    issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::MissingTable,
+                        message: format!("Table not found in registry: {schema_part}.{table_part}"),
+                    });
+                    continue;
+                };
+
+                if !t.has_column(col_part) {
+                    issues.push(SchemaIssue {
+                        level: SchemaIssueLevel::Error,
+                        kind: SchemaIssueKind::MissingColumn,
+                        message: format!(
+                            "Column not found: {schema_part}.{table_part}.{col_part}"
+                        ),
+                    });
+                }
+
+                continue;
+            }
+
+            issues.push(SchemaIssue {
+                level: SchemaIssueLevel::Warning,
+                kind: SchemaIssueKind::Unsupported,
+                message: format!(
+                    "Unsupported column reference form ({} parts): {}",
+                    c.parts.len(),
+                    c.parts.join(".")
+                ),
+            });
         }
 
         issues
@@ -501,6 +739,43 @@ mod tests {
             let issues = registry.check_sql("SELECT * FROM products");
             assert!(!issues.is_empty());
             assert!(matches!(issues[0].kind, SchemaIssueKind::MissingTable));
+        }
+
+        #[test]
+        fn test_check_sql_alias_and_ambiguous_column() {
+            let mut registry = SchemaRegistry::new();
+            registry.register::<TestUser>();
+            registry.register::<TestOrder>();
+
+            // Alias-qualified columns should resolve via FROM/JOIN alias mapping.
+            let issues = registry.check_sql(
+                "SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id WHERE o.status = 'paid'",
+            );
+            assert!(issues.is_empty());
+
+            // Unqualified `id` is ambiguous across `users` and `orders`.
+            let issues = registry.check_sql("SELECT id FROM users u JOIN orders o ON u.id = o.user_id");
+            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::AmbiguousColumn));
+        }
+
+        #[test]
+        fn test_check_sql_insert_update_on_conflict_columns() {
+            let mut registry = SchemaRegistry::new();
+            registry.register::<TestUser>();
+
+            // INSERT column list should be validated against the target table.
+            let issues = registry.check_sql("INSERT INTO users (id, missing_col) VALUES (1, 'x')");
+            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::MissingColumn));
+
+            // UPDATE SET column list should be validated against the target table.
+            let issues = registry.check_sql("UPDATE users SET missing_col = 1 WHERE id = 1");
+            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::MissingColumn));
+
+            // ON CONFLICT inference / DO UPDATE SET columns should be validated too.
+            let issues = registry.check_sql(
+                "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET missing_col = EXCLUDED.name",
+            );
+            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::MissingColumn));
         }
     }
 }

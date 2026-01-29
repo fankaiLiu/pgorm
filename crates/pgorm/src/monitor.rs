@@ -483,6 +483,12 @@ impl CompositeHook {
         self.hooks.push(Arc::new(hook));
         self
     }
+
+    /// Add an Arc-wrapped hook.
+    pub fn add_arc(mut self, hook: Arc<dyn QueryHook>) -> Self {
+        self.hooks.push(hook);
+        self
+    }
 }
 
 impl Default for CompositeHook {
@@ -637,6 +643,24 @@ impl<C: GenericClient> InstrumentedClient<C> {
     /// Set a query hook from an Arc.
     pub fn with_hook_arc(mut self, hook: Arc<dyn QueryHook>) -> Self {
         self.hook = Some(hook);
+        self
+    }
+
+    /// Add a query hook.
+    ///
+    /// If a hook is already set, this composes it with the new hook (existing first).
+    pub fn add_hook<H: QueryHook + 'static>(mut self, hook: H) -> Self {
+        self.add_hook_arc(Arc::new(hook))
+    }
+
+    /// Add a query hook from an `Arc`.
+    ///
+    /// If a hook is already set, this composes it with the new hook (existing first).
+    pub fn add_hook_arc(mut self, hook: Arc<dyn QueryHook>) -> Self {
+        self.hook = Some(match self.hook.take() {
+            None => hook,
+            Some(existing) => Arc::new(CompositeHook::new().add_arc(existing).add_arc(hook)),
+        });
         self
     }
 

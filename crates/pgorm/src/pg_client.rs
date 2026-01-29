@@ -53,8 +53,8 @@ use crate::check::{DbSchema, SchemaRegistry, TableMeta};
 use crate::checked_client::ModelRegistration;
 use crate::error::{OrmError, OrmResult};
 use crate::monitor::{
-    LoggingMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType,
-    StatsMonitor,
+    CompositeHook, LoggingMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats,
+    QueryType, StatsMonitor,
 };
 use crate::row::FromRow;
 
@@ -354,6 +354,30 @@ impl<C> PgClient<C> {
     /// Add a query hook.
     pub fn with_hook<H: QueryHook + 'static>(mut self, hook: H) -> Self {
         self.hook = Some(Arc::new(hook));
+        self
+    }
+
+    /// Add a query hook from an `Arc`.
+    pub fn with_hook_arc(mut self, hook: Arc<dyn QueryHook>) -> Self {
+        self.hook = Some(hook);
+        self
+    }
+
+    /// Add a query hook.
+    ///
+    /// If a hook is already set, this composes it with the new hook (existing first).
+    pub fn add_hook<H: QueryHook + 'static>(mut self, hook: H) -> Self {
+        self.add_hook_arc(Arc::new(hook))
+    }
+
+    /// Add a query hook from an `Arc`.
+    ///
+    /// If a hook is already set, this composes it with the new hook (existing first).
+    pub fn add_hook_arc(mut self, hook: Arc<dyn QueryHook>) -> Self {
+        self.hook = Some(match self.hook.take() {
+            None => hook,
+            Some(existing) => Arc::new(CompositeHook::new().add_arc(existing).add_arc(hook)),
+        });
         self
     }
 

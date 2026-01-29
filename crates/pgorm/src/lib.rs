@@ -25,16 +25,16 @@
 //!     .await?;
 //! ```
 
-pub mod builder;
-pub mod client;
-pub mod condition;
-pub mod error;
-pub mod ident;
-pub mod monitor;
+mod builder;
+mod client;
+mod condition;
+mod error;
+mod ident;
+mod monitor;
 pub mod qb;
-pub mod row;
-pub mod sql;
-pub mod transaction;
+mod row;
+mod sql;
+mod transaction;
 
 // SQL migrations (via refinery)
 #[cfg(feature = "migrate")]
@@ -52,13 +52,14 @@ pub use monitor::{
 };
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Query, Sql, query, sql};
+pub use tokio_postgres::types::Json;
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
 pub use migrate::{Migration, Report, Runner, Target, embed_migrations};
 
 #[cfg(feature = "pool")]
-pub mod pool;
+mod pool;
 
 #[cfg(feature = "pool")]
 pub use client::PoolClient;
@@ -70,14 +71,14 @@ pub use pool::{create_pool, create_pool_with_config};
 pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};
 
 // SQL checking and linting
-pub mod check;
+mod check;
 
 // Checked client with auto-registration (lower-level)
-pub mod checked_client;
+mod checked_client;
 
 // Unified PgClient (recommended)
 #[cfg(feature = "check")]
-pub mod pg_client;
+mod pg_client;
 
 pub use check::{
     ColumnMeta, SchemaIssue, SchemaIssueKind, SchemaIssueLevel, SchemaRegistry, TableMeta,
@@ -85,9 +86,11 @@ pub use check::{
 };
 
 // Re-export inventory for use by derive macros
+#[doc(hidden)]
 pub use inventory;
 
 // Re-export CheckedClient and related types (lower-level API)
+#[doc(hidden)]
 pub use checked_client::ModelRegistration;
 
 #[cfg(feature = "check")]
