@@ -24,7 +24,7 @@ use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
 use crate::row::FromRow;
 use std::sync::Arc;
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{FromSql, ToSql};
 use tokio_postgres::Row;
 
 #[derive(Debug)]
@@ -45,6 +45,42 @@ pub struct Sql {
 /// Start building a SQL statement.
 pub fn sql(initial_sql: impl Into<String>) -> Sql {
     Sql::new(initial_sql)
+}
+
+/// Strip leading whitespace, SQL comments (`--` and `/* */`), and parentheses
+/// from a SQL string to find the first meaningful keyword.
+fn strip_sql_prefix(sql: &str) -> &str {
+    let mut s = sql;
+    loop {
+        let before = s;
+        // Trim whitespace
+        s = s.trim_start();
+        // Skip line comments
+        if s.starts_with("--") {
+            if let Some(pos) = s.find('\n') {
+                s = &s[pos + 1..];
+                continue;
+            }
+            return ""; // comment is the whole remaining string
+        }
+        // Skip block comments
+        if s.starts_with("/*") {
+            if let Some(pos) = s.find("*/") {
+                s = &s[pos + 2..];
+                continue;
+            }
+            return ""; // unclosed block comment
+        }
+        // Skip leading parentheses
+        if s.starts_with('(') {
+            s = &s[1..];
+            continue;
+        }
+        if s == before {
+            break;
+        }
+    }
+    s
 }
 
 impl Sql {
@@ -350,6 +386,167 @@ impl Sql {
         let params = self.params_ref();
         conn.execute_tagged(tag, &sql, &params).await
     }
+
+    // ==================== Convenience APIs (Phase 1) ====================
+
+    /// Execute the built SQL and return exactly one scalar value.
+    ///
+    /// Expects exactly one row with at least one column. Returns `OrmError::NotFound`
+    /// if no rows are returned.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let count: i64 = sql("SELECT COUNT(*) FROM users WHERE status = ")
+    ///     .push_bind("active")
+    ///     .fetch_scalar_one(&client)
+    ///     .await?;
+    /// ```
+    pub async fn fetch_scalar_one<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<T>
+    where
+        T: for<'b> FromSql<'b> + Send + Sync,
+    {
+        let row = self.fetch_one(conn).await?;
+        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+    }
+
+    /// Execute the built SQL and return at most one scalar value.
+    ///
+    /// Returns `None` if no rows are returned, otherwise returns the first column
+    /// of the first row.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let max_id: Option<i64> = sql("SELECT MAX(id) FROM users")
+    ///     .fetch_scalar_opt(&client)
+    ///     .await?;
+    /// ```
+    pub async fn fetch_scalar_opt<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Option<T>>
+    where
+        T: for<'b> FromSql<'b> + Send + Sync,
+    {
+        let row = self.fetch_opt(conn).await?;
+        match row {
+            Some(r) => r.try_get(0).map(Some).map_err(|e| OrmError::decode("0", e.to_string())),
+            None => Ok(None),
+        }
+    }
+
+    /// Execute the built SQL and return all scalar values from the first column.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ids: Vec<i64> = sql("SELECT id FROM users WHERE status = ")
+    ///     .push_bind("active")
+    ///     .fetch_scalar_all(&client)
+    ///     .await?;
+    /// ```
+    pub async fn fetch_scalar_all<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Vec<T>>
+    where
+        T: for<'b> FromSql<'b> + Send + Sync,
+    {
+        let rows = self.fetch_all(conn).await?;
+        rows.iter()
+            .map(|r| r.try_get(0).map_err(|e| OrmError::decode("0", e.to_string())))
+            .collect()
+    }
+
+    /// Check if any rows exist for this SELECT query.
+    ///
+    /// Wraps the query in `SELECT EXISTS(...)` for efficient existence checking.
+    /// Only works with SELECT statements.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let has_active: bool = sql("SELECT 1 FROM users WHERE status = ")
+    ///     .push_bind("active")
+    ///     .exists(&client)
+    ///     .await?;
+    /// ```
+    pub async fn exists(&self, conn: &impl GenericClient) -> OrmResult<bool> {
+        self.validate()?;
+        let inner_sql = self.to_sql();
+
+        // Validate that this is a SELECT-like statement.
+        // Strip leading whitespace, SQL comments (-- and /* */), and parentheses
+        // to handle: SELECT, WITH ... SELECT, (SELECT ...), /* comment */ SELECT, etc.
+        let trimmed = strip_sql_prefix(&inner_sql);
+        if !trimmed.starts_with("SELECT") && !trimmed.starts_with("select")
+            && !trimmed.starts_with("WITH") && !trimmed.starts_with("with")
+        {
+            return Err(OrmError::Validation(
+                "exists() only works with SELECT statements (including WITH ... SELECT)".to_string(),
+            ));
+        }
+
+        let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
+        let params = self.params_ref();
+        let row = conn.query_one(&wrapped_sql, &params).await?;
+        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+    }
+
+    /// Append `LIMIT $n` to the query with a bound parameter.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let users = sql("SELECT * FROM users ORDER BY id")
+    ///     .limit(10)
+    ///     .fetch_all_as(&client)
+    ///     .await?;
+    /// ```
+    pub fn limit(&mut self, n: i64) -> &mut Self {
+        self.push(" LIMIT ").push_bind(n)
+    }
+
+    /// Append `OFFSET $n` to the query with a bound parameter.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let users = sql("SELECT * FROM users ORDER BY id")
+    ///     .limit(10)
+    ///     .offset(20)
+    ///     .fetch_all_as(&client)
+    ///     .await?;
+    /// ```
+    pub fn offset(&mut self, n: i64) -> &mut Self {
+        self.push(" OFFSET ").push_bind(n)
+    }
+
+    /// Append `LIMIT $n OFFSET $m` to the query with bound parameters.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let users = sql("SELECT * FROM users ORDER BY id")
+    ///     .limit_offset(10, 20)
+    ///     .fetch_all_as(&client)
+    ///     .await?;
+    /// ```
+    pub fn limit_offset(&mut self, limit: i64, offset: i64) -> &mut Self {
+        self.push(" LIMIT ").push_bind(limit).push(" OFFSET ").push_bind(offset)
+    }
+
+    /// Append pagination using page number and page size.
+    ///
+    /// Converts page-based pagination to LIMIT/OFFSET. Page numbers start at 1.
+    /// Returns an error if `page < 1`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Get page 3 with 25 items per page
+    /// let users = sql("SELECT * FROM users ORDER BY id")
+    ///     .page(3, 25)?
+    ///     .fetch_all_as(&client)
+    ///     .await?;
+    /// ```
+    pub fn page(&mut self, page: i64, per_page: i64) -> OrmResult<&mut Self> {
+        if page < 1 {
+            return Err(OrmError::Validation(format!(
+                "page must be >= 1, got {}",
+                page
+            )));
+        }
+        let offset = (page - 1) * per_page;
+        Ok(self.limit_offset(per_page, offset))
+    }
 }
 
 #[cfg(test)]
@@ -442,5 +639,71 @@ mod tests {
 
         assert_eq!(q.to_sql(), "SELECT * FROM users WHERE 1=0");
         assert_eq!(q.params_ref().len(), 0);
+    }
+
+    // ==================== Phase 1: Convenience API tests ====================
+
+    #[test]
+    fn limit_appends_with_param() {
+        let mut q = sql("SELECT * FROM users ORDER BY id");
+        q.limit(10);
+        assert_eq!(q.to_sql(), "SELECT * FROM users ORDER BY id LIMIT $1");
+        assert_eq!(q.params_ref().len(), 1);
+    }
+
+    #[test]
+    fn offset_appends_with_param() {
+        let mut q = sql("SELECT * FROM users ORDER BY id");
+        q.offset(20);
+        assert_eq!(q.to_sql(), "SELECT * FROM users ORDER BY id OFFSET $1");
+        assert_eq!(q.params_ref().len(), 1);
+    }
+
+    #[test]
+    fn limit_offset_appends_both_params() {
+        let mut q = sql("SELECT * FROM users ORDER BY id");
+        q.limit_offset(10, 20);
+        assert_eq!(
+            q.to_sql(),
+            "SELECT * FROM users ORDER BY id LIMIT $1 OFFSET $2"
+        );
+        assert_eq!(q.params_ref().len(), 2);
+    }
+
+    #[test]
+    fn page_converts_to_limit_offset() {
+        let mut q = sql("SELECT * FROM users ORDER BY id");
+        q.page(3, 25).unwrap();
+        // page 3 with 25 per page = OFFSET 50
+        assert_eq!(
+            q.to_sql(),
+            "SELECT * FROM users ORDER BY id LIMIT $1 OFFSET $2"
+        );
+        assert_eq!(q.params_ref().len(), 2);
+    }
+
+    #[test]
+    fn page_rejects_zero() {
+        let mut q = sql("SELECT * FROM users ORDER BY id");
+        assert!(q.page(0, 25).is_err());
+    }
+
+    #[test]
+    fn page_rejects_negative() {
+        let mut q = sql("SELECT * FROM users ORDER BY id");
+        assert!(q.page(-1, 25).is_err());
+    }
+
+    #[test]
+    fn pagination_composes_with_conditions() {
+        let mut q = sql("SELECT * FROM users WHERE ");
+        q.push_condition(&Condition::eq("status", "active"));
+        q.push(" ORDER BY id");
+        q.limit_offset(10, 0);
+        assert_eq!(
+            q.to_sql(),
+            "SELECT * FROM users WHERE status = $1 ORDER BY id LIMIT $2 OFFSET $3"
+        );
+        assert_eq!(q.params_ref().len(), 3);
     }
 }

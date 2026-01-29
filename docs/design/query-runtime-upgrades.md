@@ -57,41 +57,75 @@
 新增 trait（建议放在 `crates/pgorm/src/client.rs` 或新模块 `stream.rs`，并通过 feature `stream` 控制对外暴露）：
 
 ```rust
+/// Stream 内部持有 owned 的 SQL 和参数，避免 lifetime 被 sql/params 的借用卡死。
 #[cfg(feature = "stream")]
-pub type RowStream<'a> =
-    std::pin::Pin<Box<dyn futures_core::Stream<Item = OrmResult<tokio_postgres::Row>> + Send + 'a>>;
+pub struct BuiltSql {
+    pub sql: String,
+    pub params: Vec<Arc<dyn ToSql + Sync + Send>>,
+}
+
+#[cfg(feature = "stream")]
+pub type RowStream =
+    std::pin::Pin<Box<dyn futures_core::Stream<Item = OrmResult<tokio_postgres::Row>> + Send>>;
 
 #[cfg(feature = "stream")]
 pub trait StreamingClient: Send + Sync {
-    fn query_stream<'a>(
-        &'a self,
-        sql: &'a str,
-        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
-    ) -> RowStream<'a>;
+    /// 接受 owned 的 SQL 和参数，stream 内部持有它们的生命周期。
+    /// 这样 Sql::fetch_stream 可以把 to_sql() 产生的 String 移入 stream。
+    fn query_stream_owned(
+        &self,
+        built: BuiltSql,
+    ) -> RowStream;
 }
 ```
+
+> **关键设计决策：owned 形态**
+>
+> 最初设计为 `query_stream<'a>(&'a self, sql: &'a str, params: &'a [...]) -> RowStream<'a>`，
+> 但 `Sql::fetch_stream` 需要把 `to_sql()` 产生的临时 `String` 借出 `'a` 生命周期，
+> 这在 Rust 的借用模型下无法实现。因此改为 **stream 内部持有 owned 数据**（`BuiltSql`），
+> stream 本身为 `'static`（仅受 `&self` 约束）。
 
 在 `Sql` builder 上提供对等能力：
 
 ```rust
 #[cfg(feature = "stream")]
 impl Sql {
-    pub fn fetch_stream<'a>(
-        &'a self,
-        conn: &'a impl StreamingClient,
-    ) -> OrmResult<RowStream<'a>> { /* build + validate + delegate */ }
+    pub fn fetch_stream(
+        &self,
+        conn: &impl StreamingClient,
+    ) -> OrmResult<RowStream> {
+        self.validate()?;
+        let built = BuiltSql {
+            sql: self.to_sql(),
+            params: self.params.clone(), // Arc clone, cheap
+        };
+        Ok(conn.query_stream_owned(built))
+    }
 
-    pub fn fetch_stream_as<'a, T: FromRow + 'a>(
-        &'a self,
-        conn: &'a impl StreamingClient,
-    ) -> OrmResult<impl Stream<Item = OrmResult<T>> + Send + 'a> { /* row->T map */ }
+    pub fn fetch_stream_as<T: FromRow + Send + 'static>(
+        &self,
+        conn: &impl StreamingClient,
+    ) -> OrmResult<impl Stream<Item = OrmResult<T>> + Send> { /* row->T map */ }
 }
 ```
 
 说明：
 
-- “游标”层面不一定需要显式 `DECLARE CURSOR`：`tokio-postgres` 的 `query_raw`/portal 已能实现按批拉取并流式消费（对业务就是 cursor-like）。
+- "游标"层面不一定需要显式 `DECLARE CURSOR`：`tokio-postgres` 的 `query_raw`/portal 已能实现按批拉取并流式消费（对业务就是 cursor-like）。
 - 显式 server-side cursor（`DECLARE ... CURSOR` / `FETCH n`）可作为后续增强（需要事务语义与生命周期管理）。
+
+### 连接占用警告
+
+> ⚠️ **Streaming 会占用连接直到 stream 被完全消费或 drop。**
+>
+> 在 pool 场景下，这意味着一个 stream 的整个生命周期中，底层连接不能被归还给 pool、不能被其他查询复用。
+> 如果消费端处理很慢或长时间不 poll，可能导致连接池耗尽。
+>
+> 建议：
+> - 在文档和 API 注释中**显式标注**这一行为，避免用户把 stream 当作普通 `fetch_all` 使用。
+> - 对于需要长时间处理每行数据的场景，建议先 `fetch_all` 到内存（如果数据量可控），或者使用分页查询。
+> - 考虑在 `StreamConfig` 中提供 `max_idle_before_warn` 配置，当连接被 stream 占用超过阈值时记录 warning 日志。
 
 ### 与监控/统计/校验的集成
 
@@ -117,18 +151,23 @@ impl Sql {
 
 新增 wrapper（建议放 `crates/pgorm/src/prepared.rs`）：
 
-```rust
-pub struct StatementCacheConfig {
-    pub capacity: usize,      // LRU 容量
-    pub enabled: bool,        // 开关（可用于灰度）
-    pub retry_on_invalid: bool,
-}
+> **Trait 约束说明**
+>
+> `StatementCached<C>` **不能**通过 `GenericClient` trait 实现 prepared statement，因为
+> `GenericClient` 只提供 `query(&str, ...)` 形式的接口，没有 `prepare()`/`query(&Statement, ...)` 入口。
+>
+> 实现路径（二选一）：
+>
+> 1. **直接约束 inner 类型**：`C` 必须是 `tokio_postgres::Client` 或 `Transaction`（它们原生支持 `prepare` + `query(&Statement, ...)`），而非任意 `impl GenericClient`。`StatementCached` 对外仍然实现 `GenericClient`（这样上层 `PgClient` 可以组合），但内部调用底层 prepared 接口。
+> 2. **引入 `PreparedClient` trait**（设计文档总体方案中提到的）：新增 trait 提供 `prepare_cached()` 能力，让 `StatementCached` 的 `C` 约束为 `C: PreparedClient`。
 
+```rust
+/// StatementCached 的 inner 必须支持 prepare 能力。
+/// 实际约束为 tokio_postgres::Client / Transaction / deadpool 的 ClientWrapper。
 pub struct StatementCached<C> {
     inner: C,
     cfg: StatementCacheConfig,
-    // key: SQL string (or hash) -> tokio_postgres::Statement
-    // 典型实现：lru::LruCache<String, Statement> + tokio::sync::Mutex
+    cache: tokio::sync::Mutex<lru::LruCache<String, tokio_postgres::Statement>>,
 }
 
 impl<C> StatementCached<C> {
@@ -197,6 +236,7 @@ let count: i64 = sql("SELECT COUNT(*) FROM users WHERE status = ")
 设计上需明确：
 
 - `exists` 只对 SELECT-like SQL 有意义；若用户传入非 SELECT，返回 `OrmError::Validation`。
+- **SELECT 判定不能只用 `starts_with("SELECT")`**：必须至少处理 `WITH ... SELECT`、`-- 注释开头`、`/* 块注释 */`、括号包裹 `(SELECT ...)` 等场景。当前实现（`crates/pgorm/src/sql.rs`）通过 `strip_sql_prefix()` 辅助函数跳过注释/空白/括号后再检测首个关键字。后续引入 `SqlAnalysis` parse cache 后，应改为基于 `analysis.statement_kind` 来判定（更准确、统一）。
 
 ### 分页 helper（limit/offset）
 
@@ -223,11 +263,14 @@ pub enum WhereExpr {
 }
 
 impl WhereExpr {
-    pub fn and(self, other: WhereExpr) -> WhereExpr { /* ... */ }
-    pub fn or(self, other: WhereExpr) -> WhereExpr { /* ... */ }
-    pub fn group(self) -> WhereExpr { /* 语义上等价于返回 self；build 时加括号 */ }
+    pub fn and_with(self, other: WhereExpr) -> WhereExpr { /* ... */ }
+    pub fn or_with(self, other: WhereExpr) -> WhereExpr { /* ... */ }
 
-    pub fn build(&self, param_idx: &mut usize) -> (String, Vec<&(dyn ToSql + Sync)>) { /* 递归拼接 + 括号 */ }
+    /// 将表达式追加到 Sql builder 中（通过 Sql 的 push/push_bind 生成正确的占位符）。
+    /// 这是当前实现的主要入口，不提供独立的 build() -> (String, Vec<&ToSql>)。
+    /// 原因：WhereExpr 内部通过 Condition::append_to_sql 与 Sql builder 交互，
+    /// 由 Sql 统一管理占位符索引，避免手动 param_idx 传递的复杂性。
+    pub fn append_to_sql(&self, sql: &mut Sql) { /* 递归拼接 + 括号 */ }
 }
 ```
 
@@ -368,10 +411,12 @@ pub struct Pagination {
 
 ## 分阶段实施计划（建议）
 
-1. **Phase 1：便捷 API + 分页 helper**
-   - `fetch_scalar(_one/_opt)`、`exists`、`limit/offset/page`
-2. **Phase 2：WhereExpr + OrderBy/Pagination builder**
-   - 先在 `pgorm` 内提供类型，再迁移 derive query builder
+1. **Phase 1：便捷 API + 分页 helper** ✅
+   - `fetch_scalar(_one/_opt/_all)`、`exists`、`limit/offset/page`
+   - 已实现：`crates/pgorm/src/sql.rs`
+2. **Phase 2：WhereExpr + OrderBy/Pagination builder** ✅
+   - 已实现：`crates/pgorm/src/builder.rs`
+   - 包含：`Ident`、`WhereExpr`、`OrderBy`、`Pagination`
 3. **Phase 3：SQL 校验增强 + parse cache**
    - 先实现 analysis+cache，再替换 `SchemaRegistry::check_sql`
 4. **Phase 4：流式查询**
@@ -383,7 +428,186 @@ pub struct Pagination {
 
 ## 需要解决的问题
 
-- streaming + timeout：streaming 查询的 timeout/取消语义如何定义（选择每次 poll 超时）。
-- prepared statement 的“泛化计划”风险：某些查询 prepared 后可能出现性能退化，需要 allowlist/denylist 或按 statement kind 控制。
-- hook ModifySql 与 statement cache/统计的相互影响：，提供“结构化 tag”替代方案并引导使用。
-- WHERE/ORDER ident 校验的严格度：允许 `schema.table`、`table.column`、以及引用标识符（`"CamelCase"`）等。
+> 说明：`pgorm` 还未发布，可在 0.1.x 阶段直接选择更干净、更一致的 API（不必为旧行为兜底）。
+
+### 1) streaming + timeout：定义清晰的“超时”与“取消”语义
+
+#### 目标
+
+- streaming 下的 timeout **不应该因为业务消费/处理慢而误触发**（否则会把“业务处理”误判为“数据库慢”）。
+- timeout 触发时应尽力 **释放服务端资源**（best-effort cancel），并保证连接尽可能可继续使用。
+
+#### 决策：把 streaming timeout 定义为“拉取超时（idle timeout）”，而非“总耗时（wall timeout）”
+
+- `idle_timeout`：**等待下一批/下一行数据到达的最长时间**（发生在 `poll_next` 期间）。
+  - 优点：不受用户处理速度影响；只约束“数据库/网络停顿”。
+  - 语义：如果用户在处理一行时很慢、长时间不 poll，**不会触发超时**（这是预期行为）。
+- `wall_timeout`（可选高级能力）：**从 query 开始到 stream 结束的总时长上限**。
+  - 默认不提供（或默认关闭），避免误杀“正常但消费慢”的场景。
+  - 若业务确实需要“整体 SLA”，建议由业务侧包一层：对“消费循环”用 `tokio::time::timeout`。
+
+#### API/配置建议
+
+新增 streaming 专用配置（建议放在 `PgClientConfig` 或 `MonitorConfig`，但与非 streaming 的 timeout 明确区分）：
+
+```rust
+pub struct StreamConfig {
+    pub idle_timeout: Option<Duration>,  // 拉取超时：每次 poll_next 等待上限
+    pub cancel_on_timeout: bool,         // 超时触发后 best-effort cancel_query
+    pub cancel_on_drop: bool,            // 提前 drop stream 时是否 cancel_query（可选）
+}
+```
+
+默认建议：
+
+- `idle_timeout = PgClientConfig.query_timeout`（若已配置）；否则 `None`。
+- `cancel_on_timeout = true`（尽力释放服务端正在执行的 query）。
+- `cancel_on_drop = false`（默认不“强 cancel”，避免误伤“只是提前停止消费但仍希望连接保持稳定”的场景；需要时用户显式开启）。
+
+#### 取消语义（实现要点）
+
+- 触发 timeout 时：返回 `OrmError::Timeout(idle_timeout)`，并 **结束 stream**（避免继续产出半截结果导致难以推理）。
+- 若底层 `GenericClient::cancel_token()` 可用：在 timeout 分支 `spawn` 一个任务调用 `cancel_token.cancel_query(...)`（best-effort）。
+- 若用户提前 drop stream：
+  - 依赖底层 driver（`tokio-postgres` 的 portal/query stream）在 drop 时做清理；
+  - 若启用 `cancel_on_drop`，同样 best-effort cancel（不保证一定成功）。
+
+### 2) prepared statement 的“泛化计划（generic plan）”风险：提供策略、覆盖面与可回退
+
+#### 风险本质（为什么会退化）
+
+在 PostgreSQL 中，prepared statement 的计划缓存可能在某些场景下倾向于 **generic plan**（对参数值不敏感）。
+当数据分布极度倾斜、并且参数值决定了是否走索引/走分区裁剪时，generic plan 可能比“每次按参数生成 custom plan”更差。
+
+#### 决策：prepared + statement cache 默认关闭；启用后用“策略 + 覆盖”控制
+
+1. **默认关闭**（0.1.x 先保证可预期）：`StatementCacheConfig.enabled = false`。
+2. 启用后必须有可控策略：
+   - 按 `QueryType`（SELECT/INSERT/UPDATE/DELETE/Other）开关；
+   - allowlist/denylist（按 `tag` 或按 SQL pattern）；
+   - 每条查询可覆写（强制启用/禁用）。
+
+#### 建议的策略形态
+
+```rust
+pub enum PrepareMode {
+    Auto,          // 默认策略
+    ForcePrepared, // 强制 prepared
+    ForceSimple,   // 强制不 prepared（simple query / 直跑 SQL）
+}
+
+pub struct StatementCacheConfig {
+    pub enabled: bool,
+    pub capacity: usize,
+    pub retry_on_invalid: bool,
+    pub mode: PrepareMode, // 全局默认
+    pub allow_query_types: [bool; 5], // Select/Insert/Update/Delete/Other
+    pub allow_tags: Vec<String>,      // 命中则强制 prepared（可选）
+    pub deny_tags: Vec<String>,       // 命中则强制不 prepared（可选）
+}
+```
+
+并提供“每条查询覆写”的入口（不靠改 SQL）：
+
+- `Sql::prepare_mode(PrepareMode)`（builder 级别）
+- 或 `QueryContext` 增加字段：`prepare_mode: PrepareMode`（wrapper 内透传）
+
+#### 回退策略（性能/正确性）
+
+- **正确性回退**（必须做）：遇到典型 prepared 失效错误，驱逐 cache entry 后重试一次。
+
+  > **失效错误的识别必须基于 SQLSTATE，不要用 error message 字符串匹配。**
+  >
+  > 需要处理的 SQLSTATE：
+  > - `0A000`：`feature_not_supported`（`cached plan must not change result type`）
+  > - `42P18`：`indeterminate_datatype`
+  > - `42804`：`datatype_mismatch`（plan/type 不一致）
+  > - `42P01`：`undefined_table`（表被 DROP 后 cached plan 引用的表不存在）
+  > - `42703`：`undefined_column`（schema 变更导致列不存在）
+  >
+  > 在 `tokio-postgres` 中，通过 `err.as_db_error().map(|e| e.code())` 获取 SQLSTATE code。
+- **性能回退**（尽量提供、但不强依赖自动检测）：
+  - 由用户通过 `deny_tags/denylist` 快速关掉热点问题 SQL；
+  - 文档中明确提示：若怀疑 generic plan 退化，先对该查询 `ForceSimple`（或全局关闭），再做对比分析。
+
+### 3) hook ModifySql 与 statement cache/统计：拆分“语义变更”与“观测打标”
+
+#### 问题
+
+- 通过 hook 给 SQL 加注释/trace tag（`ModifySql`）会导致：
+  - statement cache key 被打散（命中率下降，甚至“每次都新 prepare”）；
+  - 指标聚合维度变碎（按 SQL 字符串聚合时会变成多条）。
+
+#### 决策：观测信息走结构化字段；SQL 改写只用于“语义层”且必须稳定
+
+1. **结构化 tag/fields** 作为一等能力：用于日志、metrics、trace，不依赖改 SQL。
+   - `QueryContext.tag` 已存在，建议再加 `fields: BTreeMap<String, String>`（可选）。
+   - 对外提供：`query_tagged(...)` / `Sql::tag("...")`（建议）/ `PgClient::..._tagged`。
+2. `HookAction::ModifySql` 的定位调整：
+   - **不用于打标**（注释/trace id 禁止走 ModifySql）；
+   - 仅用于“语义改写”（例如 multi-tenant 自动追加谓词、自动注入 `SET LOCAL ...` 等），且改写必须是 **可缓存、可重复** 的稳定函数（不要把 request_id/user_id 直接拼到 SQL 文本里）。
+
+#### cache key / metrics key 的统一规则（重要）
+
+为了避免“执行 SQL 与聚合 key 不一致”的混乱，建议在 runtime 里引入两个概念：
+
+- `canonical_sql`：用于 **statement cache key** + **指标聚合 key**（稳定、可复用）
+- `exec_sql`：最终发给 PostgreSQL 的 SQL（允许包含非语义注释，但不建议）
+
+规则：
+
+1. 默认 `canonical_sql == exec_sql`。
+2. 如果需要“只为观测而变更 SQL”（例如加固定注释），必须保证：
+   - 注释内容是 **低基数且稳定**（例如 service 名、模块名），并且
+   - `canonical_sql` 仍保持原值（statement cache 仍按 canonical 复用）。
+
+实现层面可通过（择一）：
+
+- 改造 hook 返回值：`ModifySql { exec_sql, canonical_sql: Option<String> }`
+- 或拆分 hook：`RewriterHook`（产生 canonical_sql）与 `ObserverHook`（只写 tag/fields，不动 SQL）
+
+### 4) WHERE/ORDER ident 校验：支持 dotted + quoted ident，并提供明确的 escape hatch
+
+#### 目标
+
+- builder API 默认不允许注入：动态列名/表名必须被验证或被安全地引用（quoted）。
+- 支持常见用法：`schema.table`、`table.column`、以及引用标识符（`"CamelCase"` / `"weird-name"`）。
+
+#### 决策：引入 `Ident` 结构类型，替换"到处传 String"
+
+> **与现有 `Sql::push_ident` 的关系和迁移策略**
+>
+> 现有 `Sql::push_ident(&str)` 只允许未引用标识符（`[A-Za-z_][A-Za-z0-9_]*`，不含 `$`），
+> 而新的 `Ident` 支持 quoted 标识符和 `$`。两者规则不一致。
+>
+> 最终以 `Ident` 为准。迁移策略：
+> 1. 新增 `Sql::push_safe_ident(&Ident)` 方法，接受 `Ident` 类型。
+> 2. 旧 `Sql::push_ident(&str)` 标记为 `#[deprecated]`，内部改为调用 `Ident::parse()` + `push_safe_ident()`。
+> 3. `OrderBy`、`WhereExpr` 等 builder 内部统一使用 `Ident`（当前 `OrderBy` 的 column 字段为 `String`，通过 `Ident::parse` 校验）。
+
+建议在 `pgorm` 内新增（已实现于 `crates/pgorm/src/builder.rs`）：
+
+```rust
+pub struct Ident {
+    pub parts: Vec<IdentPart>,
+}
+
+pub enum IdentPart {
+    Unquoted(String), // 校验 [A-Za-z_][A-Za-z0-9_]*（可选允许 $）
+    Quoted(String),   // 允许任意字符（除 NUL），输出时按 SQL 规则转义双引号
+}
+```
+
+并提供：
+
+- `Ident::parse(r#"public.users"#)` / `Ident::parse(r#""CamelCase"."User""#)`（解析 dotted + quoted）
+- `Sql::push_ident(&Ident)`（统一输出）
+- `OrderBy::asc(Ident)` / `Condition::eq(Ident, v)`（WHERE/ORDER 不再直接接收 `&str column`）
+
+#### 解析/校验规则（建议最小可用）
+
+- dotted：以 `.` 分隔，但 `.` 不允许出现在 quoted 片段之外；不允许空片段（禁止 `..`、前后 `.`）。
+- Unquoted：只接受 ASCII 安全子集（`_`、字母数字、可选 `$`），首字符必须是 `_` 或字母。
+- Quoted：接受 SQL 标准 quoted identifier（`"..."`），内部 `""` 表示一个 `"`；拒绝未闭合引号与 NUL。
+- 明确 escape hatch：
+  - `OrderBy::raw("...")` / `WhereExpr::Raw("...")` 继续存在，但名字上强调 `raw`，并在文档标记为危险 API。

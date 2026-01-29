@@ -10,6 +10,7 @@
 //! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
 //! - **Query monitoring**: Built-in support for timing, logging, and hooking SQL execution
 //! - **SQL checking**: Validate SQL against registered schemas and lint for common issues
+//! - **Migrations**: Optional SQL migrations via `refinery` (feature: `migrate`)
 //!
 //! ## SQL fallback (qb)
 //!
@@ -31,6 +32,11 @@ pub mod monitor;
 pub mod row;
 pub mod sql;
 pub mod transaction;
+pub mod builder;
+
+// SQL migrations (via refinery)
+#[cfg(feature = "migrate")]
+pub mod migrate;
 
 pub use client::GenericClient;
 pub use condition::{Condition, Op};
@@ -42,6 +48,11 @@ pub use monitor::{
 };
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Sql, sql};
+pub use builder::{Ident, IdentPart, WhereExpr, OrderBy, OrderItem, SortDir, NullsOrder, Pagination};
+
+// Re-export refinery types for convenience
+#[cfg(feature = "migrate")]
+pub use migrate::{Migration, Report, Runner, Target, embed_migrations};
 
 /// Alias for `sql()` - start building a SQL query.
 ///
