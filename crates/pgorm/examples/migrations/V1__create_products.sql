@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS products (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    price_cents BIGINT NOT NULL,
+    in_stock BOOLEAN NOT NULL DEFAULT TRUE
+);
+

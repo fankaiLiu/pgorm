@@ -17,6 +17,7 @@ serde_json.workspace = true
 pgorm-derive = { workspace = true, optional = true }
 pgorm-check = { path = "../pgorm-check", features = ["sql"], optional = true }
 inventory = "0.3"
+refinery = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -32,3 +33,10 @@ derive = ["pgorm-derive"]
 
 # SQL schema checking and linting (via pgorm-check)
 check = ["pgorm-check"]
+
+# SQL migrations (via refinery)
+migrate = ["dep:refinery"]
+
+[[example]]
+name = "migrate"
+required-features = ["migrate", "pool"]

@@ -53,6 +53,11 @@ pub enum OrmError {
     #[error("Query timeout after {0:?}")]
     Timeout(std::time::Duration),
 
+    /// Migration error
+    #[cfg(feature = "migrate")]
+    #[error("Migration error: {0}")]
+    Migration(String),
+
     /// Other errors
     #[error("{0}")]
     Other(String),
@@ -113,5 +118,12 @@ impl OrmError {
 impl From<deadpool_postgres::PoolError> for OrmError {
     fn from(err: deadpool_postgres::PoolError) -> Self {
         Self::Pool(err.to_string())
+    }
+}
+
+#[cfg(feature = "migrate")]
+impl From<refinery::Error> for OrmError {
+    fn from(err: refinery::Error) -> Self {
+        Self::Migration(err.to_string())
     }
 }

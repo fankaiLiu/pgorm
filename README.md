@@ -50,6 +50,22 @@ pgorm::transaction!(&mut client, tx, {
 })?;
 ```
 
+## Migrations (refinery)
+
+Enable the `migrate` feature and embed migrations from your application (or a dedicated migrations crate):
+
+```rust,ignore
+use pgorm::{create_pool, migrate};
+
+mod embedded {
+    use pgorm::embed_migrations;
+    embed_migrations!("./migrations");
+}
+
+let pool = create_pool(&database_url)?;
+migrate::run_pool(&pool, embedded::migrations::runner()).await?;
+```
+
 ## Crates
 
 - `pgorm` - Core ORM with connection pooling and query builder
