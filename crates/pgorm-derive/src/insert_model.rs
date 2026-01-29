@@ -14,14 +14,6 @@ struct BindField {
 // Graph Declarations (for multi-table writes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Source of the root key for graph operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum GraphRootKeySource {
-    #[default]
-    Returning,
-    Input,
-}
-
 /// has_one / has_many declaration.
 #[derive(Clone)]
 struct HasRelation {
@@ -33,6 +25,16 @@ struct HasRelation {
     fk_field: String,
     /// Is this has_one (single) or has_many (vec)?
     is_many: bool,
+    /// Mode: "insert" or "upsert" (default: insert).
+    mode: HasRelationMode,
+}
+
+/// Mode for has_one/has_many operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum HasRelationMode {
+    #[default]
+    Insert,
+    Upsert,
 }
 
 /// belongs_to declaration (pre-insert dependency).
@@ -44,8 +46,6 @@ struct BelongsTo {
     field: String,
     /// The field to set with parent's id.
     set_fk_field: String,
-    /// The parent's id field (default: "id").
-    referenced_id_field: String,
     /// Mode: "insert_returning" or "upsert_returning".
     mode: BelongsToMode,
     /// Whether this relation is required.
@@ -82,10 +82,10 @@ enum StepMode {
 /// All graph declarations for an InsertModel.
 #[derive(Clone, Default)]
 struct GraphDeclarations {
-    /// The root key field (from returning or input).
-    root_key: Option<String>,
-    /// Source of root key.
-    root_key_source: GraphRootKeySource,
+    /// The root ID field name (from input, for UUID/snowflake scenarios).
+    /// When set, root_id is taken from self.<field> instead of from returning.
+    /// Per doc §5: If both returning and graph_root_id_field are set, graph_root_id_field wins.
+    graph_root_id_field: Option<String>,
     /// has_one / has_many relations.
     has_relations: Vec<HasRelation>,
     /// belongs_to relations (pre-insert).
@@ -1119,28 +1119,26 @@ fn parse_graph_attr(tokens: &TokenStream, graph: &mut GraphDeclarations) -> Resu
     // Parse the tokens to get the attribute name and content
     let tokens_str = tokens.to_string();
 
-    // Handle graph_root_key = "..."
-    if tokens_str.starts_with("graph_root_key") {
-        if let Some(value) = extract_string_value(&tokens_str, "graph_root_key") {
-            graph.root_key = Some(value);
+    // Handle graph_root_id_field = "..." (new attribute per doc §5)
+    if tokens_str.starts_with("graph_root_id_field") {
+        if let Some(value) = extract_string_value(&tokens_str, "graph_root_id_field") {
+            graph.graph_root_id_field = Some(value);
         }
         return Ok(());
     }
 
-    // Handle graph_root_key_source = "..."
-    if tokens_str.starts_with("graph_root_key_source") {
-        if let Some(value) = extract_string_value(&tokens_str, "graph_root_key_source") {
-            graph.root_key_source = match value.as_str() {
-                "returning" => GraphRootKeySource::Returning,
-                "input" => GraphRootKeySource::Input,
-                _ => {
-                    return Err(syn::Error::new(
-                        Span::call_site(),
-                        "graph_root_key_source must be \"returning\" or \"input\"",
-                    ));
-                }
-            };
+    // Handle deprecated graph_root_key = "..." (for backward compatibility, maps to graph_root_id_field)
+    if tokens_str.starts_with("graph_root_key") && !tokens_str.starts_with("graph_root_key_source") {
+        if let Some(value) = extract_string_value(&tokens_str, "graph_root_key") {
+            graph.graph_root_id_field = Some(value);
         }
+        return Ok(());
+    }
+
+    // Handle deprecated graph_root_key_source = "..." (ignored, Input is now the only mode for graph_root_id_field)
+    if tokens_str.starts_with("graph_root_key_source") {
+        // Silently ignore - the new behavior is: if graph_root_id_field is set, use Input mode;
+        // otherwise use Returning mode (via ModelPk::pk())
         return Ok(());
     }
 
@@ -1191,14 +1189,15 @@ fn extract_string_value(s: &str, key: &str) -> Option<String> {
 
 /// Parse has_one/has_many attribute content.
 fn parse_has_relation(tokens: &TokenStream, is_many: bool) -> Result<Option<HasRelation>> {
-    // Parse: has_one(Type, field = "x", fk_field = "y")
-    // or:    has_many(Type, field = "x", fk_field = "y")
+    // Parse: has_one(Type, field = "x", fk_field = "y", mode = "insert")
+    // or:    has_many(Type, field = "x", fk_field = "y", mode = "upsert")
     let parsed: HasRelationAttr = syn::parse2(tokens.clone())?;
     Ok(Some(HasRelation {
         child_type: parsed.child_type,
         field: parsed.field,
         fk_field: parsed.fk_field,
         is_many,
+        mode: parsed.mode,
     }))
 }
 
@@ -1207,6 +1206,7 @@ struct HasRelationAttr {
     child_type: syn::Path,
     field: String,
     fk_field: String,
+    mode: HasRelationMode,
 }
 
 impl syn::parse::Parse for HasRelationAttr {
@@ -1223,6 +1223,7 @@ impl syn::parse::Parse for HasRelationAttr {
 
         let mut field: Option<String> = None;
         let mut fk_field: Option<String> = None;
+        let mut mode = HasRelationMode::Insert;
 
         // Parse remaining key = "value" pairs
         while !content.is_empty() {
@@ -1238,6 +1239,18 @@ impl syn::parse::Parse for HasRelationAttr {
             match key.to_string().as_str() {
                 "field" => field = Some(value.value()),
                 "fk_field" => fk_field = Some(value.value()),
+                "mode" => {
+                    mode = match value.value().as_str() {
+                        "insert" => HasRelationMode::Insert,
+                        "upsert" => HasRelationMode::Upsert,
+                        _ => {
+                            return Err(syn::Error::new(
+                                value.span(),
+                                "mode must be \"insert\" or \"upsert\"",
+                            ));
+                        }
+                    };
+                }
                 // fk_wrap is deprecated - now always use with_* setter
                 "fk_wrap" => { /* ignored for backward compatibility */ }
                 _ => {}
@@ -1255,6 +1268,7 @@ impl syn::parse::Parse for HasRelationAttr {
             child_type,
             field,
             fk_field,
+            mode,
         })
     }
 }
@@ -1266,7 +1280,6 @@ fn parse_belongs_to(tokens: &TokenStream) -> Result<Option<BelongsTo>> {
         parent_type: parsed.parent_type,
         field: parsed.field,
         set_fk_field: parsed.set_fk_field,
-        referenced_id_field: parsed.referenced_id_field,
         mode: parsed.mode,
         required: parsed.required,
     }))
@@ -1277,7 +1290,6 @@ struct BelongsToAttr {
     parent_type: syn::Path,
     field: String,
     set_fk_field: String,
-    referenced_id_field: String,
     mode: BelongsToMode,
     required: bool,
 }
@@ -1296,7 +1308,6 @@ impl syn::parse::Parse for BelongsToAttr {
 
         let mut field: Option<String> = None;
         let mut set_fk_field: Option<String> = None;
-        let mut referenced_id_field = "id".to_string();
         let mut mode = BelongsToMode::InsertReturning;
         let mut required = false;
 
@@ -1319,10 +1330,6 @@ impl syn::parse::Parse for BelongsToAttr {
                     let value: syn::LitStr = content.parse()?;
                     set_fk_field = Some(value.value());
                 }
-                "referenced_id_field" => {
-                    let value: syn::LitStr = content.parse()?;
-                    referenced_id_field = value.value();
-                }
                 "mode" => {
                     let value: syn::LitStr = content.parse()?;
                     mode = match value.value().as_str() {
@@ -1341,7 +1348,7 @@ impl syn::parse::Parse for BelongsToAttr {
                     required = value.value();
                 }
                 _ => {
-                    // Skip unknown attributes
+                    // Skip unknown attributes (including deprecated referenced_id_field)
                     let _: syn::LitStr = content.parse()?;
                 }
             }
@@ -1358,7 +1365,6 @@ impl syn::parse::Parse for BelongsToAttr {
             parent_type,
             field,
             set_fk_field,
-            referenced_id_field,
             mode,
             required,
         })
@@ -1490,31 +1496,25 @@ fn generate_insert_graph_methods(
         return Ok(quote! {});
     }
 
-    // Compile-time check: has_one/has_many with graph_root_key_source = "returning" (default)
-    // requires #[orm(returning = "...")] to be set, because we need the root ID to inject into children.
-    if !graph.has_relations.is_empty() && graph.root_key_source == GraphRootKeySource::Returning {
+    // Compile-time check: has_one/has_many without graph_root_id_field requires returning type
+    // because we need the root ID (via ModelPk::pk()) to inject into children.
+    if !graph.has_relations.is_empty() && graph.graph_root_id_field.is_none() {
         if struct_attrs.returning.is_none() {
             let relation_names: Vec<_> = graph.has_relations.iter().map(|r| &r.field).collect();
             return Err(syn::Error::new_spanned(
                 input,
                 format!(
-                    "InsertModel with has_one/has_many relations ({:?}) requires #[orm(returning = \"...\")] \
-                    when graph_root_key_source = \"returning\" (default). \
-                    The returning type must have the root key field '{}' to inject into child foreign keys. \
-                    Either add #[orm(returning = \"YourModel\")] or set graph_root_key_source = \"input\" \
-                    with a corresponding input field.",
+                    "InsertModel with has_one/has_many relations ({:?}) requires either: \
+                    \n  1. #[orm(returning = \"YourModel\")] where YourModel implements ModelPk, or \
+                    \n  2. #[orm(graph_root_id_field = \"id\")] to get root_id from input field. \
+                    \nThe root ID is needed to set foreign keys on child records.",
                     relation_names,
-                    graph.root_key.as_deref().unwrap_or("id")
                 ),
             ));
         }
     }
 
     let table_name = &struct_attrs.table;
-
-    // Determine root key field
-    let root_key = graph.root_key.clone().unwrap_or_else(|| "id".to_string());
-    let root_key_ident = format_ident!("{}", root_key);
 
     // Collect all field idents that need to be extracted from self
     let mut all_field_idents: Vec<syn::Ident> = Vec::new();
@@ -1523,6 +1523,9 @@ fn generate_insert_graph_methods(
             all_field_idents.push(ident.clone());
         }
     }
+
+    // Placeholder ident for root_key (not actually used now)
+    let root_key_ident = format_ident!("id");
 
     // Generate code for belongs_to (pre-insert) steps
     let belongs_to_code = generate_belongs_to_code(graph, &root_key_ident)?;
@@ -1545,6 +1548,12 @@ fn generate_insert_graph_methods(
     // Check if we need returning type
     let returning_ty = struct_attrs.returning.as_ref();
 
+    // Determine root ID source:
+    // 1. If graph_root_id_field is set, use Input mode (get from self.<field>)
+    // 2. Otherwise use Returning mode (get from ModelPk::pk() on returning type)
+    let has_graph_root_id_field = graph.graph_root_id_field.is_some();
+    let needs_root_id = !graph.has_relations.is_empty();
+
     // The pre-insert execution logic (belongs_to and before_insert)
     let pre_insert_code = quote! {
         let mut __pgorm_steps: ::std::vec::Vec<::pgorm::WriteStepReport> = ::std::vec::Vec::new();
@@ -1560,24 +1569,117 @@ fn generate_insert_graph_methods(
         #before_insert_code
     };
 
-    // Generate the three methods
-    // Only require ModelPk bound if we have has_relations that need root ID
-    let needs_model_pk = !graph.has_relations.is_empty();
+    // Generate code to get root_id based on the source mode
+    let (get_root_id_code, needs_model_pk_bound) = if let Some(ref root_id_field) = graph.graph_root_id_field {
+        // Input mode: get root_id from self.<field> before insert
+        // Field can be T or Option<T>. For Option<T>, we need to handle None case.
+        let root_id_field_ident = format_ident!("{}", root_id_field);
+        let root_id_field_name = root_id_field.clone();
 
-    let insert_graph_method = if returning_ty.is_some() {
-        // Even if returning just u64, we need root ID for children, so use insert_returning internally
-        let returning_ty = returning_ty.unwrap();
-        let where_clause = if needs_model_pk {
+        // We clone the ID before insert since self will be consumed
+        let code = quote! {
+            // Get root_id from input field (graph_root_id_field mode)
+            let __pgorm_root_id = {
+                let id_ref = &self.#root_id_field_ident;
+                // Handle both T and Option<T> cases via trait
+                __pgorm_extract_root_id(id_ref, #root_id_field_name)?
+            };
+        };
+        (code, false)
+    } else if needs_root_id {
+        // Returning mode: get root_id from ModelPk::pk() after insert_returning
+        // This requires returning type to implement ModelPk
+        (quote! {}, true) // root_id will be extracted after insert_returning
+    } else {
+        // No root_id needed (no has_relations)
+        (quote! {}, false)
+    };
+
+    // Helper function for extracting root_id from Option<T> or T
+    let extract_helper = if has_graph_root_id_field {
+        quote! {
+            fn __pgorm_extract_root_id<T: ::core::clone::Clone>(
+                value: &T,
+                _field_name: &str,
+            ) -> ::pgorm::OrmResult<T> {
+                ::std::result::Result::Ok(value.clone())
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    // Generate the three methods with proper handling of root_id source
+    let insert_graph_method = if has_graph_root_id_field {
+        // Input mode: we can get root_id before insert, so we don't need returning for has_*
+        let returning_handling = if let Some(ret_ty) = returning_ty {
+            quote! {
+                // Root insert with returning
+                let __pgorm_root_result: #ret_ty = self.insert_returning(conn).await?;
+                __pgorm_steps.push(::pgorm::WriteStepReport {
+                    tag: #root_tag,
+                    affected: 1,
+                });
+                __pgorm_total_affected += 1;
+            }
+        } else {
+            quote! {
+                // Root insert (without returning, but we have root_id from input)
+                let __pgorm_root_affected = self.insert(conn).await?;
+                __pgorm_steps.push(::pgorm::WriteStepReport {
+                    tag: #root_tag,
+                    affected: __pgorm_root_affected,
+                });
+                __pgorm_total_affected += __pgorm_root_affected;
+            }
+        };
+
+        quote! {
+            /// Insert this struct and all related graph nodes.
+            ///
+            /// Execution order: belongs_to → before_insert → root → has_one/has_many → after_insert
+            pub async fn insert_graph(
+                mut self,
+                conn: &impl ::pgorm::GenericClient,
+            ) -> ::pgorm::OrmResult<u64> {
+                #extract_helper
+
+                #pre_insert_code
+
+                // Get root_id from input field before insert
+                #get_root_id_code
+
+                #returning_handling
+
+                // Execute post-insert steps with root ID
+                #has_relation_code
+                #after_insert_code
+
+                ::std::result::Result::Ok(__pgorm_total_affected)
+            }
+        }
+    } else if let Some(ret_ty) = returning_ty {
+        // Returning mode with returning type configured
+        let where_clause = if needs_model_pk_bound {
             quote! {
                 where
-                    #returning_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
+                    #ret_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
             }
         } else {
             quote! {
                 where
-                    #returning_ty: ::pgorm::FromRow,
+                    #ret_ty: ::pgorm::FromRow,
             }
         };
+
+        let root_id_extraction = if needs_root_id {
+            quote! {
+                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             /// Insert this struct and all related graph nodes.
             ///
@@ -1591,8 +1693,8 @@ fn generate_insert_graph_methods(
                 #pre_insert_code
 
                 // Root insert with returning to get the ID
-                let __pgorm_root_result: #returning_ty = self.insert_returning(conn).await?;
-                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
+                let __pgorm_root_result: #ret_ty = self.insert_returning(conn).await?;
+                #root_id_extraction
                 __pgorm_steps.push(::pgorm::WriteStepReport {
                     tag: #root_tag,
                     affected: 1,
@@ -1607,12 +1709,13 @@ fn generate_insert_graph_methods(
             }
         }
     } else {
-        // No returning type - graph operations with has_one/has_many won't work properly
-        // We still generate the method but it will only work for belongs_to and insert steps
+        // No returning type - graph operations with has_one/has_many won't work
+        // This case is handled by task #3 (compile error for has_* without returning)
         quote! {
             /// Insert this struct and all related graph nodes.
             ///
-            /// Note: has_one/has_many relations require `#[orm(returning = "...")]` to be set.
+            /// Note: has_one/has_many relations require either `#[orm(returning = "...")]`
+            /// or `#[orm(graph_root_id_field = "...")]` to be set.
             pub async fn insert_graph(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
@@ -1632,18 +1735,38 @@ fn generate_insert_graph_methods(
         }
     };
 
-    let insert_graph_returning_method = if let Some(returning_ty) = returning_ty {
-        let where_clause = if needs_model_pk {
+    let insert_graph_returning_method = if let Some(ret_ty) = returning_ty {
+        let where_clause = if needs_model_pk_bound && !has_graph_root_id_field {
             quote! {
                 where
-                    #returning_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
+                    #ret_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
             }
         } else {
             quote! {
                 where
-                    #returning_ty: ::pgorm::FromRow,
+                    #ret_ty: ::pgorm::FromRow,
             }
         };
+
+        // Code to run before insert (for graph_root_id_field mode)
+        let pre_insert_root_id = if has_graph_root_id_field {
+            quote! {
+                #extract_helper
+                #get_root_id_code
+            }
+        } else {
+            quote! {}
+        };
+
+        // Code to run after insert (for returning mode)
+        let post_insert_root_id = if !has_graph_root_id_field && needs_root_id {
+            quote! {
+                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             /// Insert this struct and all related graph nodes, returning the root row.
             ///
@@ -1651,14 +1774,20 @@ fn generate_insert_graph_methods(
             pub async fn insert_graph_returning(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
-            ) -> ::pgorm::OrmResult<#returning_ty>
+            ) -> ::pgorm::OrmResult<#ret_ty>
             #where_clause
             {
                 #pre_insert_code
 
+                // Get root_id from input field before insert (if graph_root_id_field mode)
+                #pre_insert_root_id
+
                 // Root insert with returning
-                let __pgorm_root_result: #returning_ty = self.insert_returning(conn).await?;
-                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
+                let __pgorm_root_result: #ret_ty = self.insert_returning(conn).await?;
+
+                // Get root_id from returning result (if not graph_root_id_field mode)
+                #post_insert_root_id
+
                 __pgorm_steps.push(::pgorm::WriteStepReport {
                     tag: #root_tag,
                     affected: 1,
@@ -1676,18 +1805,38 @@ fn generate_insert_graph_methods(
         quote! {}
     };
 
-    let insert_graph_report_method = if let Some(returning_ty) = returning_ty {
-        let where_clause = if needs_model_pk {
+    let insert_graph_report_method = if let Some(ret_ty) = returning_ty {
+        let where_clause = if needs_model_pk_bound && !has_graph_root_id_field {
             quote! {
                 where
-                    #returning_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
+                    #ret_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
             }
         } else {
             quote! {
                 where
-                    #returning_ty: ::pgorm::FromRow,
+                    #ret_ty: ::pgorm::FromRow,
             }
         };
+
+        // Code to run before insert (for graph_root_id_field mode)
+        let pre_insert_root_id = if has_graph_root_id_field {
+            quote! {
+                #extract_helper
+                #get_root_id_code
+            }
+        } else {
+            quote! {}
+        };
+
+        // Code to run after insert (for returning mode)
+        let post_insert_root_id = if !has_graph_root_id_field && needs_root_id {
+            quote! {
+                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             /// Insert this struct and all related graph nodes, returning a detailed report.
             ///
@@ -1695,14 +1844,20 @@ fn generate_insert_graph_methods(
             pub async fn insert_graph_report(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
-            ) -> ::pgorm::OrmResult<::pgorm::WriteReport<#returning_ty>>
+            ) -> ::pgorm::OrmResult<::pgorm::WriteReport<#ret_ty>>
             #where_clause
             {
                 #pre_insert_code
 
+                // Get root_id from input field before insert (if graph_root_id_field mode)
+                #pre_insert_root_id
+
                 // Root insert with returning
-                let __pgorm_root_result: #returning_ty = self.insert_returning(conn).await?;
-                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
+                let __pgorm_root_result: #ret_ty = self.insert_returning(conn).await?;
+
+                // Get root_id from returning result (if not graph_root_id_field mode)
+                #post_insert_root_id
+
                 __pgorm_steps.push(::pgorm::WriteStepReport {
                     tag: #root_tag,
                     affected: 1,
@@ -1720,14 +1875,51 @@ fn generate_insert_graph_methods(
                 })
             }
         }
-    } else {
-        // When no returning type is configured, return WriteReport<()>
-        // Note: has_one/has_many won't work in this case (compile error enforced above)
+    } else if has_graph_root_id_field {
+        // No returning type but we have graph_root_id_field, so we can still do has_* operations
         quote! {
             /// Insert this struct and all related graph nodes, returning a detailed report.
             ///
-            /// Note: has_one/has_many relations require `#[orm(returning = "...")]` to be set.
-            /// Without returning, this method returns `WriteReport<()>` with `root: None`.
+            /// Returns `WriteReport<()>` with `root: None` since no returning type is configured.
+            pub async fn insert_graph_report(
+                mut self,
+                conn: &impl ::pgorm::GenericClient,
+            ) -> ::pgorm::OrmResult<::pgorm::WriteReport<()>> {
+                #extract_helper
+
+                #pre_insert_code
+
+                // Get root_id from input field before insert
+                #get_root_id_code
+
+                // Root insert (without returning)
+                let __pgorm_root_affected = self.insert(conn).await?;
+                __pgorm_steps.push(::pgorm::WriteStepReport {
+                    tag: #root_tag,
+                    affected: __pgorm_root_affected,
+                });
+                __pgorm_total_affected += __pgorm_root_affected;
+
+                // Execute post-insert steps with root ID
+                #has_relation_code
+                #after_insert_code
+
+                ::std::result::Result::Ok(::pgorm::WriteReport {
+                    affected: __pgorm_total_affected,
+                    steps: __pgorm_steps,
+                    root: ::std::option::Option::None,
+                })
+            }
+        }
+    } else {
+        // When no returning type is configured, return WriteReport<()>
+        // Note: has_one/has_many won't work in this case
+        quote! {
+            /// Insert this struct and all related graph nodes, returning a detailed report.
+            ///
+            /// Note: has_one/has_many relations require `#[orm(returning = "...")]` or
+            /// `#[orm(graph_root_id_field = "...")]` to be set.
+            /// Without either, this method returns `WriteReport<()>` with `root: None`.
             pub async fn insert_graph_report(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
@@ -1759,6 +1951,12 @@ fn generate_insert_graph_methods(
 }
 
 /// Generate code to extract graph fields (has_one/has_many and after_insert) before consuming self.
+///
+/// For has_one/has_many fields, we support both `Option<T>` and direct `T` types:
+/// - `Option<T>`: uses `.take()` to extract
+/// - `T`: wraps in `Some()` for uniform handling
+///
+/// The generated code uses a helper trait to handle both cases uniformly.
 fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<TokenStream> {
     let mut extract_stmts = Vec::new();
 
@@ -1767,8 +1965,12 @@ fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<Token
         let field_ident = format_ident!("{}", rel.field);
         let extracted_field_ident = format_ident!("__pgorm_graph_{}", rel.field);
 
+        // Use a helper that works for both Option<T> and T
+        // For Option<T>, take() returns Option<T>
+        // For T, we need to convert to Option<T>
+        // We achieve this by using a trait-based approach inline
         extract_stmts.push(quote! {
-            let #extracted_field_ident = self.#field_ident.take();
+            let #extracted_field_ident = __pgorm_take_graph_field(&mut self.#field_ident);
         });
     }
 
@@ -1779,7 +1981,7 @@ fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<Token
             let extracted_field_ident = format_ident!("__pgorm_step_{}", step.field);
 
             extract_stmts.push(quote! {
-                let #extracted_field_ident = self.#field_ident.take();
+                let #extracted_field_ident = __pgorm_take_graph_field(&mut self.#field_ident);
             });
         }
     }
@@ -1788,12 +1990,37 @@ fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<Token
         return Ok(quote! {});
     }
 
+    // Generate the helper trait and implementations
+    let helper_code = quote! {
+        // Helper trait to extract graph fields uniformly for both Option<T> and T types
+        trait __PgormTakeGraphField<T> {
+            fn __pgorm_take(&mut self) -> ::std::option::Option<T>;
+        }
+
+        // Implementation for Option<T>: use take()
+        impl<T> __PgormTakeGraphField<T> for ::std::option::Option<T> {
+            fn __pgorm_take(&mut self) -> ::std::option::Option<T> {
+                self.take()
+            }
+        }
+
+        fn __pgorm_take_graph_field<T, F: __PgormTakeGraphField<T>>(field: &mut F) -> ::std::option::Option<T> {
+            field.__pgorm_take()
+        }
+    };
+
     Ok(quote! {
+        #helper_code
         #(#extract_stmts)*
     })
 }
 
 /// Generate code for belongs_to (pre-insert) steps.
+/// Uses ModelPk::pk() to get parent ID (avoiding direct field access for cross-module compatibility).
+///
+/// Semantics (per doc §6.1.2):
+/// - If set_fk_field already has a value (Some), skip belongs_to write
+/// - If required=true but both set_fk_field is None and field is None, return Validation error
 fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Ident) -> Result<TokenStream> {
     if graph.belongs_to.is_empty() {
         return Ok(quote! {});
@@ -1804,9 +2031,10 @@ fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Id
     for bt in &graph.belongs_to {
         let field_ident = format_ident!("{}", bt.field);
         let set_fk_field_ident = format_ident!("{}", bt.set_fk_field);
-        let referenced_id_field_ident = format_ident!("{}", bt.referenced_id_field);
         let _parent_type = &bt.parent_type;
         let tag = format!("graph:belongs_to:{}", bt.field);
+        let field_name = &bt.field;
+        let set_fk_field_name = &bt.set_fk_field;
 
         let insert_call = match bt.mode {
             BelongsToMode::InsertReturning => quote! { insert_returning(conn).await? },
@@ -1815,31 +2043,46 @@ fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Id
 
         let code = if bt.required {
             // Required: must have either fk field set or parent field set
+            // If set_fk_field already has value, skip. Otherwise parent field must be Some.
             quote! {
-                // belongs_to: #field_ident
-                if let ::std::option::Option::Some(parent_data) = self.#field_ident.take() {
+                // belongs_to: #field_ident (required)
+                if self.#set_fk_field_ident.is_some() {
+                    // FK already set, skip belongs_to write
+                } else if let ::std::option::Option::Some(parent_data) = self.#field_ident.take() {
                     let parent_result = parent_data.#insert_call;
-                    let parent_id = parent_result.#referenced_id_field_ident.clone();
+                    let parent_id = ::pgorm::ModelPk::pk(&parent_result).clone();
                     self.#set_fk_field_ident = ::std::option::Option::Some(parent_id);
                     __pgorm_steps.push(::pgorm::WriteStepReport {
                         tag: #tag,
                         affected: 1,
                     });
                     __pgorm_total_affected += 1;
+                } else {
+                    return ::std::result::Result::Err(::pgorm::OrmError::Validation(
+                        ::std::format!(
+                            "belongs_to '{}' is required but neither '{}' nor '{}' is set",
+                            #field_name,
+                            #set_fk_field_name,
+                            #field_name
+                        )
+                    ));
                 }
             }
         } else {
+            // Optional: if set_fk_field already has value, skip. Otherwise process parent if present.
             quote! {
                 // belongs_to: #field_ident (optional)
-                if let ::std::option::Option::Some(parent_data) = self.#field_ident.take() {
-                    let parent_result = parent_data.#insert_call;
-                    let parent_id = parent_result.#referenced_id_field_ident.clone();
-                    self.#set_fk_field_ident = ::std::option::Option::Some(parent_id);
-                    __pgorm_steps.push(::pgorm::WriteStepReport {
-                        tag: #tag,
-                        affected: 1,
-                    });
-                    __pgorm_total_affected += 1;
+                if self.#set_fk_field_ident.is_none() {
+                    if let ::std::option::Option::Some(parent_data) = self.#field_ident.take() {
+                        let parent_result = parent_data.#insert_call;
+                        let parent_id = ::pgorm::ModelPk::pk(&parent_result).clone();
+                        self.#set_fk_field_ident = ::std::option::Option::Some(parent_id);
+                        __pgorm_steps.push(::pgorm::WriteStepReport {
+                            tag: #tag,
+                            affected: 1,
+                        });
+                        __pgorm_total_affected += 1;
+                    }
                 }
             }
         };
@@ -1923,6 +2166,7 @@ fn generate_insert_step_code(graph: &GraphDeclarations, is_before: bool) -> Resu
 
 /// Generate code for has_one/has_many (post-insert) steps.
 /// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
+/// Supports mode = "insert" (default) or "upsert" per doc §6.1.1.
 fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::Ident) -> Result<TokenStream> {
     if graph.has_relations.is_empty() {
         return Ok(quote! {});
@@ -1945,8 +2189,12 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
 
         let code = if rel.is_many {
             // has_many: Vec<Child> or Option<Vec<Child>>
+            let insert_call = match rel.mode {
+                HasRelationMode::Insert => quote! { #child_type::insert_many(conn, children_with_fk).await? },
+                HasRelationMode::Upsert => quote! { #child_type::upsert_many(conn, children_with_fk).await? },
+            };
             quote! {
-                // has_many: #field_ident
+                // has_many: #_field_ident
                 if let ::std::option::Option::Some(children) = #extracted_field_ident {
                     if !children.is_empty() {
                         // Inject root ID into each child's fk field using with_* setter
@@ -1954,8 +2202,8 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
                             .into_iter()
                             .map(|child| child.#setter_name(__pgorm_root_id.clone()))
                             .collect();
-                        // Insert all children
-                        let affected = #child_type::insert_many(conn, children_with_fk).await?;
+                        // Insert/upsert all children
+                        let affected = #insert_call;
                         __pgorm_steps.push(::pgorm::WriteStepReport {
                             tag: #tag,
                             affected,
@@ -1966,13 +2214,17 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
             }
         } else {
             // has_one: Child or Option<Child>
+            let insert_call = match rel.mode {
+                HasRelationMode::Insert => quote! { child_with_fk.insert(conn).await? },
+                HasRelationMode::Upsert => quote! { child_with_fk.upsert(conn).await? },
+            };
             quote! {
-                // has_one: #field_ident
+                // has_one: #_field_ident
                 if let ::std::option::Option::Some(child) = #extracted_field_ident {
                     // Inject root ID into child's fk field using with_* setter
                     let child_with_fk = child.#setter_name(__pgorm_root_id.clone());
-                    // Insert child
-                    let affected = child_with_fk.insert(conn).await?;
+                    // Insert/upsert child
+                    let affected = #insert_call;
                     __pgorm_steps.push(::pgorm::WriteStepReport {
                         tag: #tag,
                         affected,
