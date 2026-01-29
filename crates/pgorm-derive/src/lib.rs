@@ -8,6 +8,7 @@ use syn::{DeriveInput, parse_macro_input};
 mod from_row;
 mod insert_model;
 mod model;
+mod sql_ident;
 mod update_model;
 
 /// Derive `FromRow` trait for a struct.

@@ -4,6 +4,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, Result};
 
+use crate::sql_ident::{parse_sql_ident, parse_sql_ident_list};
+
 struct BindField {
     ident: syn::Ident,
     ty: syn::Type,
@@ -172,38 +174,13 @@ impl syn::parse::Parse for StructAttrList {
                     returning = Some(ty);
                 }
                 "conflict_target" => {
-                    let cols: Vec<String> = value
-                        .value()
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if cols.is_empty() {
-                        return Err(syn::Error::new(
-                            value.span(),
-                            "conflict_target must specify at least one column",
-                        ));
-                    }
-                    conflict_target = Some(cols);
+                    conflict_target = Some(parse_sql_ident_list(&value, "conflict_target", false)?);
                 }
                 "conflict_constraint" => {
-                    let constraint_name = value.value().trim().to_string();
-                    if constraint_name.is_empty() {
-                        return Err(syn::Error::new(
-                            value.span(),
-                            "conflict_constraint must specify a constraint name",
-                        ));
-                    }
-                    conflict_constraint = Some(constraint_name);
+                    conflict_constraint = Some(parse_sql_ident(&value, "conflict_constraint")?);
                 }
                 "conflict_update" => {
-                    let cols: Vec<String> = value
-                        .value()
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    conflict_update = Some(cols);
+                    conflict_update = Some(parse_sql_ident_list(&value, "conflict_update", true)?);
                 }
                 "graph_root_id_field" => {
                     graph_root_id_field = Some(value.value());
@@ -225,7 +202,14 @@ impl syn::parse::Parse for StructAttrList {
             }
         }
 
-        Ok(Self { table, returning, conflict_target, conflict_constraint, conflict_update, graph_root_id_field })
+        Ok(Self {
+            table,
+            returning,
+            conflict_target,
+            conflict_constraint,
+            conflict_update,
+            graph_root_id_field,
+        })
     }
 }
 
@@ -429,13 +413,15 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             }
         }
     } else {
-        let batch_columns: Vec<String> = batch_bind_fields.iter().map(|f| f.column.clone()).collect();
+        let batch_columns: Vec<String> =
+            batch_bind_fields.iter().map(|f| f.column.clone()).collect();
         let batch_columns_str = batch_columns.join(", ");
         let list_idents: Vec<syn::Ident> = batch_bind_fields
             .iter()
             .map(|f| format_ident!("__pgorm_insert_{}_list", f.ident))
             .collect();
-        let field_idents: Vec<syn::Ident> = batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
+        let field_idents: Vec<syn::Ident> =
+            batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
         let field_tys: Vec<syn::Type> = batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
 
         let init_lists: Vec<TokenStream> = list_idents
@@ -507,96 +493,109 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         Columns(Vec<String>),
     }
 
-    let conflict_spec: Option<ConflictSpec> = if let Some(constraint) = struct_attrs.conflict_constraint.clone() {
-        Some(ConflictSpec::Constraint(constraint))
-    } else if let Some(cols) = struct_attrs.conflict_target.clone() {
-        Some(ConflictSpec::Columns(cols))
-    } else {
-        id_field.as_ref().map(|f| ConflictSpec::Columns(vec![f.column.clone()]))
-    };
+    let conflict_spec: Option<ConflictSpec> =
+        if let Some(constraint) = struct_attrs.conflict_constraint.clone() {
+            Some(ConflictSpec::Constraint(constraint))
+        } else if let Some(cols) = struct_attrs.conflict_target.clone() {
+            Some(ConflictSpec::Columns(cols))
+        } else {
+            id_field
+                .as_ref()
+                .map(|f| ConflictSpec::Columns(vec![f.column.clone()]))
+        };
 
     let upsert_methods = if let Some(conflict_spec) = conflict_spec {
         // Build the ON CONFLICT clause
-        let (on_conflict_clause, conflict_cols_for_exclusion): (String, Vec<String>) = match &conflict_spec {
-            ConflictSpec::Constraint(name) => {
-                (format!("ON CONFLICT ON CONSTRAINT {}", name), vec![])
-            }
-            ConflictSpec::Columns(cols) => {
-                (format!("ON CONFLICT ({})", cols.join(", ")), cols.clone())
-            }
-        };
+        let (on_conflict_clause, conflict_cols_for_exclusion): (String, Vec<String>) =
+            match &conflict_spec {
+                ConflictSpec::Constraint(name) => {
+                    (format!("ON CONFLICT ON CONSTRAINT {}", name), vec![])
+                }
+                ConflictSpec::Columns(cols) => {
+                    (format!("ON CONFLICT ({})", cols.join(", ")), cols.clone())
+                }
+            };
 
         // For upsert, we need all fields that should be in the INSERT (including conflict columns)
         // If conflict_target is set, we use all bind fields + any fields matching conflict columns
         // If using id field, we include id + bind fields
         // For conflict_constraint, we use bind fields only (constraint defines uniqueness)
-        let (upsert_columns, upsert_bind_idents, upsert_bind_field_tys): (Vec<String>, Vec<syn::Ident>, Vec<syn::Type>) =
-            match &conflict_spec {
-                ConflictSpec::Constraint(_) => {
-                    // With constraint-based conflict, include all bind fields
-                    // (the constraint already defines which columns make up uniqueness)
-                    (
-                        batch_bind_fields.iter().map(|f| f.column.clone()).collect(),
-                        batch_bind_fields.iter().map(|f| f.ident.clone()).collect(),
-                        batch_bind_fields.iter().map(|f| f.ty.clone()).collect(),
-                    )
-                }
-                ConflictSpec::Columns(conflict_cols) => {
-                    if struct_attrs.conflict_target.is_some() {
-                        // With explicit conflict_target, include all insert columns (bind fields)
-                        // but we need to also include conflict columns if they're not already in bind_field_idents
-                        let mut columns: Vec<String> = batch_bind_fields.iter().map(|f| f.column.clone()).collect();
-                        let mut idents: Vec<syn::Ident> = batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
-                        let mut tys: Vec<syn::Type> = batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
+        let (upsert_columns, upsert_bind_idents, upsert_bind_field_tys): (
+            Vec<String>,
+            Vec<syn::Ident>,
+            Vec<syn::Type>,
+        ) = match &conflict_spec {
+            ConflictSpec::Constraint(_) => {
+                // With constraint-based conflict, include all bind fields
+                // (the constraint already defines which columns make up uniqueness)
+                (
+                    batch_bind_fields.iter().map(|f| f.column.clone()).collect(),
+                    batch_bind_fields.iter().map(|f| f.ident.clone()).collect(),
+                    batch_bind_fields.iter().map(|f| f.ty.clone()).collect(),
+                )
+            }
+            ConflictSpec::Columns(conflict_cols) => {
+                if struct_attrs.conflict_target.is_some() {
+                    // With explicit conflict_target, include all insert columns (bind fields)
+                    // but we need to also include conflict columns if they're not already in bind_field_idents
+                    let mut columns: Vec<String> =
+                        batch_bind_fields.iter().map(|f| f.column.clone()).collect();
+                    let mut idents: Vec<syn::Ident> =
+                        batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
+                    let mut tys: Vec<syn::Type> =
+                        batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
 
-                        // If we have an id field and it's in the conflict columns, add it
-                        if let Some(id_f) = id_field.as_ref() {
-                            if conflict_cols.contains(&id_f.column) && !columns.contains(&id_f.column) {
-                                columns.insert(0, id_f.column.clone());
-                                idents.insert(0, id_f.ident.clone());
-                                tys.insert(0, id_f.ty.clone());
-                            }
+                    // If we have an id field and it's in the conflict columns, add it
+                    if let Some(id_f) = id_field.as_ref() {
+                        if conflict_cols.contains(&id_f.column) && !columns.contains(&id_f.column) {
+                            columns.insert(0, id_f.column.clone());
+                            idents.insert(0, id_f.ident.clone());
+                            tys.insert(0, id_f.ty.clone());
                         }
-
-                        (columns, idents, tys)
-                    } else if let Some(id_f) = id_field.as_ref() {
-                        // Using id field as conflict target (original behavior)
-                        let columns: Vec<String> = std::iter::once(id_f.column.clone())
-                            .chain(batch_bind_fields.iter().map(|f| f.column.clone()))
-                            .collect();
-                        let idents: Vec<syn::Ident> = std::iter::once(id_f.ident.clone())
-                            .chain(batch_bind_fields.iter().map(|f| f.ident.clone()))
-                            .collect();
-                        let tys: Vec<syn::Type> = std::iter::once(id_f.ty.clone())
-                            .chain(batch_bind_fields.iter().map(|f| f.ty.clone()))
-                            .collect();
-                        (columns, idents, tys)
-                    } else {
-                        // Should not happen since we have conflict_cols
-                        (vec![], vec![], vec![])
                     }
-                }
-            };
 
-        let placeholders: Vec<String> = (1..=upsert_bind_idents.len()).map(|i| format!("${}", i)).collect();
+                    (columns, idents, tys)
+                } else if let Some(id_f) = id_field.as_ref() {
+                    // Using id field as conflict target (original behavior)
+                    let columns: Vec<String> = std::iter::once(id_f.column.clone())
+                        .chain(batch_bind_fields.iter().map(|f| f.column.clone()))
+                        .collect();
+                    let idents: Vec<syn::Ident> = std::iter::once(id_f.ident.clone())
+                        .chain(batch_bind_fields.iter().map(|f| f.ident.clone()))
+                        .collect();
+                    let tys: Vec<syn::Type> = std::iter::once(id_f.ty.clone())
+                        .chain(batch_bind_fields.iter().map(|f| f.ty.clone()))
+                        .collect();
+                    (columns, idents, tys)
+                } else {
+                    // Should not happen since we have conflict_cols
+                    (vec![], vec![], vec![])
+                }
+            }
+        };
+
+        let placeholders: Vec<String> = (1..=upsert_bind_idents.len())
+            .map(|i| format!("${}", i))
+            .collect();
 
         // Update assignments:
         // - If conflict_update is set, only update specified columns
         // - Otherwise, update all columns except the conflict columns
-        let mut update_assignments: Vec<String> = if let Some(update_cols) = &struct_attrs.conflict_update {
-            // Only update specified columns
-            update_cols
-                .iter()
-                .map(|col| format!("{} = EXCLUDED.{}", col, col))
-                .collect()
-        } else {
-            // Default: update all columns except conflict columns
-            upsert_columns
-                .iter()
-                .filter(|col| !conflict_cols_for_exclusion.contains(col))
-                .map(|col| format!("{} = EXCLUDED.{}", col, col))
-                .collect()
-        };
+        let mut update_assignments: Vec<String> =
+            if let Some(update_cols) = &struct_attrs.conflict_update {
+                // Only update specified columns
+                update_cols
+                    .iter()
+                    .map(|col| format!("{} = EXCLUDED.{}", col, col))
+                    .collect()
+            } else {
+                // Default: update all columns except conflict columns
+                upsert_columns
+                    .iter()
+                    .filter(|col| !conflict_cols_for_exclusion.contains(col))
+                    .map(|col| format!("{} = EXCLUDED.{}", col, col))
+                    .collect()
+            };
         if update_assignments.is_empty() {
             // If no columns to update, generate a no-op update (assign first column to itself)
             if let Some(first_col) = upsert_columns.first() {
@@ -826,7 +825,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     rows: ::std::vec::Vec<Self>,
                 ) -> ::pgorm::OrmResult<u64>
                 where
-                    I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
+                    I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
                 {
                     let rows_count = rows.len() as u64;
 
@@ -948,7 +947,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 .collect();
             let field_idents: Vec<syn::Ident> =
                 batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
-            let field_tys: Vec<syn::Type> = batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
+            let field_tys: Vec<syn::Type> =
+                batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
 
             let init_lists: Vec<TokenStream> = list_idents
                 .iter()
@@ -1058,12 +1058,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         bind_idents: bind_field_idents.clone(),
     };
 
-    let insert_graph_methods = generate_insert_graph_methods(
-        &struct_attrs,
-        &input,
-        fields,
-        &insert_sql_info,
-    )?;
+    let insert_graph_methods =
+        generate_insert_graph_methods(&struct_attrs, &input, fields, &insert_sql_info)?;
 
     Ok(quote! {
         impl #impl_generics #name #ty_generics #where_clause {
@@ -1141,7 +1137,14 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
         ));
     }
 
-    Ok(StructAttrs { table, returning, conflict_target, conflict_constraint, conflict_update, graph })
+    Ok(StructAttrs {
+        table,
+        returning,
+        conflict_target,
+        conflict_constraint,
+        conflict_update,
+        graph,
+    })
 }
 
 /// Parse a graph-style attribute like `has_many(Type, field = "x", fk_field = "y")`.
@@ -1158,7 +1161,8 @@ fn parse_graph_attr(tokens: &TokenStream, graph: &mut GraphDeclarations) -> Resu
     }
 
     // Handle deprecated graph_root_key = "..." (ignored, use graph_root_id_field instead)
-    if tokens_str.starts_with("graph_root_key") && !tokens_str.starts_with("graph_root_key_source") {
+    if tokens_str.starts_with("graph_root_key") && !tokens_str.starts_with("graph_root_key_source")
+    {
         // Silently ignore - deprecated. Use graph_root_id_field for explicit input mode,
         // or rely on returning + ModelPk::pk() for automatic ID extraction
         return Ok(());
@@ -1287,10 +1291,16 @@ impl syn::parse::Parse for HasRelationAttr {
         }
 
         let field = field.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_one/has_many requires field = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_one/has_many requires field = \"...\"",
+            )
         })?;
         let fk_field = fk_field.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_one/has_many requires fk_field = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_one/has_many requires fk_field = \"...\"",
+            )
         })?;
 
         Ok(Self {
@@ -1387,7 +1397,10 @@ impl syn::parse::Parse for BelongsToAttr {
             syn::Error::new(Span::call_site(), "belongs_to requires field = \"...\"")
         })?;
         let set_fk_field = set_fk_field.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "belongs_to requires set_fk_field = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "belongs_to requires set_fk_field = \"...\"",
+            )
         })?;
 
         Ok(Self {
@@ -1564,7 +1577,8 @@ fn generate_insert_graph_methods(
     let before_insert_code = generate_insert_step_code(graph, true)?;
 
     // Generate code to extract graph fields before consuming self
-    let (extract_graph_fields_code, direct_t_fields) = generate_extract_graph_fields_code(graph, fields)?;
+    let (extract_graph_fields_code, direct_t_fields) =
+        generate_extract_graph_fields_code(graph, fields)?;
 
     // Check if we have direct T fields (non-Option, non-Vec)
     // If so, we need to use inline SQL instead of self.insert() because we can't call .take()
@@ -1664,56 +1678,29 @@ fn generate_insert_graph_methods(
 
     // For direct T mode, we need to regenerate graph field extraction to use local variables
     // Note: These are currently unused but kept for future full direct T support (option B)
-    let (_direct_t_mode_extract_code, _direct_t_mode_belongs_to, _direct_t_mode_before_insert) = if has_direct_t_fields {
-        // Generate extraction code that uses local variables (not self.field)
-        let mut extract_stmts = Vec::new();
-        for rel in &graph.has_relations {
-            let field_ident = format_ident!("{}", rel.field);
-            let extracted_field_ident = format_ident!("__pgorm_graph_{}", rel.field);
+    let (_direct_t_mode_extract_code, _direct_t_mode_belongs_to, _direct_t_mode_before_insert) =
+        if has_direct_t_fields {
+            // Generate extraction code that uses local variables (not self.field)
+            let mut extract_stmts = Vec::new();
+            for rel in &graph.has_relations {
+                let field_ident = format_ident!("{}", rel.field);
+                let extracted_field_ident = format_ident!("__pgorm_graph_{}", rel.field);
 
-            // Skip direct T fields - they're already extracted above
-            if direct_t_fields.contains(&rel.field) {
-                continue;
-            }
-
-            // Find field type
-            let field_ty = fields
-                .iter()
-                .find(|f| f.ident.as_ref().map(|i| i.to_string()) == Some(rel.field.clone()))
-                .map(|f| &f.ty);
-
-            if let Some(ty) = field_ty {
-                if extract_option_inner_type(ty).is_some() {
-                    extract_stmts.push(quote! {
-                        let #extracted_field_ident = #field_ident; // Already Option<T>
-                    });
-                } else if extract_vec_inner_type(ty).is_some() {
-                    extract_stmts.push(quote! {
-                        let #extracted_field_ident = ::std::option::Option::Some(#field_ident);
-                    });
-                }
-            }
-        }
-
-        // For after_insert steps
-        for step in &graph.insert_steps {
-            if !step.is_before {
-                let field_ident = format_ident!("{}", step.field);
-                let extracted_field_ident = format_ident!("__pgorm_step_{}", step.field);
-
-                if direct_t_fields.contains(&step.field) {
+                // Skip direct T fields - they're already extracted above
+                if direct_t_fields.contains(&rel.field) {
                     continue;
                 }
 
+                // Find field type
                 let field_ty = fields
                     .iter()
-                    .find(|f| f.ident.as_ref().map(|i| i.to_string()) == Some(step.field.clone()))
+                    .find(|f| f.ident.as_ref().map(|i| i.to_string()) == Some(rel.field.clone()))
                     .map(|f| &f.ty);
 
                 if let Some(ty) = field_ty {
                     if extract_option_inner_type(ty).is_some() {
                         extract_stmts.push(quote! {
-                            let #extracted_field_ident = #field_ident;
+                            let #extracted_field_ident = #field_ident; // Already Option<T>
                         });
                     } else if extract_vec_inner_type(ty).is_some() {
                         extract_stmts.push(quote! {
@@ -1722,145 +1709,177 @@ fn generate_insert_graph_methods(
                     }
                 }
             }
-        }
 
-        let extract_code = quote! { #(#extract_stmts)* };
+            // For after_insert steps
+            for step in &graph.insert_steps {
+                if !step.is_before {
+                    let field_ident = format_ident!("{}", step.field);
+                    let extracted_field_ident = format_ident!("__pgorm_step_{}", step.field);
 
-        // Generate belongs_to code that uses local variables
-        let mut bt_blocks = Vec::new();
-        for bt in &graph.belongs_to {
-            let field_ident = format_ident!("{}", bt.field);
-            let set_fk_field_ident = format_ident!("{}", bt.set_fk_field);
-            let tag = format!("graph:belongs_to:{}", bt.field);
-            let field_name = &bt.field;
-            let set_fk_field_name = &bt.set_fk_field;
+                    if direct_t_fields.contains(&step.field) {
+                        continue;
+                    }
 
-            let insert_call = match bt.mode {
-                BelongsToMode::InsertReturning => quote! { insert_returning(conn).await? },
-                BelongsToMode::UpsertReturning => quote! { upsert_returning(conn).await? },
-            };
+                    let field_ty = fields
+                        .iter()
+                        .find(|f| {
+                            f.ident.as_ref().map(|i| i.to_string()) == Some(step.field.clone())
+                        })
+                        .map(|f| &f.ty);
 
-            // For direct T mode, we need to use mutable local variables
-            // Since belongs_to modifies set_fk_field, we need it mutable
-            let code = if bt.required {
-                quote! {
-                    let __fk_has_value = #set_fk_field_ident.is_some();
-                    let __field_has_value = #field_ident.is_some();
-
-                    if __fk_has_value && __field_has_value {
-                        return ::std::result::Result::Err(::pgorm::OrmError::Validation(
-                            ::std::format!(
-                                "belongs_to '{}': '{}' and '{}' are mutually exclusive but both are set",
-                                #field_name, #set_fk_field_name, #field_name
-                            )
-                        ));
-                    } else if __fk_has_value {
-                        // FK already set, skip
-                    } else if let ::std::option::Option::Some(parent_data) = #field_ident {
-                        let parent_result = parent_data.#insert_call;
-                        let parent_id = ::pgorm::ModelPk::pk(&parent_result).clone();
-                        #set_fk_field_ident = ::std::option::Option::Some(parent_id);
-                        __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected: 1 });
-                        __pgorm_total_affected += 1;
-                    } else {
-                        return ::std::result::Result::Err(::pgorm::OrmError::Validation(
-                            ::std::format!(
-                                "belongs_to '{}' is required but neither '{}' nor '{}' is set",
-                                #field_name, #set_fk_field_name, #field_name
-                            )
-                        ));
+                    if let Some(ty) = field_ty {
+                        if extract_option_inner_type(ty).is_some() {
+                            extract_stmts.push(quote! {
+                                let #extracted_field_ident = #field_ident;
+                            });
+                        } else if extract_vec_inner_type(ty).is_some() {
+                            extract_stmts.push(quote! {
+                            let #extracted_field_ident = ::std::option::Option::Some(#field_ident);
+                        });
+                        }
                     }
                 }
-            } else {
-                quote! {
-                    let __fk_has_value = #set_fk_field_ident.is_some();
-                    let __field_has_value = #field_ident.is_some();
+            }
 
-                    if __fk_has_value && __field_has_value {
-                        return ::std::result::Result::Err(::pgorm::OrmError::Validation(
-                            ::std::format!(
-                                "belongs_to '{}': '{}' and '{}' are mutually exclusive but both are set",
-                                #field_name, #set_fk_field_name, #field_name
-                            )
-                        ));
-                    } else if !__fk_has_value {
-                        if let ::std::option::Option::Some(parent_data) = #field_ident {
+            let extract_code = quote! { #(#extract_stmts)* };
+
+            // Generate belongs_to code that uses local variables
+            let mut bt_blocks = Vec::new();
+            for bt in &graph.belongs_to {
+                let field_ident = format_ident!("{}", bt.field);
+                let set_fk_field_ident = format_ident!("{}", bt.set_fk_field);
+                let tag = format!("graph:belongs_to:{}", bt.field);
+                let field_name = &bt.field;
+                let set_fk_field_name = &bt.set_fk_field;
+
+                let insert_call = match bt.mode {
+                    BelongsToMode::InsertReturning => quote! { insert_returning(conn).await? },
+                    BelongsToMode::UpsertReturning => quote! { upsert_returning(conn).await? },
+                };
+
+                // For direct T mode, we need to use mutable local variables
+                // Since belongs_to modifies set_fk_field, we need it mutable
+                let code = if bt.required {
+                    quote! {
+                        let __fk_has_value = #set_fk_field_ident.is_some();
+                        let __field_has_value = #field_ident.is_some();
+
+                        if __fk_has_value && __field_has_value {
+                            return ::std::result::Result::Err(::pgorm::OrmError::Validation(
+                                ::std::format!(
+                                    "belongs_to '{}': '{}' and '{}' are mutually exclusive but both are set",
+                                    #field_name, #set_fk_field_name, #field_name
+                                )
+                            ));
+                        } else if __fk_has_value {
+                            // FK already set, skip
+                        } else if let ::std::option::Option::Some(parent_data) = #field_ident {
                             let parent_result = parent_data.#insert_call;
                             let parent_id = ::pgorm::ModelPk::pk(&parent_result).clone();
                             #set_fk_field_ident = ::std::option::Option::Some(parent_id);
                             __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected: 1 });
                             __pgorm_total_affected += 1;
+                        } else {
+                            return ::std::result::Result::Err(::pgorm::OrmError::Validation(
+                                ::std::format!(
+                                    "belongs_to '{}' is required but neither '{}' nor '{}' is set",
+                                    #field_name, #set_fk_field_name, #field_name
+                                )
+                            ));
                         }
                     }
-                }
-            };
-            bt_blocks.push(code);
-        }
-        let bt_code = quote! { #(#bt_blocks)* };
+                } else {
+                    quote! {
+                        let __fk_has_value = #set_fk_field_ident.is_some();
+                        let __field_has_value = #field_ident.is_some();
 
-        // Generate before_insert code that uses local variables
-        let mut bi_blocks = Vec::new();
-        for step in graph.insert_steps.iter().filter(|s| s.is_before) {
-            let field_ident = format_ident!("{}", step.field);
-            let tag = format!("graph:before_insert:{}", step.field);
+                        if __fk_has_value && __field_has_value {
+                            return ::std::result::Result::Err(::pgorm::OrmError::Validation(
+                                ::std::format!(
+                                    "belongs_to '{}': '{}' and '{}' are mutually exclusive but both are set",
+                                    #field_name, #set_fk_field_name, #field_name
+                                )
+                            ));
+                        } else if !__fk_has_value {
+                            if let ::std::option::Option::Some(parent_data) = #field_ident {
+                                let parent_result = parent_data.#insert_call;
+                                let parent_id = ::pgorm::ModelPk::pk(&parent_result).clone();
+                                #set_fk_field_ident = ::std::option::Option::Some(parent_id);
+                                __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected: 1 });
+                                __pgorm_total_affected += 1;
+                            }
+                        }
+                    }
+                };
+                bt_blocks.push(code);
+            }
+            let bt_code = quote! { #(#bt_blocks)* };
 
-            let insert_call = match step.mode {
-                StepMode::Insert => quote! {
-                    let affected = step_data.insert(conn).await?;
-                    __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected });
-                    __pgorm_total_affected += affected;
-                },
-                StepMode::Upsert => quote! {
-                    let affected = step_data.upsert(conn).await?;
-                    __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected });
-                    __pgorm_total_affected += affected;
-                },
-            };
+            // Generate before_insert code that uses local variables
+            let mut bi_blocks = Vec::new();
+            for step in graph.insert_steps.iter().filter(|s| s.is_before) {
+                let field_ident = format_ident!("{}", step.field);
+                let tag = format!("graph:before_insert:{}", step.field);
 
-            let field_ty = fields
-                .iter()
-                .find(|f| f.ident.as_ref().map(|i| i.to_string()) == Some(step.field.clone()))
-                .map(|f| &f.ty);
+                let insert_call = match step.mode {
+                    StepMode::Insert => quote! {
+                        let affected = step_data.insert(conn).await?;
+                        __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected });
+                        __pgorm_total_affected += affected;
+                    },
+                    StepMode::Upsert => quote! {
+                        let affected = step_data.upsert(conn).await?;
+                        __pgorm_steps.push(::pgorm::WriteStepReport { tag: #tag, affected });
+                        __pgorm_total_affected += affected;
+                    },
+                };
 
-            let code = if let Some(ty) = field_ty {
-                if extract_option_inner_type(ty).is_some() {
+                let field_ty = fields
+                    .iter()
+                    .find(|f| f.ident.as_ref().map(|i| i.to_string()) == Some(step.field.clone()))
+                    .map(|f| &f.ty);
+
+                let code = if let Some(ty) = field_ty {
+                    if extract_option_inner_type(ty).is_some() {
+                        quote! {
+                            if let ::std::option::Option::Some(step_data) = #field_ident {
+                                #insert_call
+                            }
+                        }
+                    } else if extract_vec_inner_type(ty).is_some() {
+                        quote! {
+                            for step_data in #field_ident {
+                                #insert_call
+                            }
+                        }
+                    } else {
+                        // Direct T - just use it
+                        quote! {
+                            let step_data = #field_ident;
+                            #insert_call
+                        }
+                    }
+                } else {
                     quote! {
                         if let ::std::option::Option::Some(step_data) = #field_ident {
                             #insert_call
                         }
                     }
-                } else if extract_vec_inner_type(ty).is_some() {
-                    quote! {
-                        for step_data in #field_ident {
-                            #insert_call
-                        }
-                    }
-                } else {
-                    // Direct T - just use it
-                    quote! {
-                        let step_data = #field_ident;
-                        #insert_call
-                    }
-                }
-            } else {
-                quote! {
-                    if let ::std::option::Option::Some(step_data) = #field_ident {
-                        #insert_call
-                    }
-                }
-            };
-            bi_blocks.push(code);
-        }
-        let bi_code = quote! { #(#bi_blocks)* };
+                };
+                bi_blocks.push(code);
+            }
+            let bi_code = quote! { #(#bi_blocks)* };
 
-        (extract_code, bt_code, bi_code)
-    } else {
-        (quote! {}, quote! {}, quote! {})
-    };
+            (extract_code, bt_code, bi_code)
+        } else {
+            (quote! {}, quote! {}, quote! {})
+        };
 
     // Generate code to get root_id based on the source mode
     // For graph_root_id_field, we handle both T and Option<T> field types at macro expansion time
-    let (get_root_id_code, needs_model_pk_bound, _extract_helper) = if let Some(ref root_id_field) = graph.graph_root_id_field {
+    let (get_root_id_code, needs_model_pk_bound, _extract_helper) = if let Some(ref root_id_field) =
+        graph.graph_root_id_field
+    {
         // Input mode: get root_id from self.<field> before insert
         // Field can be T or Option<T>. Detect at macro time.
         let root_id_field_ident = format_ident!("{}", root_id_field);
@@ -2363,10 +2382,13 @@ fn generate_extract_graph_fields_code(
         quote! {}
     };
 
-    Ok((quote! {
-        #helper_code
-        #(#extract_stmts)*
-    }, direct_t_fields))
+    Ok((
+        quote! {
+            #helper_code
+            #(#extract_stmts)*
+        },
+        direct_t_fields,
+    ))
 }
 
 /// Generate code for belongs_to (pre-insert) steps.
@@ -2376,7 +2398,10 @@ fn generate_extract_graph_fields_code(
 /// - set_fk_field and field are mutually exclusive (both set => Validation error)
 /// - If set_fk_field already has a value (Some), skip belongs_to write
 /// - If required=true but both set_fk_field is None and field is None, return Validation error
-fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Ident) -> Result<TokenStream> {
+fn generate_belongs_to_code(
+    graph: &GraphDeclarations,
+    _root_key_ident: &syn::Ident,
+) -> Result<TokenStream> {
     if graph.belongs_to.is_empty() {
         return Ok(quote! {});
     }
@@ -2495,7 +2520,11 @@ fn generate_insert_step_code(graph: &GraphDeclarations, is_before: bool) -> Resu
         let _step_type = &step.step_type;
         let tag = format!(
             "graph:{}:{}",
-            if is_before { "before_insert" } else { "after_insert" },
+            if is_before {
+                "before_insert"
+            } else {
+                "after_insert"
+            },
             step.field
         );
 
@@ -2548,7 +2577,10 @@ fn generate_insert_step_code(graph: &GraphDeclarations, is_before: bool) -> Resu
 /// Generate code for has_one/has_many (post-insert) steps.
 /// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
 /// Supports mode = "insert" (default) or "upsert" per doc §6.1.1.
-fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::Ident) -> Result<TokenStream> {
+fn generate_has_relation_code(
+    graph: &GraphDeclarations,
+    _root_key_ident: &syn::Ident,
+) -> Result<TokenStream> {
     if graph.has_relations.is_empty() {
         return Ok(quote! {});
     }
@@ -2571,8 +2603,12 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
         let code = if rel.is_many {
             // has_many: Vec<Child> or Option<Vec<Child>>
             let insert_call = match rel.mode {
-                HasRelationMode::Insert => quote! { #child_type::insert_many(conn, children_with_fk).await? },
-                HasRelationMode::Upsert => quote! { #child_type::upsert_many(conn, children_with_fk).await? },
+                HasRelationMode::Insert => {
+                    quote! { #child_type::insert_many(conn, children_with_fk).await? }
+                }
+                HasRelationMode::Upsert => {
+                    quote! { #child_type::upsert_many(conn, children_with_fk).await? }
+                }
             };
             quote! {
                 // has_many: #_field_ident

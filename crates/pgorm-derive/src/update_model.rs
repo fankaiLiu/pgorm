@@ -4,6 +4,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, Result};
 
+use crate::sql_ident::{parse_sql_ident, parse_sql_ident_list};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Graph Declarations for UpdateModel (child table strategies)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,8 +37,8 @@ struct HasManyUpdate {
     fk_field: String,
     /// Update strategy.
     strategy: UpdateStrategy,
-    /// For diff strategy: the key columns (comma-separated SQL column names).
-    key_columns: Option<String>,
+    /// For diff strategy: the key columns (SQL column names).
+    key_columns: Option<Vec<String>>,
 }
 
 /// has_one_update declaration.
@@ -116,7 +118,7 @@ impl syn::parse::Parse for StructAttrList {
 
             match key.as_str() {
                 "table" => table = Some(value.value()),
-                "id_column" => id_column = Some(value.value()),
+                "id_column" => id_column = Some(parse_sql_ident(&value, "id_column")?),
                 "model" => {
                     let ty: syn::Path = syn::parse_str(&value.value()).map_err(|e| {
                         syn::Error::new(Span::call_site(), format!("invalid model type: {e}"))
@@ -596,7 +598,10 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
 }
 
 /// Parse graph-style attributes for UpdateModel.
-fn parse_update_graph_attr(tokens: &TokenStream, graph: &mut UpdateGraphDeclarations) -> Result<()> {
+fn parse_update_graph_attr(
+    tokens: &TokenStream,
+    graph: &mut UpdateGraphDeclarations,
+) -> Result<()> {
     let tokens_str = tokens.to_string();
 
     // Handle has_many_update(...)
@@ -638,7 +643,7 @@ struct HasManyUpdateAttr {
     fk_column: String,
     fk_field: String,
     strategy: UpdateStrategy,
-    key_columns: Option<String>,
+    key_columns: Option<Vec<String>>,
 }
 
 impl syn::parse::Parse for HasManyUpdateAttr {
@@ -657,7 +662,7 @@ impl syn::parse::Parse for HasManyUpdateAttr {
         let mut fk_column: Option<String> = None;
         let mut fk_field: Option<String> = None;
         let mut strategy = UpdateStrategy::Replace;
-        let mut key_columns: Option<String> = None;
+        let mut key_columns: Option<Vec<String>> = None;
 
         // Parse remaining key = "value" pairs
         while !content.is_empty() {
@@ -672,7 +677,7 @@ impl syn::parse::Parse for HasManyUpdateAttr {
 
             match key.to_string().as_str() {
                 "field" => field = Some(value.value()),
-                "fk_column" => fk_column = Some(value.value()),
+                "fk_column" => fk_column = Some(parse_sql_ident(&value, "fk_column")?),
                 "fk_field" => fk_field = Some(value.value()),
                 // fk_wrap is deprecated - now always use with_* setter
                 "fk_wrap" => { /* ignored for backward compatibility */ }
@@ -690,7 +695,9 @@ impl syn::parse::Parse for HasManyUpdateAttr {
                         }
                     };
                 }
-                "key_columns" => key_columns = Some(value.value()),
+                "key_columns" => {
+                    key_columns = Some(parse_sql_ident_list(&value, "key_columns", false)?);
+                }
                 // Legacy key_field/key_column are ignored (replaced by key_columns)
                 "key_field" | "key_column" => { /* ignored for backward compatibility */ }
                 _ => {}
@@ -698,13 +705,22 @@ impl syn::parse::Parse for HasManyUpdateAttr {
         }
 
         let field = field.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_many_update requires field = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_many_update requires field = \"...\"",
+            )
         })?;
         let fk_column = fk_column.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_many_update requires fk_column = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_many_update requires fk_column = \"...\"",
+            )
         })?;
         let fk_field = fk_field.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_many_update requires fk_field = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_many_update requires fk_field = \"...\"",
+            )
         })?;
 
         // Validate diff strategy requires key_columns
@@ -777,7 +793,7 @@ impl syn::parse::Parse for HasOneUpdateAttr {
 
             match key.to_string().as_str() {
                 "field" => field = Some(value.value()),
-                "fk_column" => fk_column = Some(value.value()),
+                "fk_column" => fk_column = Some(parse_sql_ident(&value, "fk_column")?),
                 "fk_field" => fk_field = Some(value.value()),
                 // fk_wrap is deprecated - now always use with_* setter
                 "fk_wrap" => { /* ignored for backward compatibility */ }
@@ -801,10 +817,16 @@ impl syn::parse::Parse for HasOneUpdateAttr {
             syn::Error::new(Span::call_site(), "has_one_update requires field = \"...\"")
         })?;
         let fk_column = fk_column.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_one_update requires fk_column = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_one_update requires fk_column = \"...\"",
+            )
         })?;
         let fk_field = fk_field.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_one_update requires fk_field = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "has_one_update requires fk_field = \"...\"",
+            )
         })?;
 
         Ok(Self {
@@ -870,7 +892,10 @@ fn option_inner(ty: &syn::Type) -> Option<&syn::Type> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Generate update_by_id_graph and update_by_id_graph_returning methods.
-fn generate_update_graph_methods(attrs: &StructAttrs, id_col_expr: &TokenStream) -> Result<TokenStream> {
+fn generate_update_graph_methods(
+    attrs: &StructAttrs,
+    id_col_expr: &TokenStream,
+) -> Result<TokenStream> {
     let graph = &attrs.graph;
 
     // If no graph declarations, don't generate graph methods
@@ -1071,7 +1096,10 @@ fn generate_update_graph_methods(attrs: &StructAttrs, id_col_expr: &TokenStream)
 
 /// Generate code for has_many_update child tables.
 /// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
-fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &str) -> Result<TokenStream> {
+fn generate_has_many_update_code(
+    graph: &UpdateGraphDeclarations,
+    _table_name: &str,
+) -> Result<TokenStream> {
     if graph.has_many.is_empty() {
         return Ok(quote! {});
     }
@@ -1138,13 +1166,7 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
             }
             UpdateStrategy::Diff => {
                 // Upsert + delete missing (uses __pgorm_diff_many_by_fk helper)
-                let key_columns_str = rel.key_columns.as_ref().unwrap();
-                // Split by comma and trim whitespace to support multi-column keys
-                let key_columns_vec: Vec<_> = key_columns_str
-                    .split(',')
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .collect();
+                let key_columns_vec: Vec<String> = rel.key_columns.as_ref().unwrap().clone();
 
                 quote! {
                     // Use diff helper to upsert and delete missing children
@@ -1180,7 +1202,10 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
 
 /// Generate code for has_one_update child tables.
 /// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
-fn generate_has_one_update_code(graph: &UpdateGraphDeclarations, _table_name: &str) -> Result<TokenStream> {
+fn generate_has_one_update_code(
+    graph: &UpdateGraphDeclarations,
+    _table_name: &str,
+) -> Result<TokenStream> {
     if graph.has_one.is_empty() {
         return Ok(quote! {});
     }

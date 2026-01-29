@@ -16,14 +16,14 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     &input,
                     "FromRow can only be derived for structs with named fields",
-                ))
+                ));
             }
         },
         _ => {
             return Err(syn::Error::new_spanned(
                 &input,
                 "FromRow can only be derived for structs",
-            ))
+            ));
         }
     };
 

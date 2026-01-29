@@ -536,19 +536,20 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
 
     // Generate ModelPk implementation only if there's an ID field
-    let model_pk_impl = if let (Some(id_ty), Some(id_ident)) = (id_field_type, id_field_ident.as_ref()) {
-        quote! {
-            impl ::pgorm::ModelPk for #name {
-                type Id = #id_ty;
+    let model_pk_impl =
+        if let (Some(id_ty), Some(id_ident)) = (id_field_type, id_field_ident.as_ref()) {
+            quote! {
+                impl ::pgorm::ModelPk for #name {
+                    type Id = #id_ty;
 
-                fn pk(&self) -> &Self::Id {
-                    &self.#id_ident
+                    fn pk(&self) -> &Self::Id {
+                        &self.#id_ident
+                    }
                 }
             }
-        }
-    } else {
-        quote! {}
-    };
+        } else {
+            quote! {}
+        };
 
     Ok(quote! {
         impl #name {
