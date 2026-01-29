@@ -23,10 +23,6 @@ async fn main() -> pgorm::OrmResult<()> {
     let pool = create_pool(&database_url)?;
     let report = migrate::run_pool(&pool, embedded::migrations::runner()).await?;
 
-    println!(
-        "Applied {} migration(s)",
-        report.applied_migrations().len()
-    );
+    println!("Applied {} migration(s)", report.applied_migrations().len());
     Ok(())
 }
-

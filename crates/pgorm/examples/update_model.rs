@@ -6,8 +6,8 @@
 //! DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
 use colored::Colorize;
-use comfy_table::{presets::UTF8_FULL, Attribute, Cell, Color, ContentArrangement, Table};
-use pgorm::{create_pool, FromRow, InsertModel, Model, OrmError, UpdateModel};
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
+use pgorm::{FromRow, InsertModel, Model, OrmError, UpdateModel, create_pool};
 use std::env;
 
 // ============================================
@@ -102,11 +102,7 @@ fn create_products_table(products: &[Product]) -> Table {
     for p in products {
         let price = format!("${:.2}", p.price_cents as f64 / 100.0);
         let stock_status = if p.in_stock { "Yes" } else { "No" };
-        let stock_color = if p.in_stock {
-            Color::Green
-        } else {
-            Color::Red
-        };
+        let stock_color = if p.in_stock { Color::Green } else { Color::Red };
 
         table.add_row(vec![
             Cell::new(p.id.to_string()).fg(Color::Yellow),

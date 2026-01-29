@@ -6,8 +6,8 @@
 //! DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
 use colored::Colorize;
-use comfy_table::{presets::UTF8_FULL, Attribute, Cell, Color, ContentArrangement, Table};
-use pgorm::{create_pool, query, CheckMode, FromRow, Model, OrmError, PgClient, PgClientConfig};
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
+use pgorm::{CheckMode, FromRow, Model, OrmError, PgClient, PgClientConfig, create_pool, query};
 use std::env;
 use std::time::Duration;
 
@@ -61,19 +61,29 @@ fn create_registry_table(pg: &PgClient<impl pgorm::GenericClient>) -> Table {
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
-            Cell::new("Table").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Schema").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Columns").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Table")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Schema")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Columns")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
         ]);
 
     for t in pg.registry().tables() {
-        let columns: Vec<String> = t.columns.iter().map(|c| {
-            if c.is_primary_key {
-                format!("{}*", c.name)
-            } else {
-                c.name.clone()
-            }
-        }).collect();
+        let columns: Vec<String> = t
+            .columns
+            .iter()
+            .map(|c| {
+                if c.is_primary_key {
+                    format!("{}*", c.name)
+                } else {
+                    c.name.clone()
+                }
+            })
+            .collect();
 
         table.add_row(vec![
             Cell::new(&t.name).fg(Color::Green),
@@ -92,10 +102,18 @@ fn create_check_results_table(results: &[(String, String, Vec<pgorm::SchemaIssue
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
-            Cell::new("Status").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Test").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("SQL").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Issues").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Status")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Test")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("SQL")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Issues")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
         ]);
 
     for (desc, sql, issues) in results {
@@ -116,7 +134,9 @@ fn create_check_results_table(results: &[(String, String, Vec<pgorm::SchemaIssue
         };
 
         table.add_row(vec![
-            Cell::new(status).fg(status_color).add_attribute(Attribute::Bold),
+            Cell::new(status)
+                .fg(status_color)
+                .add_attribute(Attribute::Bold),
             Cell::new(desc),
             Cell::new(sql).fg(Color::DarkGrey),
             Cell::new(&issue_text),
@@ -133,8 +153,12 @@ fn create_stats_table(stats: &pgorm::QueryStats) -> Table {
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
-            Cell::new("Metric").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Value").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Metric")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Value")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
         ]);
 
     table.add_row(vec![
@@ -177,38 +201,36 @@ fn create_stats_table(stats: &pgorm::QueryStats) -> Table {
 }
 
 /// Create a styled table for validation results
-fn create_validation_table(results: &[(&str, Result<Vec<tokio_postgres::Row>, OrmError>)]) -> Table {
+fn create_validation_table(
+    results: &[(&str, Result<Vec<tokio_postgres::Row>, OrmError>)],
+) -> Table {
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
-            Cell::new("Status").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Description").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Result").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Status")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Description")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Result")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
         ]);
 
     for (desc, result) in results {
         let (status, status_color, result_text) = match result {
-            Ok(rows) => (
-                "✓",
-                Color::Green,
-                format!("Success: {} rows", rows.len()),
-            ),
-            Err(OrmError::Validation(msg)) => (
-                "✗",
-                Color::Red,
-                format!("Validation: {}", msg),
-            ),
-            Err(e) => (
-                "⚠",
-                Color::Yellow,
-                format!("DB Error: {}", e),
-            ),
+            Ok(rows) => ("✓", Color::Green, format!("Success: {} rows", rows.len())),
+            Err(OrmError::Validation(msg)) => ("✗", Color::Red, format!("Validation: {}", msg)),
+            Err(e) => ("⚠", Color::Yellow, format!("DB Error: {}", e)),
         };
 
         table.add_row(vec![
-            Cell::new(status).fg(status_color).add_attribute(Attribute::Bold),
+            Cell::new(status)
+                .fg(status_color)
+                .add_attribute(Attribute::Bold),
             Cell::new(*desc),
             Cell::new(&result_text),
         ]);
@@ -222,9 +244,20 @@ async fn main() -> Result<(), OrmError> {
     dotenvy::dotenv().ok();
 
     println!();
-    println!("{}", "╔══════════════════════════════════════════════════════════╗".cyan());
-    println!("{}", "║           PgClient Demo - Schema Checking                ║".cyan().bold());
-    println!("{}", "╚══════════════════════════════════════════════════════════╝".cyan());
+    println!(
+        "{}",
+        "╔══════════════════════════════════════════════════════════╗".cyan()
+    );
+    println!(
+        "{}",
+        "║           PgClient Demo - Schema Checking                ║"
+            .cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "╚══════════════════════════════════════════════════════════╝".cyan()
+    );
 
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env or environment");
@@ -309,12 +342,30 @@ async fn main() -> Result<(), OrmError> {
     print_header("2. SQL Schema Validation");
 
     let test_queries = vec![
-        ("Valid: existing columns".to_string(), "SELECT id, name FROM products".to_string()),
-        ("Invalid: missing column 'email'".to_string(), "SELECT id, email FROM products".to_string()),
-        ("Valid: JOIN query".to_string(), "SELECT * FROM products JOIN categories ON true".to_string()),
-        ("Valid: multi-table".to_string(), "SELECT products.id, categories.id FROM products, categories".to_string()),
-        ("Invalid: table 'orders'".to_string(), "SELECT id FROM orders".to_string()),
-        ("Invalid: qualified column".to_string(), "SELECT products.nonexistent FROM products".to_string()),
+        (
+            "Valid: existing columns".to_string(),
+            "SELECT id, name FROM products".to_string(),
+        ),
+        (
+            "Invalid: missing column 'email'".to_string(),
+            "SELECT id, email FROM products".to_string(),
+        ),
+        (
+            "Valid: JOIN query".to_string(),
+            "SELECT * FROM products JOIN categories ON true".to_string(),
+        ),
+        (
+            "Valid: multi-table".to_string(),
+            "SELECT products.id, categories.id FROM products, categories".to_string(),
+        ),
+        (
+            "Invalid: table 'orders'".to_string(),
+            "SELECT id FROM orders".to_string(),
+        ),
+        (
+            "Invalid: qualified column".to_string(),
+            "SELECT products.nonexistent FROM products".to_string(),
+        ),
     ];
 
     let results: Vec<_> = test_queries
@@ -338,7 +389,9 @@ async fn main() -> Result<(), OrmError> {
     let validation_tests: Vec<(&str, Result<Vec<tokio_postgres::Row>, OrmError>)> = vec![
         (
             "Valid query: SELECT id, name FROM products",
-            query("SELECT id, name FROM products").fetch_all(&pg_strict).await,
+            query("SELECT id, name FROM products")
+                .fetch_all(&pg_strict)
+                .await,
         ),
         (
             "Invalid: non-existent table 'orders'",
@@ -346,11 +399,15 @@ async fn main() -> Result<(), OrmError> {
         ),
         (
             "Invalid: non-existent column 'description'",
-            query("SELECT id, description FROM products").fetch_all(&pg_strict).await,
+            query("SELECT id, description FROM products")
+                .fetch_all(&pg_strict)
+                .await,
         ),
         (
             "Invalid: qualified non-existent column",
-            query("SELECT products.nonexistent FROM products").fetch_all(&pg_strict).await,
+            query("SELECT products.nonexistent FROM products")
+                .fetch_all(&pg_strict)
+                .await,
         ),
     ];
 
@@ -422,8 +479,12 @@ async fn main() -> Result<(), OrmError> {
         .load_preset(UTF8_FULL)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_header(vec![
-            Cell::new("Feature").add_attribute(Attribute::Bold).fg(Color::Cyan),
-            Cell::new("Description").add_attribute(Attribute::Bold).fg(Color::Cyan),
+            Cell::new("Feature")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
+            Cell::new("Description")
+                .add_attribute(Attribute::Bold)
+                .fg(Color::Cyan),
         ]);
 
     summary_table.add_row(vec![
