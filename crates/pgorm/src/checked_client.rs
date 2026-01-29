@@ -169,16 +169,21 @@ impl<C> CheckedClient<C> {
             CheckMode::WarnOnly => {
                 let issues = self.registry.check_sql(sql);
                 for issue in issues {
-                    eprintln!("[pgorm warn] SQL check: {:?}", issue);
+                    eprintln!("[pgorm warn] {issue}");
                 }
                 Ok(())
             }
             CheckMode::Strict => {
                 let issues = self.registry.check_sql(sql);
-                if issues.is_empty() {
+                let errors: Vec<_> = issues
+                    .iter()
+                    .filter(|i| i.level == crate::SchemaIssueLevel::Error)
+                    .collect();
+                if errors.is_empty() {
                     Ok(())
                 } else {
-                    let messages: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
+                    let messages: Vec<String> =
+                        errors.iter().map(|i| i.message.clone()).collect();
                     Err(OrmError::validation(format!(
                         "SQL check failed: {}",
                         messages.join("; ")

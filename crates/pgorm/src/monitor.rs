@@ -649,7 +649,7 @@ impl<C: GenericClient> InstrumentedClient<C> {
     /// Add a query hook.
     ///
     /// If a hook is already set, this composes it with the new hook (existing first).
-    pub fn add_hook<H: QueryHook + 'static>(mut self, hook: H) -> Self {
+    pub fn add_hook<H: QueryHook + 'static>(self, hook: H) -> Self {
         self.add_hook_arc(Arc::new(hook))
     }
 

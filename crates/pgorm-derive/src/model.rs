@@ -2,61 +2,27 @@
 //!
 //! ## Module Structure
 //!
-//! - `attrs`: Struct and field attribute parsing (stub)
-//! - `join`: JOIN clause parsing (stub)
+//! - `attrs`: Struct and field attribute parsing (`get_table_name`, `get_field_info`, `is_id_field`)
+//! - `join`: JOIN clause parsing (`get_join_clauses`)
 //! - `query`: Query struct generation
-//! - `relations`: has_many/belongs_to parsing (stub)
+//! - `relations`: has_many/belongs_to parsing (`get_has_many_relations`, `get_belongs_to_relations`)
 
 mod attrs;
 mod join;
 mod query;
 mod relations;
 
-use query::{generate_query_struct, QueryFieldInfo};
+use attrs::{get_field_info, get_table_name, is_id_field};
+use join::{JoinClause, get_join_clauses};
+use query::{QueryFieldInfo, generate_query_struct};
+use relations::{
+    BelongsToRelation, HasManyRelation, get_belongs_to_relations, get_has_many_relations,
+};
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashMap;
-use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Fields, Result};
-
-/// Represents a has_many relationship: Parent has many Children
-struct HasManyRelation {
-    /// The related model type (e.g., Review)
-    model: syn::Path,
-    /// The foreign key column in the child table (e.g., "product_id")
-    foreign_key: String,
-    /// The method name to generate (e.g., "reviews" -> select_reviews)
-    method_name: String,
-}
-
-/// Represents a belongs_to relationship: Child belongs to Parent
-struct BelongsToRelation {
-    /// The related model type (e.g., Category)
-    model: syn::Path,
-    /// The foreign key column in this table (e.g., "category_id")
-    foreign_key: String,
-    /// The method name to generate (e.g., "category" -> select_category)
-    method_name: String,
-}
-
-/// Represents a JOIN clause
-struct JoinClause {
-    /// The table to join
-    table: String,
-    /// The ON condition
-    on: String,
-    /// Join type: inner, left, right, full
-    join_type: String,
-}
-
-/// Field info with table source
-struct FieldInfo {
-    /// The table this field comes from (None means main table)
-    table: Option<String>,
-    /// The column name in the database
-    column: String,
-}
 
 pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
@@ -168,20 +134,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Build JOIN clause string
-    let join_sql = join_clauses
-        .iter()
-        .map(|j| {
-            let jt = match j.join_type.to_lowercase().as_str() {
-                "left" => "LEFT JOIN",
-                "right" => "RIGHT JOIN",
-                "full" => "FULL OUTER JOIN",
-                "cross" => "CROSS JOIN",
-                _ => "INNER JOIN",
-            };
-            format!("{} {} ON {}", jt, j.table, j.on)
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    let join_sql = build_join_sql(&join_clauses);
 
     let id_const = if let Some(id) = &id_column {
         quote! { pub const ID: &'static str = #id; }
@@ -197,7 +150,135 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Generate select_one method only if there's an ID field
-    let select_one_method = if let (Some(id_col), Some(id_ty)) = (&id_column, id_field_type) {
+    let select_one_method =
+        generate_select_one_method(&table_name, &id_column, id_field_type, has_joins);
+
+    // Generate delete_by_id methods only if there's an ID field.
+    let delete_by_id_methods =
+        generate_delete_by_id_methods(&table_name, &id_column, id_field_type);
+
+    // Generate has_many methods (requires ID field)
+    let has_many_methods =
+        generate_has_many_methods(&has_many_relations, id_field_type, id_field_ident.as_ref());
+
+    // Generate belongs_to methods
+    let belongs_to_methods =
+        generate_belongs_to_methods(&belongs_to_relations, &fk_field_types, &fk_field_idents);
+
+    // Generate JOIN_CLAUSE constant and modified select_all if joins exist
+    let join_const = if has_joins {
+        quote! { pub const JOIN_CLAUSE: &'static str = #join_sql; }
+    } else {
+        quote! { pub const JOIN_CLAUSE: &'static str = ""; }
+    };
+
+    let select_all_method = generate_select_all_method(has_joins);
+
+    // Generate generated_sql method
+    let generated_sql_method = generate_generated_sql_method(&id_column);
+
+    // Generate Query struct for dynamic queries
+    let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
+
+    // Generate ModelPk implementation only if there's an ID field
+    let model_pk_impl =
+        if let (Some(id_ty), Some(id_ident)) = (id_field_type, id_field_ident.as_ref()) {
+            quote! {
+                impl ::pgorm::ModelPk for #name {
+                    type Id = #id_ty;
+
+                    fn pk(&self) -> &Self::Id {
+                        &self.#id_ident
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+    Ok(quote! {
+        impl #name {
+            pub const TABLE: &'static str = #table_name;
+            #id_const
+            pub const SELECT_LIST: &'static str = #select_list;
+            #join_const
+
+            pub fn select_list_as(alias: &str) -> String {
+                [#(#columns_for_alias),*]
+                    .iter()
+                    .map(|col| format!("{}.{}", alias, col))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+
+            #select_all_method
+
+            #select_one_method
+
+            #delete_by_id_methods
+
+            #(#has_many_methods)*
+
+            #(#belongs_to_methods)*
+
+            #generated_sql_method
+        }
+
+        impl pgorm::TableMeta for #name {
+            fn table_name() -> &'static str {
+                #table_name
+            }
+
+            fn columns() -> &'static [&'static str] {
+                &[#(#column_names),*]
+            }
+
+            fn primary_key() -> Option<&'static str> {
+                #pk_option
+            }
+        }
+
+        #query_struct
+
+        #model_pk_impl
+
+        // Auto-register this model with CheckedClient via inventory
+        pgorm::inventory::submit! {
+            pgorm::ModelRegistration {
+                register_fn: |registry: &mut pgorm::SchemaRegistry| {
+                    registry.register::<#name>();
+                }
+            }
+        }
+    })
+}
+
+/// Build JOIN clause SQL string from parsed join clauses.
+fn build_join_sql(join_clauses: &[JoinClause]) -> String {
+    join_clauses
+        .iter()
+        .map(|j| {
+            let jt = match j.join_type.to_lowercase().as_str() {
+                "left" => "LEFT JOIN",
+                "right" => "RIGHT JOIN",
+                "full" => "FULL OUTER JOIN",
+                "cross" => "CROSS JOIN",
+                _ => "INNER JOIN",
+            };
+            format!("{} {} ON {}", jt, j.table, j.on)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Generate select_one method if ID field exists.
+fn generate_select_one_method(
+    table_name: &str,
+    id_column: &Option<String>,
+    id_field_type: Option<&syn::Type>,
+    has_joins: bool,
+) -> TokenStream {
+    if let (Some(id_col), Some(id_ty)) = (id_column, id_field_type) {
         let id_col_qualified = format!("{}.{}", table_name, id_col);
         if has_joins {
             quote! {
@@ -247,10 +328,16 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     } else {
         quote! {}
-    };
+    }
+}
 
-    // Generate delete_by_id methods only if there's an ID field.
-    let delete_by_id_methods = if let (Some(id_col), Some(id_ty)) = (&id_column, id_field_type) {
+/// Generate delete_by_id methods if ID field exists.
+fn generate_delete_by_id_methods(
+    table_name: &str,
+    id_column: &Option<String>,
+    id_field_type: Option<&syn::Type>,
+) -> TokenStream {
+    if let (Some(id_col), Some(id_ty)) = (id_column, id_field_type) {
         let id_col_qualified = format!("{}.{}", table_name, id_col);
 
         quote! {
@@ -332,46 +419,57 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     } else {
         quote! {}
-    };
+    }
+}
 
-    // Generate has_many methods (requires ID field)
-    let has_many_methods: Vec<TokenStream> =
-        if let (Some(id_ty), Some(id_field)) = (id_field_type, id_field_ident.as_ref()) {
-            has_many_relations
-                .iter()
-                .map(|rel| {
-                    let method_name = format_ident!("select_{}", rel.method_name);
-                    let related_model = &rel.model;
-                    let fk = &rel.foreign_key;
+/// Generate has_many relationship methods.
+fn generate_has_many_methods(
+    has_many_relations: &[HasManyRelation],
+    id_field_type: Option<&syn::Type>,
+    id_field_ident: Option<&syn::Ident>,
+) -> Vec<TokenStream> {
+    if let (Some(id_ty), Some(id_field)) = (id_field_type, id_field_ident) {
+        has_many_relations
+            .iter()
+            .map(|rel| {
+                let method_name = format_ident!("select_{}", rel.method_name);
+                let related_model = &rel.model;
+                let fk = &rel.foreign_key;
 
-                    quote! {
-                        /// Fetch all related records (has_many relationship).
-                        pub async fn #method_name(
-                            &self,
-                            conn: &impl pgorm::GenericClient,
-                        ) -> pgorm::OrmResult<::std::vec::Vec<#related_model>>
-                        where
-                            #related_model: pgorm::FromRow,
-                            #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
-                        {
-                            let sql = ::std::format!(
-                                "SELECT {} FROM {} WHERE {} = $1",
-                                #related_model::SELECT_LIST,
-                                #related_model::TABLE,
-                                #fk
-                            );
-                            let rows = conn.query(&sql, &[&self.#id_field]).await?;
-                            rows.iter().map(pgorm::FromRow::from_row).collect()
-                        }
+                quote! {
+                    /// Fetch all related records (has_many relationship).
+                    pub async fn #method_name(
+                        &self,
+                        conn: &impl pgorm::GenericClient,
+                    ) -> pgorm::OrmResult<::std::vec::Vec<#related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                    {
+                        let sql = ::std::format!(
+                            "SELECT {} FROM {} WHERE {} = $1",
+                            #related_model::SELECT_LIST,
+                            #related_model::TABLE,
+                            #fk
+                        );
+                        let rows = conn.query(&sql, &[&self.#id_field]).await?;
+                        rows.iter().map(pgorm::FromRow::from_row).collect()
                     }
-                })
-                .collect()
-        } else {
-            vec![]
-        };
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    }
+}
 
-    // Generate belongs_to methods
-    let belongs_to_methods: Vec<TokenStream> = belongs_to_relations
+/// Generate belongs_to relationship methods.
+fn generate_belongs_to_methods(
+    belongs_to_relations: &[BelongsToRelation],
+    fk_field_types: &HashMap<String, &syn::Type>,
+    fk_field_idents: &HashMap<String, syn::Ident>,
+) -> Vec<TokenStream> {
+    belongs_to_relations
         .iter()
         .filter_map(|rel| {
             // Find the field type for the foreign key
@@ -401,16 +499,12 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 }
             })
         })
-        .collect();
+        .collect()
+}
 
-    // Generate JOIN_CLAUSE constant and modified select_all if joins exist
-    let join_const = if has_joins {
-        quote! { pub const JOIN_CLAUSE: &'static str = #join_sql; }
-    } else {
-        quote! { pub const JOIN_CLAUSE: &'static str = ""; }
-    };
-
-    let select_all_method = if has_joins {
+/// Generate select_all method.
+fn generate_select_all_method(has_joins: bool) -> TokenStream {
+    if has_joins {
         quote! {
             /// Fetch all records from the table (with JOINs if defined).
             pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<::std::vec::Vec<Self>>
@@ -434,10 +528,12 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 rows.iter().map(pgorm::FromRow::from_row).collect()
             }
         }
-    };
+    }
+}
 
-    // Generate generated_sql method
-    let generated_sql_method = if let Some(id_col) = &id_column {
+/// Generate generated_sql and check_schema methods.
+fn generate_generated_sql_method(id_column: &Option<String>) -> TokenStream {
+    if let Some(id_col) = id_column {
         quote! {
             /// Returns all SQL statements this model generates.
             ///
@@ -534,473 +630,5 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 results
             }
         }
-    };
-
-    // Generate Query struct for dynamic queries
-    let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
-
-    // Generate ModelPk implementation only if there's an ID field
-    let model_pk_impl =
-        if let (Some(id_ty), Some(id_ident)) = (id_field_type, id_field_ident.as_ref()) {
-            quote! {
-                impl ::pgorm::ModelPk for #name {
-                    type Id = #id_ty;
-
-                    fn pk(&self) -> &Self::Id {
-                        &self.#id_ident
-                    }
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-    Ok(quote! {
-        impl #name {
-            pub const TABLE: &'static str = #table_name;
-            #id_const
-            pub const SELECT_LIST: &'static str = #select_list;
-            #join_const
-
-            pub fn select_list_as(alias: &str) -> String {
-                [#(#columns_for_alias),*]
-                    .iter()
-                    .map(|col| format!("{}.{}", alias, col))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
-
-            #select_all_method
-
-            #select_one_method
-
-            #delete_by_id_methods
-
-            #(#has_many_methods)*
-
-            #(#belongs_to_methods)*
-
-            #generated_sql_method
-        }
-
-        impl pgorm::TableMeta for #name {
-            fn table_name() -> &'static str {
-                #table_name
-            }
-
-            fn columns() -> &'static [&'static str] {
-                &[#(#column_names),*]
-            }
-
-            fn primary_key() -> Option<&'static str> {
-                #pk_option
-            }
-        }
-
-        #query_struct
-
-        #model_pk_impl
-
-        // Auto-register this model with CheckedClient via inventory
-        pgorm::inventory::submit! {
-            pgorm::ModelRegistration {
-                register_fn: |registry: &mut pgorm::SchemaRegistry| {
-                    registry.register::<#name>();
-                }
-            }
-        }
-    })
-}
-
-fn get_table_name(input: &DeriveInput) -> Result<String> {
-    for attr in &input.attrs {
-        if attr.path().is_ident("orm") {
-            if let Ok(nested) = attr.parse_args::<syn::MetaNameValue>() {
-                if nested.path.is_ident("table") {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit),
-                        ..
-                    }) = &nested.value
-                    {
-                        return Ok(lit.value());
-                    }
-                }
-            }
-        }
-    }
-    Err(syn::Error::new_spanned(
-        input,
-        "Model requires #[orm(table = \"table_name\")] attribute",
-    ))
-}
-
-/// Get field info including table source and column name
-/// Supports: #[orm(table = "categories", column = "name")]
-fn get_field_info(field: &syn::Field, _default_table: &str) -> FieldInfo {
-    let mut table: Option<String> = None;
-    let mut column: Option<String> = None;
-
-    for attr in &field.attrs {
-        if attr.path().is_ident("orm") {
-            // Try to parse as a list of key=value pairs
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.clone();
-                if let Ok(parsed) = syn::parse2::<FieldAttr>(tokens) {
-                    if parsed.table.is_some() {
-                        table = parsed.table;
-                    }
-                    if parsed.column.is_some() {
-                        column = parsed.column;
-                    }
-                }
-            }
-            // Also try single key=value for backward compatibility
-            if let Ok(nested) = attr.parse_args::<syn::MetaNameValue>() {
-                if nested.path.is_ident("column") {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit),
-                        ..
-                    }) = &nested.value
-                    {
-                        column = Some(lit.value());
-                    }
-                } else if nested.path.is_ident("table") {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit),
-                        ..
-                    }) = &nested.value
-                    {
-                        table = Some(lit.value());
-                    }
-                }
-            }
-        }
-    }
-
-    FieldInfo {
-        table,
-        column: column.unwrap_or_else(|| field.ident.as_ref().unwrap().to_string()),
-    }
-}
-
-/// Helper struct for parsing field attributes
-struct FieldAttr {
-    is_id: bool,
-    table: Option<String>,
-    column: Option<String>,
-}
-
-impl syn::parse::Parse for FieldAttr {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let mut is_id = false;
-        let mut table = None;
-        let mut column = None;
-
-        // Parse comma-separated key=value pairs or single identifiers
-        loop {
-            if input.is_empty() {
-                break;
-            }
-
-            // Check for 'id' keyword first
-            if input.peek(syn::Ident) {
-                let ident: syn::Ident = input.parse()?;
-                if ident == "id" {
-                    // Skip 'id' marker
-                    is_id = true;
-                    if input.peek(syn::Token![,]) {
-                        let _: syn::Token![,] = input.parse()?;
-                    }
-                    continue;
-                }
-                // Otherwise it's a key = value
-                let _: syn::Token![=] = input.parse()?;
-                let value: syn::LitStr = input.parse()?;
-
-                if ident == "table" {
-                    table = Some(value.value());
-                } else if ident == "column" {
-                    column = Some(value.value());
-                }
-            }
-
-            if input.peek(syn::Token![,]) {
-                let _: syn::Token![,] = input.parse()?;
-            } else {
-                break;
-            }
-        }
-
-        Ok(FieldAttr {
-            is_id,
-            table,
-            column,
-        })
-    }
-}
-
-fn is_id_field(field: &syn::Field) -> bool {
-    for attr in &field.attrs {
-        if attr.path().is_ident("orm") {
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.clone();
-                if let Ok(parsed) = syn::parse2::<FieldAttr>(tokens) {
-                    if parsed.is_id {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Parse has_many relations from struct attributes.
-/// Example: #[orm(has_many(Review, foreign_key = "product_id", as = "reviews"))]
-fn get_has_many_relations(input: &DeriveInput) -> Result<Vec<HasManyRelation>> {
-    let mut relations = Vec::new();
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("orm") {
-            // Try to parse as a function-style attribute: orm(has_many(...))
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.clone();
-                if let Ok(parsed) = syn::parse2::<HasManyAttr>(tokens) {
-                    relations.push(HasManyRelation {
-                        model: parsed.model,
-                        foreign_key: parsed.foreign_key,
-                        method_name: parsed.method_name,
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(relations)
-}
-
-/// Parse belongs_to relations from struct attributes.
-/// Example: #[orm(belongs_to(Category, foreign_key = "category_id", as = "category"))]
-fn get_belongs_to_relations(input: &DeriveInput) -> Result<Vec<BelongsToRelation>> {
-    let mut relations = Vec::new();
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("orm") {
-            // Try to parse as a function-style attribute: orm(belongs_to(...))
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.clone();
-                if let Ok(parsed) = syn::parse2::<BelongsToAttr>(tokens) {
-                    relations.push(BelongsToRelation {
-                        model: parsed.model,
-                        foreign_key: parsed.foreign_key,
-                        method_name: parsed.method_name,
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(relations)
-}
-
-/// Parse join clauses from struct attributes.
-/// Example: #[orm(join(table = "categories", on = "products.category_id = categories.id", type = "inner"))]
-fn get_join_clauses(input: &DeriveInput) -> Result<Vec<JoinClause>> {
-    let mut joins = Vec::new();
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("orm") {
-            if let syn::Meta::List(meta_list) = &attr.meta {
-                let tokens = meta_list.tokens.clone();
-                if let Ok(parsed) = syn::parse2::<JoinAttr>(tokens) {
-                    joins.push(JoinClause {
-                        table: parsed.table,
-                        on: parsed.on,
-                        join_type: parsed.join_type,
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(joins)
-}
-
-/// Helper struct for parsing join attribute
-struct JoinAttr {
-    table: String,
-    on: String,
-    join_type: String,
-}
-
-impl syn::parse::Parse for JoinAttr {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let ident: syn::Ident = input.parse()?;
-        if ident != "join" {
-            return Err(syn::Error::new(ident.span(), "expected join"));
-        }
-
-        let content;
-        syn::parenthesized!(content in input);
-
-        let mut table: Option<String> = None;
-        let mut on: Option<String> = None;
-        let mut join_type = "inner".to_string();
-
-        // Parse key = value pairs
-        loop {
-            if content.is_empty() {
-                break;
-            }
-
-            let key = syn::Ident::parse_any(&content)?;
-            let _: syn::Token![=] = content.parse()?;
-            let value: syn::LitStr = content.parse()?;
-
-            if key == "table" {
-                table = Some(value.value());
-            } else if key == "on" {
-                on = Some(value.value());
-            } else if key == "type" {
-                join_type = value.value();
-            }
-
-            if content.peek(syn::Token![,]) {
-                let _: syn::Token![,] = content.parse()?;
-            } else {
-                break;
-            }
-        }
-
-        let table = table
-            .ok_or_else(|| syn::Error::new(Span::call_site(), "join requires table = \"...\""))?;
-
-        let on =
-            on.ok_or_else(|| syn::Error::new(Span::call_site(), "join requires on = \"...\""))?;
-
-        Ok(JoinAttr {
-            table,
-            on,
-            join_type,
-        })
-    }
-}
-
-/// Helper struct for parsing has_many attribute
-struct HasManyAttr {
-    model: syn::Path,
-    foreign_key: String,
-    method_name: String,
-}
-
-impl syn::parse::Parse for HasManyAttr {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let ident: syn::Ident = input.parse()?;
-        if ident != "has_many" {
-            return Err(syn::Error::new(ident.span(), "expected has_many"));
-        }
-
-        let content;
-        syn::parenthesized!(content in input);
-
-        let model: syn::Path = content.parse()?;
-
-        let mut foreign_key: Option<String> = None;
-        let mut method_name: Option<String> = None;
-
-        while content.peek(syn::Token![,]) {
-            let _: syn::Token![,] = content.parse()?;
-            if content.is_empty() {
-                break;
-            }
-
-            // Use parse_any to handle keywords like 'as'
-            let key = syn::Ident::parse_any(&content)?;
-            let _: syn::Token![=] = content.parse()?;
-            let value: syn::LitStr = content.parse()?;
-
-            if key == "foreign_key" {
-                foreign_key = Some(value.value());
-            } else if key == "as" || key == "name" {
-                method_name = Some(value.value());
-            }
-        }
-
-        let fk = foreign_key.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "has_many requires foreign_key = \"...\"")
-        })?;
-
-        // Default method name: lowercase model name + 's'
-        let name = method_name.unwrap_or_else(|| {
-            let model_name = model.segments.last().unwrap().ident.to_string();
-            format!("{}s", model_name.to_lowercase())
-        });
-
-        Ok(HasManyAttr {
-            model,
-            foreign_key: fk,
-            method_name: name,
-        })
-    }
-}
-
-/// Helper struct for parsing belongs_to attribute
-struct BelongsToAttr {
-    model: syn::Path,
-    foreign_key: String,
-    method_name: String,
-}
-
-impl syn::parse::Parse for BelongsToAttr {
-    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
-        let ident: syn::Ident = input.parse()?;
-        if ident != "belongs_to" {
-            return Err(syn::Error::new(ident.span(), "expected belongs_to"));
-        }
-
-        let content;
-        syn::parenthesized!(content in input);
-
-        let model: syn::Path = content.parse()?;
-
-        let mut foreign_key: Option<String> = None;
-        let mut method_name: Option<String> = None;
-
-        while content.peek(syn::Token![,]) {
-            let _: syn::Token![,] = content.parse()?;
-            if content.is_empty() {
-                break;
-            }
-
-            // Use parse_any to handle keywords like 'as'
-            let key = syn::Ident::parse_any(&content)?;
-            let _: syn::Token![=] = content.parse()?;
-            let value: syn::LitStr = content.parse()?;
-
-            if key == "foreign_key" {
-                foreign_key = Some(value.value());
-            } else if key == "as" || key == "name" {
-                method_name = Some(value.value());
-            }
-        }
-
-        let fk = foreign_key.ok_or_else(|| {
-            syn::Error::new(
-                Span::call_site(),
-                "belongs_to requires foreign_key = \"...\"",
-            )
-        })?;
-
-        // Default method name: lowercase model name
-        let name = method_name.unwrap_or_else(|| {
-            let model_name = model.segments.last().unwrap().ident.to_string();
-            model_name.to_lowercase()
-        });
-
-        Ok(BelongsToAttr {
-            model,
-            foreign_key: fk,
-            method_name: name,
-        })
     }
 }

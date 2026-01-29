@@ -72,6 +72,12 @@ impl PgType for serde_json::Value {
     }
 }
 
+impl<'a> PgType for &'a serde_json::Value {
+    fn pg_array_type() -> &'static str {
+        "jsonb[]"
+    }
+}
+
 impl<T> PgType for tokio_postgres::types::Json<T> {
     fn pg_array_type() -> &'static str {
         "jsonb[]"
@@ -152,5 +158,28 @@ impl RowExt for Row {
     {
         self.try_get(column)
             .map_err(|e| crate::error::OrmError::decode(column, e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PgType;
+
+    #[test]
+    fn pg_type_jsonb_value() {
+        assert_eq!(<serde_json::Value as PgType>::pg_array_type(), "jsonb[]");
+    }
+
+    #[test]
+    fn pg_type_jsonb_value_ref() {
+        assert_eq!(<&serde_json::Value as PgType>::pg_array_type(), "jsonb[]");
+    }
+
+    #[test]
+    fn pg_type_jsonb_json_wrapper() {
+        assert_eq!(
+            <tokio_postgres::types::Json<serde_json::Value> as PgType>::pg_array_type(),
+            "jsonb[]"
+        );
     }
 }

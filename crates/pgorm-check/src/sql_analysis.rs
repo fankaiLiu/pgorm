@@ -297,7 +297,10 @@ fn analyze_update(update_stmt: &pg_query::protobuf::UpdateStmt) -> UpdateAnalysi
         }
     }
 
-    UpdateAnalysis { target, set_columns }
+    UpdateAnalysis {
+        target,
+        set_columns,
+    }
 }
 
 fn analyze_on_conflict(clause: &pg_query::protobuf::OnConflictClause) -> OnConflictAnalysis {

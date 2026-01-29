@@ -1,886 +1,313 @@
-# 代码生成 CLI (Schema-to-Code Generator)
+# 代码生成 CLI（SQL-to-Code Generator，sqlc-like）
 
-> 参考来源：jOOQ (Java)、Prisma (TypeScript)、SQLAlchemy Automap
+> 参考来源：sqlc（Go）、sqlx（Rust）、libpg_query / pg_query（Postgres SQL Parser）
 
-## 概述
+## 背景
 
-代码生成 CLI 工具从现有数据库 schema 自动生成 Rust 模型代码，实现 Database-First 的开发工作流。这大大降低了将现有项目迁移到 pgorm 的门槛。
+pgorm 的定位是 **SQL-first**：开发者写清晰、可 review 的 SQL，并用 `pgorm::query()`/`pgorm::sql()` 执行、绑定参数、映射结果。
 
-## 设计原则
+现阶段的痛点是：
 
-- **准确映射**：精确反映数据库 schema，包括类型、约束、索引
-- **可定制**：支持配置文件自定义生成规则
-- **增量更新**：支持在不覆盖手动修改的情况下更新
-- **类型安全**：生成的代码通过编译即可保证与数据库一致
+- 手写 SQL → 手写绑定顺序 / 结构体字段 → 容易出错、重复劳动
+- 需要“像 sqlc 一样”：**给定 schema + queries.sql，生成类型安全的调用代码**
+- 希望尽量“离线”：不依赖运行时连数据库也能生成（CI 也能跑）
 
-## 使用方式
+因此，这里的 codegen CLI 目标从「Schema-to-Code（内省生成模型）」**完全切换**为「SQL-to-Code（基于 SQL 文件生成调用层）」。
+
+## 核心目标 / 非目标
+
+### 目标（MVP）
+
+- **Query-first**：以 `queries/**/*.sql` 为输入，生成 Rust 调用代码
+- **类型安全**：参数类型、返回行类型尽可能从 schema 推导（推导失败可显式标注）
+- **和 pgorm API 对齐**：生成代码使用 `pgorm::query()` + `bind()` + `fetch_*_as()`/`execute()`
+- **可组合、可维护**：生成代码稳定（命名稳定、文件布局稳定），方便 diff/review
+
+### 非目标（先不做）
+
+- 自动生成 migrations / DDL（属于迁移工具范畴）
+- 解析支持所有 PostgreSQL 语法角落（先覆盖常见 DML：SELECT/INSERT/UPDATE/DELETE/CTE）
+- 运行期“反射”数据库推导类型（可作为可选校验，但不作为唯一信息源）
+
+## 使用方式（面向开发者）
+
+### 目录约定（建议）
+
+```
+.
+├── migrations/              # refinery 迁移（可选，作为 schema 源）
+│   ├── V001__init.sql
+│   └── ...
+├── queries/                 # 手写 SQL（核心输入）
+│   ├── users.sql
+│   └── posts.sql
+├── pgorm.toml               # codegen 配置（本设计）
+└── src/db/                  # 生成输出目录（示例）
+```
 
 ### 基本命令
 
 ```bash
-# 从数据库生成模型
-pgorm generate \
-    --database "postgres://user:pass@localhost/mydb" \
-    --output src/models/
+# 生成（类似：sqlc generate）
+pgorm gen --config pgorm.toml
 
-# 使用配置文件
-pgorm generate --config pgorm.toml
+# 只检查（解析/类型推导/SQL lint），不写文件（适合 CI）
+pgorm gen check --config pgorm.toml
 
-# 只生成特定表
-pgorm generate \
-    --database "postgres://..." \
-    --tables users,posts,comments \
-    --output src/models/
+# 初始化配置模板
+pgorm gen init
 
-# 排除特定表
-pgorm generate \
-    --database "postgres://..." \
-    --exclude "_migrations,_schema_history" \
-    --output src/models/
-
-# 预览生成内容（不写入文件）
-pgorm generate --database "postgres://..." --dry-run
+# （可选）从数据库刷新本地 schema cache（如果你不想/不能解析 migrations）
+pgorm gen schema --database "$DATABASE_URL"
 ```
 
-### 配置文件
+## 配置文件（pgorm.toml）
+
+设计上尽量贴近 sqlc 的“多 package”概念：一个项目可能有多套 schema/queries 输出到不同 module。
 
 ```toml
 # pgorm.toml
 
-[database]
-url = "postgres://user:pass@localhost/mydb"
-# 或使用环境变量
-# url = "${DATABASE_URL}"
+version = "1"
+engine = "postgres"
 
-[output]
-path = "src/models"
-# 生成单个文件还是多个文件
-mode = "multiple"  # "single" | "multiple"
+[[packages]]
+name = "db"
+schema = ["migrations/**/*.sql"]   # 或者 ["schema.sql"]，也可以走 schema_cache
+queries = ["queries/**/*.sql"]
+out = "src/db"
 
-[generation]
-# 生成哪些 derive
-derives = ["Model", "FromRow", "InsertModel", "UpdateModel", "Debug", "Clone"]
+[packages.codegen]
+# 生成风格
+emit_queries_struct = true      # 生成 Queries<C> 结构体（sqlc 风格）
+emit_query_constants = true     # 为每个 query 生成 const SQL: &str
+emit_tagged_exec = true         # 使用 fetch_*_tagged*/execute_tagged（便于监控）
 
-# 是否生成关系
-generate_relations = true
-
-# 是否生成索引信息
-generate_indexes = true
-
-# 命名风格
-table_naming = "snake_case"   # 表名保持不变
-struct_naming = "PascalCase"  # 结构体名
-field_naming = "snake_case"   # 字段名
-
-[tables]
-# 包含/排除表
-include = ["*"]
-exclude = ["_migrations", "_schema_history", "pg_*"]
-
-# 特定表的配置
-[tables.users]
-struct_name = "User"  # 自定义结构体名
-# 字段覆盖
-[tables.users.columns.password_hash]
-skip = true  # 不生成此字段
-[tables.users.columns.created_at]
-rust_type = "DateTime<Utc>"  # 自定义类型
-
-[tables.user_profiles]
-struct_name = "Profile"
-
-[types]
-# 自定义类型映射
-"uuid" = "uuid::Uuid"
-"jsonb" = "serde_json::Value"
-"timestamptz" = "chrono::DateTime<chrono::Utc>"
-"timestamp" = "chrono::NaiveDateTime"
-"numeric" = "rust_decimal::Decimal"
-"inet" = "std::net::IpAddr"
-
-[imports]
-# 额外的 use 语句
-extra = [
-    "chrono::{DateTime, Utc, NaiveDateTime}",
-    "uuid::Uuid",
-    "serde_json::Value as JsonValue",
-    "rust_decimal::Decimal",
+# 派生与常用导入
+derives = ["Debug", "Clone"]    # 默认给参数/返回 struct
+row_derives = ["FromRow"]       # 返回行结构体 derive
+extra_uses = [
+  "pgorm::FromRow",
+  "serde::{Serialize, Deserialize}",
 ]
+
+# 命名
+module_naming = "snake_case"    # 生成模块名
+type_naming = "PascalCase"      # 生成 struct/enum 名
+field_naming = "snake_case"     # 生成字段名
+
+[packages.types]
+# PG 类型到 Rust 类型映射（可覆盖默认）
+"uuid" = "uuid::Uuid"
+"timestamptz" = "chrono::DateTime<chrono::Utc>"
+"jsonb" = "serde_json::Value"
+"numeric" = "rust_decimal::Decimal"
+
+[packages.overrides]
+# 当推导失败/需要显式指定时使用（按需扩展）
+# 参数类型覆盖（query_name + 位置）
+# param."GetUser".1 = "i64"
+#
+# 返回字段类型覆盖（query_name + 字段名）
+# column."SearchUsers".created_at = "chrono::DateTime<chrono::Utc>"
 ```
 
-## 生成的代码示例
+说明：
 
-### 输入：数据库 Schema
+- `schema`：优先推荐从 migrations/schema.sql 解析获得 schema 信息；如果做不到，可通过 `schema` 子命令生成 `.pgorm/schema.json` 作为输入（见下文）。
+- `overrides`：用于处理“SQL 推导困难”的场景（表达式、函数、动态列等）。
+
+## Query 文件格式（sqlc 风格注解）
+
+每个 query 用一段注释声明元信息：
 
 ```sql
-CREATE TABLE users (
-    id BIGSERIAL PRIMARY KEY,
-    uuid UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    age INTEGER,
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- name: GetUser :one
+SELECT id, email, name, created_at
+FROM users
+WHERE id = $1;
 
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_status ON users(status);
+-- name: ListUsersByStatus :many
+SELECT id, email, name
+FROM users
+WHERE status = $1
+ORDER BY id DESC
+LIMIT $2 OFFSET $3;
 
-CREATE TABLE posts (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title VARCHAR(255) NOT NULL,
-    content TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'draft',
-    published_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- name: UpdateUserName :execrows
+UPDATE users
+SET name = $2
+WHERE id = $1;
 
-CREATE INDEX idx_posts_user_id ON posts(user_id);
-CREATE INDEX idx_posts_status ON posts(status);
-
-CREATE TABLE comments (
-    id BIGSERIAL PRIMARY KEY,
-    post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    content TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- name: DeleteUser :exec
+DELETE FROM users WHERE id = $1;
 ```
 
-### 输出：生成的 Rust 代码
+返回类型标记（与 sqlc 类似，按 pgorm 能力收敛）：
 
-```rust
-// src/models/mod.rs (自动生成)
-//! Database models generated by pgorm-cli
-//!
-//! Generated at: 2024-12-20T10:30:00Z
-//! Database: postgres://localhost/mydb
-//!
-//! DO NOT EDIT - This file is auto-generated.
-//! To customize, use pgorm.toml configuration.
+- `:one`：返回 1 行（无行视为错误） → `fetch_one_as()`
+- `:opt`：返回 0/1 行 → `fetch_opt_as()`
+- `:many`：返回多行 → `fetch_all_as()`
+- `:exec`：无返回行 → `execute()`（返回 `u64` affected rows 或丢弃）
+- `:execrows`：同 `:exec`，但语义上鼓励使用返回值（`u64`）
 
-mod user;
-mod post;
-mod comment;
+额外注解（可选，逐步加入）：
 
-pub use user::*;
-pub use post::*;
-pub use comment::*;
+- `-- @param <pos> <name> <rust_type>`：显式命名/指定参数
+- `-- @result <rust_type>`：强制使用现有类型作为返回行（例如自写 Model/DTO）
+- `-- @tag <string>`：覆盖监控 tag（默认用 query name）
+
+## 生成输出（Rust）
+
+### 生成文件布局（建议）
+
+以 `packages.name = "db"`, `out = "src/db"` 为例：
+
+```
+src/db/
+├── mod.rs               # 自动生成：pub mod users; pub mod posts; ...
+├── users.rs             # 来自 queries/users.sql
+└── posts.rs             # 来自 queries/posts.sql
 ```
 
+每个模块包含（按配置开关）：
+
+- `const SQL_*: &str`：原始 SQL（便于排查/日志对齐）
+- `struct <QueryName>Params`（可选）：当参数多/需要命名时生成
+- `struct <QueryName>Row`：`SELECT` 返回行结构体（`#[derive(FromRow, ...)]`）
+- `impl Queries<C>` 方法：每个 query 一个 `async fn`
+
+### 生成代码示例
+
+输入（`queries/users.sql`）：
+
+```sql
+-- name: GetUser :opt
+SELECT id, email, name
+FROM users
+WHERE id = $1;
+```
+
+输出（`src/db/users.rs`，示意）：
+
 ```rust
-// src/models/user.rs (自动生成)
-//! Model for table `users`
+// Code generated by pgorm. DO NOT EDIT.
 
-use chrono::{DateTime, Utc};
-use pgorm::{FromRow, Model, InsertModel, UpdateModel};
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use uuid::Uuid;
+use pgorm::{query, GenericClient, OrmResult, FromRow};
 
-/// User model
-///
-/// Table: `users`
-/// Primary key: `id`
-/// Indexes:
-///   - `idx_users_email` (email)
-///   - `idx_users_status` (status)
-#[derive(Debug, Clone, Model, FromRow, Serialize, Deserialize)]
-#[orm(table = "users")]
-#[orm(has_many(Post, foreign_key = "user_id", as = "posts"))]
-#[orm(has_many(Comment, foreign_key = "user_id", as = "comments"))]
-pub struct User {
-    /// Primary key
-    #[orm(id)]
+pub struct Queries<'a, C: GenericClient> {
+    conn: &'a C,
+}
+
+impl<'a, C: GenericClient> Queries<'a, C> {
+    pub fn new(conn: &'a C) -> Self {
+        Self { conn }
+    }
+
+    pub async fn get_user(&self, id: i64) -> OrmResult<Option<GetUserRow>> {
+        const SQL: &str = r#"
+            SELECT id, email, name
+            FROM users
+            WHERE id = $1
+        "#;
+
+        query(SQL)
+            .bind(id)
+            .fetch_opt_tagged_as(self.conn, "GetUser")
+            .await
+    }
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct GetUserRow {
     pub id: i64,
-
-    /// Unique identifier
-    #[orm(column = "uuid")]
-    pub uuid: Uuid,
-
-    /// User email address
-    /// Unique constraint: `users_email_key`
     pub email: String,
-
-    /// User display name
     pub name: String,
-
-    /// User age (optional)
-    pub age: Option<i32>,
-
-    /// Account status
-    /// Default: 'active'
-    pub status: String,
-
-    /// Additional metadata
-    pub metadata: Option<JsonValue>,
-
-    /// Creation timestamp
-    pub created_at: DateTime<Utc>,
-
-    /// Last update timestamp
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Insert model for `users`
-#[derive(Debug, Clone, InsertModel, Serialize, Deserialize)]
-#[orm(table = "users")]
-#[orm(returning = "User")]
-pub struct NewUser {
-    /// Unique identifier (auto-generated if not provided)
-    #[orm(default)]
-    pub uuid: Option<Uuid>,
-
-    /// User email address
-    pub email: String,
-
-    /// User display name
-    pub name: String,
-
-    /// Password hash (write-only)
-    pub password_hash: String,
-
-    /// User age (optional)
-    pub age: Option<i32>,
-
-    /// Account status
-    #[orm(default)]
-    pub status: Option<String>,
-
-    /// Additional metadata
-    pub metadata: Option<JsonValue>,
-
-    /// Creation timestamp (auto-generated)
-    #[orm(auto_now_add)]
-    pub created_at: Option<DateTime<Utc>>,
-
-    /// Last update timestamp (auto-generated)
-    #[orm(auto_now_add)]
-    pub updated_at: Option<DateTime<Utc>>,
-}
-
-/// Update model for `users`
-#[derive(Debug, Clone, Default, UpdateModel, Serialize, Deserialize)]
-#[orm(table = "users")]
-pub struct UpdateUser {
-    /// User email address
-    pub email: Option<String>,
-
-    /// User display name
-    pub name: Option<String>,
-
-    /// Password hash
-    pub password_hash: Option<String>,
-
-    /// User age
-    /// Use `Some(None)` to set to NULL
-    pub age: Option<Option<i32>>,
-
-    /// Account status
-    pub status: Option<String>,
-
-    /// Additional metadata
-    /// Use `Some(None)` to set to NULL
-    pub metadata: Option<Option<JsonValue>>,
-
-    /// Last update timestamp (auto-updated)
-    #[orm(auto_now)]
-    pub updated_at: Option<DateTime<Utc>>,
 }
 ```
 
-```rust
-// src/models/post.rs (自动生成)
-//! Model for table `posts`
+## Schema 来源与类型推导
 
-use chrono::{DateTime, Utc};
-use pgorm::{FromRow, Model, InsertModel, UpdateModel};
-use serde::{Deserialize, Serialize};
+sqlc 的关键点是：**不连数据库**也能推导类型。这里也采用同样的思路，但保留可选的 DB 校验通道。
 
-/// Post model
-///
-/// Table: `posts`
-/// Primary key: `id`
-/// Foreign keys:
-///   - `user_id` -> `users(id)` ON DELETE CASCADE
-#[derive(Debug, Clone, Model, FromRow, Serialize, Deserialize)]
-#[orm(table = "posts")]
-#[orm(belongs_to(User, foreign_key = "user_id", as = "author"))]
-#[orm(has_many(Comment, foreign_key = "post_id", as = "comments"))]
-pub struct Post {
-    #[orm(id)]
-    pub id: i64,
+### Schema 输入优先级（建议）
 
-    /// Author reference
-    pub user_id: i64,
+1. `schema = ["migrations/**/*.sql"]` 或 `schema = ["schema.sql"]`：从 DDL 解析出表/列/类型/可空信息（推荐）
+2. `.pgorm/schema.json`：本地 schema cache（可由 `pgorm gen schema --database ...` 生成）
+3. `--database`（可选）：仅用于校验/刷新 cache，不作为唯一信息源（避免 CI 依赖 DB）
 
-    pub title: String,
+### 推导规则（MVP 版）
 
-    pub content: Option<String>,
+参数：
 
-    /// Post status: draft, published, archived
-    pub status: String,
+- `$n` 参数按出现顺序生成函数参数
+- 若 `$n` 出现在 `col = $n / $n = col / col IN (...)`，优先使用 `col` 的类型
+- 若 `$n` 出现在 `INSERT/UPDATE` 的列赋值位置，使用对应列类型
+- 推导失败时：
+  - 要求 SQL 中显式 cast：`$1::uuid`
+  - 或使用 `-- @param` / `packages.overrides` 指定
 
-    pub published_at: Option<DateTime<Utc>>,
+返回行：
 
-    pub created_at: DateTime<Utc>,
+- `SELECT col1, col2 ...`：从列引用解析类型与可空
+- `SELECT *`：默认报错（避免生成不稳定类型）；后续可提供 `-- @result User` 或 `sqlc.embed` 类能力
+- `LEFT JOIN`：来自被左连接表的列默认为可空（`Option<T>`）
+- 表达式（`COUNT(*)`, `COALESCE`, `NOW()` 等）：MVP 先要求显式 cast 或 override
 
-    pub updated_at: DateTime<Utc>,
-}
+类型映射：
 
-#[derive(Debug, Clone, InsertModel, Serialize, Deserialize)]
-#[orm(table = "posts")]
-#[orm(returning = "Post")]
-pub struct NewPost {
-    pub user_id: i64,
+- 内置一套 PG → Rust 映射（与 pgorm 已用依赖对齐：chrono/uuid/serde_json 等）
+- `packages.types` 允许覆盖/扩展
 
-    pub title: String,
+## CLI 内部架构（实现视角）
 
-    pub content: Option<String>,
+### Pipeline
 
-    #[orm(default)]
-    pub status: Option<String>,
+1. 读取配置（多 package）
+2. 对每个 package：
+   1) 加载 schema（migrations/schema.sql/schema cache）
+   2) 扫描 queries 文件，按 `-- name:` 分段
+   3) 用 `pg_query` 解析 DDL/DML AST
+   4) 基于 schema 做参数/返回类型推导，必要时应用 overrides
+   5) 生成 Rust 源码（模块/struct/方法），写入 `out`
+   6) 可选：rustfmt（由 CLI flag 控制，默认不强依赖）
 
-    pub published_at: Option<DateTime<Utc>>,
+### 与 pgorm-check 的关系
 
-    #[orm(auto_now_add)]
-    pub created_at: Option<DateTime<Utc>>,
+- 复用 `pgorm-check` 的 SQL 解析/引用提取能力（已有 `pg_query` feature）
+- codegen 的 `check` 子命令可以顺便跑 lint（如：UPDATE/DELETE 必须有 WHERE、SELECT MANY 建议 LIMIT 等）
 
-    #[orm(auto_now_add)]
-    pub updated_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Default, UpdateModel, Serialize, Deserialize)]
-#[orm(table = "posts")]
-pub struct UpdatePost {
-    pub title: Option<String>,
-
-    pub content: Option<Option<String>>,
-
-    pub status: Option<String>,
-
-    pub published_at: Option<Option<DateTime<Utc>>>,
-
-    #[orm(auto_now)]
-    pub updated_at: Option<DateTime<Utc>>,
-}
-```
-
-## CLI 架构
-
-### 命令结构
-
-```
-pgorm
-├── generate          # 生成模型代码
-│   ├── --database    # 数据库连接字符串
-│   ├── --config      # 配置文件路径
-│   ├── --output      # 输出目录
-│   ├── --tables      # 指定表
-│   ├── --exclude     # 排除表
-│   ├── --dry-run     # 预览模式
-│   └── --force       # 覆盖现有文件
-│
-├── diff              # 比较数据库与现有代码的差异
-│   ├── --database    # 数据库连接字符串
-│   └── --models      # 模型文件路径
-│
-├── check             # 验证模型与数据库一致性
-│   ├── --database    # 数据库连接字符串
-│   └── --models      # 模型文件路径
-│
-└── init              # 初始化配置文件
-    └── --database    # 数据库连接字符串（可选）
-```
-
-### 核心模块
-
-```rust
-// pgorm-cli/src/main.rs
-
-use clap::{Parser, Subcommand};
-
-#[derive(Parser)]
-#[command(name = "pgorm")]
-#[command(about = "pgorm CLI - Database-first code generation")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Generate Rust models from database schema
-    Generate(GenerateArgs),
-    /// Compare database schema with existing models
-    Diff(DiffArgs),
-    /// Validate models against database schema
-    Check(CheckArgs),
-    /// Initialize pgorm.toml configuration
-    Init(InitArgs),
-}
-
-#[derive(Args)]
-struct GenerateArgs {
-    /// Database connection URL
-    #[arg(short, long, env = "DATABASE_URL")]
-    database: Option<String>,
-
-    /// Configuration file path
-    #[arg(short, long, default_value = "pgorm.toml")]
-    config: PathBuf,
-
-    /// Output directory
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Tables to include (comma-separated)
-    #[arg(long)]
-    tables: Option<String>,
-
-    /// Tables to exclude (comma-separated)
-    #[arg(long)]
-    exclude: Option<String>,
-
-    /// Preview without writing files
-    #[arg(long)]
-    dry_run: bool,
-
-    /// Overwrite existing files
-    #[arg(long)]
-    force: bool,
-}
-```
-
-## Schema 解析
-
-### 数据库内省
-
-```rust
-// pgorm-cli/src/introspect.rs
-
-use tokio_postgres::Client;
-
-/// 表信息
-pub struct TableInfo {
-    pub name: String,
-    pub schema: String,
-    pub columns: Vec<ColumnInfo>,
-    pub primary_key: Option<Vec<String>>,
-    pub indexes: Vec<IndexInfo>,
-    pub foreign_keys: Vec<ForeignKeyInfo>,
-    pub unique_constraints: Vec<UniqueConstraintInfo>,
-    pub check_constraints: Vec<CheckConstraintInfo>,
-    pub comment: Option<String>,
-}
-
-/// 列信息
-pub struct ColumnInfo {
-    pub name: String,
-    pub data_type: String,
-    pub udt_name: String,
-    pub is_nullable: bool,
-    pub default_value: Option<String>,
-    pub is_identity: bool,
-    pub is_generated: bool,
-    pub comment: Option<String>,
-}
-
-/// 索引信息
-pub struct IndexInfo {
-    pub name: String,
-    pub columns: Vec<String>,
-    pub is_unique: bool,
-    pub is_primary: bool,
-}
-
-/// 外键信息
-pub struct ForeignKeyInfo {
-    pub name: String,
-    pub columns: Vec<String>,
-    pub referenced_table: String,
-    pub referenced_columns: Vec<String>,
-    pub on_delete: String,
-    pub on_update: String,
-}
-
-/// 从数据库读取 schema
-pub async fn introspect_database(client: &Client) -> Result<Vec<TableInfo>, Error> {
-    // 查询 information_schema
-    let tables = query_tables(client).await?;
-    let mut result = Vec::new();
-
-    for table in tables {
-        let columns = query_columns(client, &table.name).await?;
-        let primary_key = query_primary_key(client, &table.name).await?;
-        let indexes = query_indexes(client, &table.name).await?;
-        let foreign_keys = query_foreign_keys(client, &table.name).await?;
-        let unique_constraints = query_unique_constraints(client, &table.name).await?;
-
-        result.push(TableInfo {
-            name: table.name,
-            schema: table.schema,
-            columns,
-            primary_key,
-            indexes,
-            foreign_keys,
-            unique_constraints,
-            check_constraints: vec![],
-            comment: table.comment,
-        });
-    }
-
-    Ok(result)
-}
-
-/// 查询列信息的 SQL
-async fn query_columns(client: &Client, table_name: &str) -> Result<Vec<ColumnInfo>, Error> {
-    let sql = r#"
-        SELECT
-            c.column_name,
-            c.data_type,
-            c.udt_name,
-            c.is_nullable = 'YES' as is_nullable,
-            c.column_default,
-            c.is_identity = 'YES' as is_identity,
-            c.is_generated != 'NEVER' as is_generated,
-            pgd.description as comment
-        FROM information_schema.columns c
-        LEFT JOIN pg_catalog.pg_statio_all_tables st
-            ON c.table_schema = st.schemaname AND c.table_name = st.relname
-        LEFT JOIN pg_catalog.pg_description pgd
-            ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
-        WHERE c.table_name = $1
-        ORDER BY c.ordinal_position
-    "#;
-
-    let rows = client.query(sql, &[&table_name]).await?;
-    // ... 解析结果
-}
-```
-
-## 类型映射
-
-### PostgreSQL 到 Rust 类型映射
-
-```rust
-// pgorm-cli/src/type_mapping.rs
-
-use std::collections::HashMap;
-
-pub struct TypeMapper {
-    mappings: HashMap<String, String>,
-}
-
-impl TypeMapper {
-    pub fn new() -> Self {
-        let mut mappings = HashMap::new();
-
-        // 数值类型
-        mappings.insert("smallint".into(), "i16".into());
-        mappings.insert("int2".into(), "i16".into());
-        mappings.insert("integer".into(), "i32".into());
-        mappings.insert("int4".into(), "i32".into());
-        mappings.insert("bigint".into(), "i64".into());
-        mappings.insert("int8".into(), "i64".into());
-        mappings.insert("smallserial".into(), "i16".into());
-        mappings.insert("serial".into(), "i32".into());
-        mappings.insert("bigserial".into(), "i64".into());
-        mappings.insert("real".into(), "f32".into());
-        mappings.insert("float4".into(), "f32".into());
-        mappings.insert("double precision".into(), "f64".into());
-        mappings.insert("float8".into(), "f64".into());
-        mappings.insert("numeric".into(), "rust_decimal::Decimal".into());
-        mappings.insert("decimal".into(), "rust_decimal::Decimal".into());
-
-        // 字符串类型
-        mappings.insert("character varying".into(), "String".into());
-        mappings.insert("varchar".into(), "String".into());
-        mappings.insert("character".into(), "String".into());
-        mappings.insert("char".into(), "String".into());
-        mappings.insert("text".into(), "String".into());
-        mappings.insert("name".into(), "String".into());
-
-        // 布尔类型
-        mappings.insert("boolean".into(), "bool".into());
-        mappings.insert("bool".into(), "bool".into());
-
-        // 时间类型
-        mappings.insert("timestamp without time zone".into(), "chrono::NaiveDateTime".into());
-        mappings.insert("timestamp".into(), "chrono::NaiveDateTime".into());
-        mappings.insert("timestamp with time zone".into(), "chrono::DateTime<chrono::Utc>".into());
-        mappings.insert("timestamptz".into(), "chrono::DateTime<chrono::Utc>".into());
-        mappings.insert("date".into(), "chrono::NaiveDate".into());
-        mappings.insert("time without time zone".into(), "chrono::NaiveTime".into());
-        mappings.insert("time".into(), "chrono::NaiveTime".into());
-        mappings.insert("time with time zone".into(), "chrono::NaiveTime".into());
-        mappings.insert("interval".into(), "chrono::Duration".into());
-
-        // UUID
-        mappings.insert("uuid".into(), "uuid::Uuid".into());
-
-        // JSON
-        mappings.insert("json".into(), "serde_json::Value".into());
-        mappings.insert("jsonb".into(), "serde_json::Value".into());
-
-        // 二进制
-        mappings.insert("bytea".into(), "Vec<u8>".into());
-
-        // 网络类型
-        mappings.insert("inet".into(), "std::net::IpAddr".into());
-        mappings.insert("cidr".into(), "ipnetwork::IpNetwork".into());
-        mappings.insert("macaddr".into(), "macaddr::MacAddr6".into());
-
-        // 数组类型会在运行时处理
-
-        Self { mappings }
-    }
-
-    pub fn map_type(&self, pg_type: &str, is_nullable: bool, is_array: bool) -> String {
-        let base_type = self.mappings
-            .get(pg_type)
-            .cloned()
-            .unwrap_or_else(|| {
-                // 未知类型，使用 String
-                eprintln!("Warning: Unknown PostgreSQL type '{}', using String", pg_type);
-                "String".into()
-            });
-
-        let typed = if is_array {
-            format!("Vec<{}>", base_type)
-        } else {
-            base_type
-        };
-
-        if is_nullable {
-            format!("Option<{}>", typed)
-        } else {
-            typed
-        }
-    }
-
-    /// 添加自定义映射
-    pub fn add_mapping(&mut self, pg_type: &str, rust_type: &str) {
-        self.mappings.insert(pg_type.to_string(), rust_type.to_string());
-    }
-}
-```
-
-## 代码生成
-
-### 代码生成器
-
-```rust
-// pgorm-cli/src/codegen.rs
-
-use quote::quote;
-use proc_macro2::TokenStream;
-
-pub struct CodeGenerator {
-    config: Config,
-    type_mapper: TypeMapper,
-}
-
-impl CodeGenerator {
-    pub fn generate_model(&self, table: &TableInfo) -> String {
-        let struct_name = self.to_struct_name(&table.name);
-        let table_name = &table.name;
-
-        // 生成字段
-        let fields = self.generate_fields(&table.columns);
-
-        // 生成关系
-        let relations = self.generate_relations(table);
-
-        // 生成文档注释
-        let doc = self.generate_doc(table);
-
-        let code = quote! {
-            #doc
-            #[derive(Debug, Clone, Model, FromRow, Serialize, Deserialize)]
-            #[orm(table = #table_name)]
-            #relations
-            pub struct #struct_name {
-                #fields
-            }
-        };
-
-        code.to_string()
-    }
-
-    pub fn generate_insert_model(&self, table: &TableInfo) -> String {
-        // ... 生成 InsertModel
-    }
-
-    pub fn generate_update_model(&self, table: &TableInfo) -> String {
-        // ... 生成 UpdateModel
-    }
-
-    fn generate_fields(&self, columns: &[ColumnInfo]) -> TokenStream {
-        let fields: Vec<_> = columns.iter().map(|col| {
-            let name = format_ident!("{}", col.name);
-            let ty: TokenStream = self.type_mapper
-                .map_type(&col.udt_name, col.is_nullable, false)
-                .parse()
-                .unwrap();
-
-            let attrs = self.generate_field_attrs(col);
-
-            quote! {
-                #attrs
-                pub #name: #ty,
-            }
-        }).collect();
-
-        quote! { #(#fields)* }
-    }
-
-    fn generate_field_attrs(&self, col: &ColumnInfo) -> TokenStream {
-        let mut attrs = vec![];
-
-        // 主键
-        if col.is_identity {
-            attrs.push(quote! { #[orm(id)] });
-        }
-
-        // 默认值
-        if col.default_value.is_some() && !col.is_identity {
-            attrs.push(quote! { #[orm(default)] });
-        }
-
-        // 列名映射（如果不同）
-        let field_name = self.to_field_name(&col.name);
-        if field_name != col.name {
-            let col_name = &col.name;
-            attrs.push(quote! { #[orm(column = #col_name)] });
-        }
-
-        quote! { #(#attrs)* }
-    }
-}
-```
-
-## Diff 和 Check 命令
-
-### Schema 差异检测
-
-```rust
-// pgorm-cli/src/diff.rs
-
-pub struct SchemaDiff {
-    pub added_tables: Vec<TableInfo>,
-    pub removed_tables: Vec<String>,
-    pub modified_tables: Vec<TableDiff>,
-}
-
-pub struct TableDiff {
-    pub table_name: String,
-    pub added_columns: Vec<ColumnInfo>,
-    pub removed_columns: Vec<String>,
-    pub modified_columns: Vec<ColumnDiff>,
-    pub added_indexes: Vec<IndexInfo>,
-    pub removed_indexes: Vec<String>,
-}
-
-pub struct ColumnDiff {
-    pub column_name: String,
-    pub old_type: String,
-    pub new_type: String,
-    pub nullable_changed: Option<bool>,
-    pub default_changed: bool,
-}
-
-/// 比较数据库和模型
-pub fn diff_schema(
-    db_schema: &[TableInfo],
-    model_schema: &[TableInfo],
-) -> SchemaDiff {
-    // 实现差异计算
-}
-
-/// 输出差异报告
-pub fn print_diff(diff: &SchemaDiff) {
-    if diff.added_tables.is_empty()
-        && diff.removed_tables.is_empty()
-        && diff.modified_tables.is_empty()
-    {
-        println!("✓ Schema is up to date");
-        return;
-    }
-
-    for table in &diff.added_tables {
-        println!("+ Table: {}", table.name);
-    }
-
-    for table in &diff.removed_tables {
-        println!("- Table: {}", table);
-    }
-
-    for table_diff in &diff.modified_tables {
-        println!("~ Table: {}", table_diff.table_name);
-        for col in &table_diff.added_columns {
-            println!("  + Column: {}", col.name);
-        }
-        for col in &table_diff.removed_columns {
-            println!("  - Column: {}", col);
-        }
-        for col in &table_diff.modified_columns {
-            println!("  ~ Column: {} ({} -> {})", col.column_name, col.old_type, col.new_type);
-        }
-    }
-}
-```
-
-## 实现检查清单
+## 实现检查清单（迭代）
 
 ### CLI 框架
-- [ ] 设置 clap CLI 结构
-- [ ] 实现 `generate` 命令
-- [ ] 实现 `diff` 命令
-- [ ] 实现 `check` 命令
-- [ ] 实现 `init` 命令
 
-### 数据库内省
-- [ ] 查询表信息
-- [ ] 查询列信息
-- [ ] 查询主键信息
-- [ ] 查询索引信息
-- [ ] 查询外键信息
-- [ ] 查询唯一约束
-- [ ] 查询检查约束
-- [ ] 查询表/列注释
+- [ ] `pgorm gen`/`pgorm gen check`/`pgorm gen init` 命令骨架（clap）
+- [ ] 配置解析（支持 multi-package）
+- [ ] 文件扫描与 query 分段（按 `-- name:`）
 
-### 类型映射
-- [ ] 基础类型映射
-- [ ] 数组类型处理
-- [ ] 自定义类型支持
-- [ ] 枚举类型处理
+### Schema 输入
+
+- [ ] DDL 解析（CREATE TABLE / ALTER TABLE ADD COLUMN 等常见迁移语句）
+- [ ] 支持读取 `.pgorm/schema.json`
+- [ ] （可选）从 DB 刷新/生成 schema cache
+
+### SQL 解析与推导（MVP）
+
+- [ ] 解析 `$n` 参数，生成签名（顺序、命名、可 override）
+- [ ] SELECT 列类型推导（简单列引用 + 可空）
+- [ ] LEFT JOIN 可空传播（基础版）
+- [ ] 推导失败的报错与提示（cast / override）
 
 ### 代码生成
-- [ ] Model 结构体生成
-- [ ] InsertModel 生成
-- [ ] UpdateModel 生成
-- [ ] 关系生成
-- [ ] 文档注释生成
-- [ ] mod.rs 生成
 
-### 配置
-- [ ] TOML 配置解析
-- [ ] 环境变量支持
-- [ ] 表级配置
-- [ ] 列级配置
-- [ ] 自定义类型映射
+- [ ] 按 queries 文件生成模块
+- [ ] 生成 `mod.rs` 聚合
+- [ ] 生成 `Queries<'a, C>`（可配置关闭）
+- [ ] 生成 Row/Params struct（derive 可配置）
+- [ ] 可选 tagged 执行（tag = query name）
 
-### 其他
-- [ ] 增量更新支持
-- [ ] Dry-run 模式
-- [ ] 差异检测
-- [ ] Schema 验证
-- [ ] 单元测试
-- [ ] 集成测试
-- [ ] 文档
+### 工程化
+
+- [ ] `--check` 模式返回非 0（CI 友好）
+- [ ] `--dry-run`（打印将生成的文件列表与摘要）
+- [ ] 生成稳定性（排序、命名规则、最小 diff）

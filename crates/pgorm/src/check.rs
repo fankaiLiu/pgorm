@@ -3,6 +3,9 @@
 //! This module provides runtime SQL validation against registered table schemas.
 //! It can detect issues like missing tables, missing columns, dangerous operations, etc.
 //!
+//! `SchemaRegistry::check_sql` uses an internal LRU parse cache (via `pgorm-check`) to reduce
+//! repeated `pg_query` parsing overhead.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -239,16 +242,23 @@ pub struct SchemaIssue {
     pub message: String,
 }
 
+impl std::fmt::Display for SchemaIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} {:?}: {}", self.level, self.kind, self.message)
+    }
+}
+
 // Re-export from pgorm-check when check feature is enabled
 #[cfg(feature = "check")]
+#[allow(unused_imports)]
 pub use pgorm_check::{
     CheckClient,
     CheckError,
     CheckResult,
     ColumnInfo,
-    ColumnRefFull,
     // Lint types
     ColumnRef,
+    ColumnRefFull,
     DbSchema,
     InsertAnalysis,
     LintIssue,
@@ -291,6 +301,18 @@ pub use pgorm_check::{
 // Schema checking with lint features
 #[cfg(feature = "check")]
 impl SchemaRegistry {
+    pub(crate) fn analyze_sql(&self, sql: &str) -> std::sync::Arc<SqlAnalysis> {
+        self.parse_cache.analyze(sql)
+    }
+
+    /// Replace the internal SQL parse cache with a new capacity.
+    ///
+    /// Set `capacity` to 0 to disable caching (always re-parse).
+    pub fn with_parse_cache_capacity(mut self, capacity: usize) -> Self {
+        self.parse_cache = std::sync::Arc::new(SqlParseCache::new(capacity));
+        self
+    }
+
     /// Check SQL against this registry's schema.
     ///
     /// Validates:
@@ -495,10 +517,7 @@ impl SchemaRegistry {
                     continue;
                 }
 
-                let matches = visible_tables
-                    .iter()
-                    .filter(|t| t.has_column(col))
-                    .count();
+                let matches = visible_tables.iter().filter(|t| t.has_column(col)).count();
 
                 match matches {
                     0 => {
@@ -581,9 +600,7 @@ impl SchemaRegistry {
                     issues.push(SchemaIssue {
                         level: SchemaIssueLevel::Error,
                         kind: SchemaIssueKind::MissingColumn,
-                        message: format!(
-                            "Column not found: {schema_part}.{table_part}.{col_part}"
-                        ),
+                        message: format!("Column not found: {schema_part}.{table_part}.{col_part}"),
                     });
                 }
 
@@ -754,8 +771,13 @@ mod tests {
             assert!(issues.is_empty());
 
             // Unqualified `id` is ambiguous across `users` and `orders`.
-            let issues = registry.check_sql("SELECT id FROM users u JOIN orders o ON u.id = o.user_id");
-            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::AmbiguousColumn));
+            let issues =
+                registry.check_sql("SELECT id FROM users u JOIN orders o ON u.id = o.user_id");
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.kind == SchemaIssueKind::AmbiguousColumn)
+            );
         }
 
         #[test]
@@ -765,17 +787,29 @@ mod tests {
 
             // INSERT column list should be validated against the target table.
             let issues = registry.check_sql("INSERT INTO users (id, missing_col) VALUES (1, 'x')");
-            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::MissingColumn));
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.kind == SchemaIssueKind::MissingColumn)
+            );
 
             // UPDATE SET column list should be validated against the target table.
             let issues = registry.check_sql("UPDATE users SET missing_col = 1 WHERE id = 1");
-            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::MissingColumn));
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.kind == SchemaIssueKind::MissingColumn)
+            );
 
             // ON CONFLICT inference / DO UPDATE SET columns should be validated too.
             let issues = registry.check_sql(
                 "INSERT INTO users (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET missing_col = EXCLUDED.name",
             );
-            assert!(issues.iter().any(|i| i.kind == SchemaIssueKind::MissingColumn));
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.kind == SchemaIssueKind::MissingColumn)
+            );
         }
     }
 }

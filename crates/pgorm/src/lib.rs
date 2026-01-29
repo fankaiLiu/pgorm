@@ -32,6 +32,7 @@ mod error;
 mod ident;
 mod monitor;
 pub mod qb;
+pub mod prelude;
 mod row;
 mod sql;
 mod transaction;
@@ -98,7 +99,10 @@ pub use checked_client::CheckedClient;
 
 // Re-export PgClient (recommended API)
 #[cfg(feature = "check")]
-pub use pg_client::{CheckMode, ModelCheckResult, PgClient, PgClientConfig};
+pub use pg_client::{
+    CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig, SelectWithoutLimitPolicy,
+    SqlPolicy,
+};
 
 #[cfg(feature = "check")]
 pub use check::{

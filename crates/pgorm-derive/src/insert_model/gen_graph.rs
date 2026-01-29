@@ -12,7 +12,7 @@ use syn::{DeriveInput, Result};
 
 use super::attrs::StructAttrs;
 use super::graph_decl::{BelongsToMode, GraphDeclarations, HasRelationMode, StepMode};
-use super::setters::{extract_option_inner_type, extract_vec_inner_type};
+use crate::common::syn_types::{option_inner, vec_inner};
 
 /// Info needed for generating inline INSERT SQL in graph methods.
 pub(super) struct InsertSqlInfo {
@@ -195,11 +195,11 @@ pub(super) fn generate_insert_graph_methods(
                     .map(|f| &f.ty);
 
                 if let Some(ty) = field_ty {
-                    if extract_option_inner_type(ty).is_some() {
+                    if option_inner(ty).is_some() {
                         extract_stmts.push(quote! {
                             let #extracted_field_ident = #field_ident; // Already Option<T>
                         });
-                    } else if extract_vec_inner_type(ty).is_some() {
+                    } else if vec_inner(ty).is_some() {
                         extract_stmts.push(quote! {
                             let #extracted_field_ident = ::std::option::Option::Some(#field_ident);
                         });
@@ -225,11 +225,11 @@ pub(super) fn generate_insert_graph_methods(
                         .map(|f| &f.ty);
 
                     if let Some(ty) = field_ty {
-                        if extract_option_inner_type(ty).is_some() {
+                        if option_inner(ty).is_some() {
                             extract_stmts.push(quote! {
                                 let #extracted_field_ident = #field_ident;
                             });
-                        } else if extract_vec_inner_type(ty).is_some() {
+                        } else if vec_inner(ty).is_some() {
                             extract_stmts.push(quote! {
                             let #extracted_field_ident = ::std::option::Option::Some(#field_ident);
                         });
@@ -337,13 +337,13 @@ pub(super) fn generate_insert_graph_methods(
                     .map(|f| &f.ty);
 
                 let code = if let Some(ty) = field_ty {
-                    if extract_option_inner_type(ty).is_some() {
+                    if option_inner(ty).is_some() {
                         quote! {
                             if let ::std::option::Option::Some(step_data) = #field_ident {
                                 #insert_call
                             }
                         }
-                    } else if extract_vec_inner_type(ty).is_some() {
+                    } else if vec_inner(ty).is_some() {
                         quote! {
                             for step_data in #field_ident {
                                 #insert_call
@@ -389,7 +389,7 @@ pub(super) fn generate_insert_graph_methods(
             .map(|f| &f.ty);
 
         let (code, helper) = if let Some(ty) = field_ty {
-            if extract_option_inner_type(ty).is_some() {
+            if option_inner(ty).is_some() {
                 // Field is Option<T>: need to unwrap and return error if None
                 let code = quote! {
                     // Get root_id from input field (graph_root_id_field mode, Option<T>)
@@ -795,12 +795,12 @@ fn generate_extract_graph_fields_code(
 
         // Detect field type at macro time
         if let Some(ty) = find_field_type(&rel.field) {
-            if extract_option_inner_type(ty).is_some() {
+            if option_inner(ty).is_some() {
                 // Option<T>: use take()
                 extract_stmts.push(quote! {
                     let #extracted_field_ident = self.#field_ident.take();
                 });
-            } else if extract_vec_inner_type(ty).is_some() {
+            } else if vec_inner(ty).is_some() {
                 // Vec<T>: use std::mem::take() and wrap in Some
                 extract_stmts.push(quote! {
                     let #extracted_field_ident = ::std::option::Option::Some(::std::mem::take(&mut self.#field_ident));
@@ -822,12 +822,12 @@ fn generate_extract_graph_fields_code(
             let extracted_field_ident = format_ident!("__pgorm_step_{}", step.field);
 
             if let Some(ty) = find_field_type(&step.field) {
-                if extract_option_inner_type(ty).is_some() {
+                if option_inner(ty).is_some() {
                     // Option<T>: use take()
                     extract_stmts.push(quote! {
                         let #extracted_field_ident = self.#field_ident.take();
                     });
-                } else if extract_vec_inner_type(ty).is_some() {
+                } else if vec_inner(ty).is_some() {
                     // Vec<T>: use std::mem::take() and wrap in Some
                     extract_stmts.push(quote! {
                         let #extracted_field_ident = ::std::option::Option::Some(::std::mem::take(&mut self.#field_ident));

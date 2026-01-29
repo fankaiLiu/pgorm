@@ -10,7 +10,8 @@
 //! - **Schema validation**: Check if SQL queries reference valid tables and columns
 //! - **SQL linting**: Detect common issues like DELETE without WHERE, SELECT without LIMIT
 //! - **Syntax validation**: Verify SQL syntax is correct
-//! - **Statement analysis**: Detect statement types, extract table names, etc.
+//! - **Statement analysis**: One-pass parse into `SqlAnalysis` (tables/aliases/columns/CTEs/etc)
+//! - **Parse cache**: Optional LRU `SqlParseCache` to reuse analysis across calls
 //!
 //! # Example
 //!
@@ -46,6 +47,9 @@ pub mod sql_check;
 #[cfg(feature = "sql")]
 pub mod sql_lint;
 
+#[cfg(feature = "sql")]
+pub mod sql_rewrite;
+
 pub use client::{CheckClient, RowExt};
 pub use error::{CheckError, CheckResult};
 pub use schema_cache::{SchemaCache, SchemaCacheConfig, SchemaCacheLoad};
@@ -58,8 +62,12 @@ pub use sql_analysis::{
 };
 
 #[cfg(feature = "sql")]
+pub use sql_rewrite::ensure_select_limit;
+
+#[cfg(feature = "sql")]
 pub use sql_check::{
-    SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel, check_sql, check_sql_analysis, check_sql_cached,
+    SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel, check_sql, check_sql_analysis,
+    check_sql_cached,
 };
 
 #[cfg(feature = "sql")]

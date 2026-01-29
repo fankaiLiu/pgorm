@@ -167,6 +167,8 @@ impl ModelCheckResult {
 pub struct PgClientConfig {
     /// SQL check mode.
     pub check_mode: CheckMode,
+    /// Runtime SQL safety policy (limit/where safeguards).
+    pub sql_policy: SqlPolicy,
     /// Query timeout duration.
     pub query_timeout: Option<Duration>,
     /// Slow query threshold for alerting.
@@ -183,6 +185,7 @@ impl Default for PgClientConfig {
     fn default() -> Self {
         Self {
             check_mode: CheckMode::WarnOnly,
+            sql_policy: SqlPolicy::default(),
             query_timeout: None,
             slow_query_threshold: None,
             stats_enabled: true,
@@ -201,6 +204,42 @@ impl PgClientConfig {
     /// Set SQL check mode.
     pub fn check_mode(mut self, mode: CheckMode) -> Self {
         self.check_mode = mode;
+        self
+    }
+
+    /// Set the runtime SQL safety policy.
+    pub fn sql_policy(mut self, policy: SqlPolicy) -> Self {
+        self.sql_policy = policy;
+        self
+    }
+
+    /// Configure how SELECT without LIMIT is handled.
+    pub fn select_without_limit(mut self, policy: SelectWithoutLimitPolicy) -> Self {
+        self.sql_policy.select_without_limit = policy;
+        self
+    }
+
+    /// Configure how DELETE without WHERE is handled.
+    pub fn delete_without_where(mut self, policy: DangerousDmlPolicy) -> Self {
+        self.sql_policy.delete_without_where = policy;
+        self
+    }
+
+    /// Configure how UPDATE without WHERE is handled.
+    pub fn update_without_where(mut self, policy: DangerousDmlPolicy) -> Self {
+        self.sql_policy.update_without_where = policy;
+        self
+    }
+
+    /// Configure how TRUNCATE is handled.
+    pub fn truncate_policy(mut self, policy: DangerousDmlPolicy) -> Self {
+        self.sql_policy.truncate = policy;
+        self
+    }
+
+    /// Configure how DROP TABLE is handled.
+    pub fn drop_table_policy(mut self, policy: DangerousDmlPolicy) -> Self {
+        self.sql_policy.drop_table = policy;
         self
     }
 
@@ -252,6 +291,44 @@ impl PgClientConfig {
         self.log_min_duration = Some(min_duration);
         self
     }
+}
+
+/// Policy for runtime SQL safety rules.
+#[derive(Debug, Clone)]
+pub struct SqlPolicy {
+    pub select_without_limit: SelectWithoutLimitPolicy,
+    pub delete_without_where: DangerousDmlPolicy,
+    pub update_without_where: DangerousDmlPolicy,
+    pub truncate: DangerousDmlPolicy,
+    pub drop_table: DangerousDmlPolicy,
+}
+
+impl Default for SqlPolicy {
+    fn default() -> Self {
+        Self {
+            select_without_limit: SelectWithoutLimitPolicy::Allow,
+            delete_without_where: DangerousDmlPolicy::Allow,
+            update_without_where: DangerousDmlPolicy::Allow,
+            truncate: DangerousDmlPolicy::Allow,
+            drop_table: DangerousDmlPolicy::Allow,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DangerousDmlPolicy {
+    Allow,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectWithoutLimitPolicy {
+    Allow,
+    Warn,
+    Error,
+    /// Automatically add a LIMIT if the top-level SELECT has no LIMIT/OFFSET.
+    AutoLimit(i32),
 }
 
 /// Unified Postgres client with monitoring and SQL checking.
@@ -366,7 +443,7 @@ impl<C> PgClient<C> {
     /// Add a query hook.
     ///
     /// If a hook is already set, this composes it with the new hook (existing first).
-    pub fn add_hook<H: QueryHook + 'static>(mut self, hook: H) -> Self {
+    pub fn add_hook<H: QueryHook + 'static>(self, hook: H) -> Self {
         self.add_hook_arc(Arc::new(hook))
     }
 
@@ -413,6 +490,100 @@ impl<C> PgClient<C> {
 }
 
 impl<C: GenericClient> PgClient<C> {
+    fn apply_sql_policy(&self, ctx: &mut QueryContext) -> OrmResult<()> {
+        use crate::StatementKind;
+
+        let policy = &self.config.sql_policy;
+        let analysis = self.registry.analyze_sql(&ctx.canonical_sql);
+
+        if !analysis.parse_result.valid {
+            // Leave parse errors to schema checks or database errors depending on configuration.
+            return Ok(());
+        }
+
+        match analysis.statement_kind {
+            Some(StatementKind::Select) => {
+                if analysis.select_has_limit == Some(false) {
+                    match policy.select_without_limit {
+                        SelectWithoutLimitPolicy::Allow => {}
+                        SelectWithoutLimitPolicy::Warn => {
+                            eprintln!(
+                                "[pgorm warn] SQL policy: SELECT without LIMIT/OFFSET: {}",
+                                ctx.canonical_sql
+                            );
+                        }
+                        SelectWithoutLimitPolicy::Error => {
+                            return Err(OrmError::validation(format!(
+                                "SQL policy violation: SELECT without LIMIT/OFFSET: {}",
+                                ctx.canonical_sql
+                            )));
+                        }
+                        SelectWithoutLimitPolicy::AutoLimit(limit) => {
+                            let old_canonical = ctx.canonical_sql.clone();
+                            match pgorm_check::ensure_select_limit(&old_canonical, limit) {
+                                Ok(Some(new_sql)) => {
+                                    ctx.canonical_sql = new_sql.clone();
+                                    ctx.query_type = QueryType::from_sql(&ctx.canonical_sql);
+
+                                    if ctx.exec_sql == old_canonical {
+                                        ctx.exec_sql = new_sql;
+                                    } else if let Some(pos) = ctx.exec_sql.rfind(&old_canonical) {
+                                        let mut rewritten = String::with_capacity(
+                                            ctx.exec_sql.len() - old_canonical.len()
+                                                + ctx.canonical_sql.len(),
+                                        );
+                                        rewritten.push_str(&ctx.exec_sql[..pos]);
+                                        rewritten.push_str(&ctx.canonical_sql);
+                                        rewritten.push_str(&ctx.exec_sql[pos + old_canonical.len()..]);
+                                        ctx.exec_sql = rewritten;
+                                    } else {
+                                        // Fallback: drop exec_sql modifications (e.g. comments) to ensure LIMIT is applied.
+                                        ctx.exec_sql = ctx.canonical_sql.clone();
+                                    }
+                                }
+                                Ok(None) => {
+                                    // Shouldn't happen if analysis says no limit; treat as unsupported rewrite.
+                                    return Err(OrmError::validation(format!(
+                                        "SQL policy rewrite failed: unable to add LIMIT to: {}",
+                                        ctx.canonical_sql
+                                    )));
+                                }
+                                Err(e) => return Err(OrmError::validation(e.to_string())),
+                            }
+                        }
+                    }
+                }
+            }
+            Some(StatementKind::Delete) => {
+                if analysis.delete_has_where == Some(false) {
+                    handle_dangerous_dml(
+                        policy.delete_without_where,
+                        "DELETE without WHERE",
+                        &ctx.canonical_sql,
+                    )?;
+                }
+            }
+            Some(StatementKind::Update) => {
+                if analysis.update_has_where == Some(false) {
+                    handle_dangerous_dml(
+                        policy.update_without_where,
+                        "UPDATE without WHERE",
+                        &ctx.canonical_sql,
+                    )?;
+                }
+            }
+            Some(StatementKind::Truncate) => {
+                handle_dangerous_dml(policy.truncate, "TRUNCATE", &ctx.canonical_sql)?;
+            }
+            Some(StatementKind::DropTable) => {
+                handle_dangerous_dml(policy.drop_table, "DROP TABLE", &ctx.canonical_sql)?;
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     /// Load the database schema from PostgreSQL.
     ///
     /// This queries the database catalog to get actual table and column information.
@@ -523,10 +694,15 @@ ORDER BY n.nspname, c.relname, a.attnum
             }
             CheckMode::Strict => {
                 let issues = self.registry.check_sql(sql);
-                if issues.is_empty() {
+                let errors: Vec<_> = issues
+                    .iter()
+                    .filter(|i| i.level == crate::SchemaIssueLevel::Error)
+                    .collect();
+                if errors.is_empty() {
                     Ok(())
                 } else {
-                    let messages: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
+                    let messages: Vec<String> =
+                        errors.iter().map(|i| i.message.clone()).collect();
                     Err(OrmError::validation(format!(
                         "SQL check failed: {}",
                         messages.join("; ")
@@ -597,6 +773,23 @@ ORDER BY n.nspname, c.relname, a.attnum
         if let Some(ref hook) = self.hook {
             hook.after_query(ctx, duration, result);
         }
+    }
+}
+
+fn handle_dangerous_dml(
+    policy: DangerousDmlPolicy,
+    rule: &str,
+    sql: &str,
+) -> Result<(), OrmError> {
+    match policy {
+        DangerousDmlPolicy::Allow => Ok(()),
+        DangerousDmlPolicy::Warn => {
+            eprintln!("[pgorm warn] SQL policy: {rule}: {sql}");
+            Ok(())
+        }
+        DangerousDmlPolicy::Error => Err(OrmError::validation(format!(
+            "SQL policy violation: {rule}: {sql}"
+        ))),
     }
 }
 
@@ -827,6 +1020,7 @@ impl<C: GenericClient> PgClient<C> {
 
         // Process hook first, then check the canonical SQL.
         self.apply_hook(&mut ctx)?;
+        self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
 
         // Execute
@@ -858,6 +1052,7 @@ impl<C: GenericClient> PgClient<C> {
             ctx.tag = Some(tag.to_string());
         }
         self.apply_hook(&mut ctx)?;
+        self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
 
         let start = Instant::now();
@@ -888,6 +1083,7 @@ impl<C: GenericClient> PgClient<C> {
             ctx.tag = Some(tag.to_string());
         }
         self.apply_hook(&mut ctx)?;
+        self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
 
         let start = Instant::now();
@@ -918,6 +1114,7 @@ impl<C: GenericClient> PgClient<C> {
             ctx.tag = Some(tag.to_string());
         }
         self.apply_hook(&mut ctx)?;
+        self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
 
         let start = Instant::now();
@@ -947,6 +1144,9 @@ mod tests {
     fn test_config_defaults() {
         let config = PgClientConfig::default();
         assert_eq!(config.check_mode, CheckMode::WarnOnly);
+        assert_eq!(config.sql_policy.select_without_limit, SelectWithoutLimitPolicy::Allow);
+        assert_eq!(config.sql_policy.delete_without_where, DangerousDmlPolicy::Allow);
+        assert_eq!(config.sql_policy.update_without_where, DangerousDmlPolicy::Allow);
         assert!(config.stats_enabled);
         assert!(!config.logging_enabled);
     }
@@ -961,6 +1161,124 @@ mod tests {
         assert_eq!(config.check_mode, CheckMode::Strict);
         assert_eq!(config.query_timeout, Some(Duration::from_secs(30)));
         assert!(config.logging_enabled);
+    }
+
+    #[tokio::test]
+    async fn sql_policy_select_without_limit_errors() {
+        #[derive(Default)]
+        struct Capture(std::sync::Mutex<Option<String>>);
+
+        #[derive(Clone)]
+        struct DummyClient(std::sync::Arc<Capture>);
+
+        impl GenericClient for DummyClient {
+            async fn query(&self, sql: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+                *self.0 .0.lock().unwrap() = Some(sql.to_string());
+                Ok(vec![])
+            }
+            async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+                Err(OrmError::not_found("no rows"))
+            }
+            async fn query_opt(
+                &self,
+                _: &str,
+                _: &[&(dyn ToSql + Sync)],
+            ) -> OrmResult<Option<Row>> {
+                Ok(None)
+            }
+            async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+                Ok(0)
+            }
+        }
+
+        let capture = std::sync::Arc::new(Capture::default());
+        let config = PgClientConfig::new()
+            .no_check()
+            .select_without_limit(SelectWithoutLimitPolicy::Error);
+        let pg = PgClient::with_config(DummyClient(capture.clone()), config);
+
+        let err = pg.query("SELECT * FROM users", &[]).await.unwrap_err();
+        assert!(matches!(err, OrmError::Validation(_)));
+        assert!(capture.0.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn sql_policy_select_without_limit_auto_limit_rewrites_exec_sql() {
+        #[derive(Default)]
+        struct Capture(std::sync::Mutex<Option<String>>);
+
+        #[derive(Clone)]
+        struct DummyClient(std::sync::Arc<Capture>);
+
+        impl GenericClient for DummyClient {
+            async fn query(&self, sql: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+                *self.0 .0.lock().unwrap() = Some(sql.to_string());
+                Ok(vec![])
+            }
+            async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+                Err(OrmError::not_found("no rows"))
+            }
+            async fn query_opt(
+                &self,
+                _: &str,
+                _: &[&(dyn ToSql + Sync)],
+            ) -> OrmResult<Option<Row>> {
+                Ok(None)
+            }
+            async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+                Ok(0)
+            }
+        }
+
+        let capture = std::sync::Arc::new(Capture::default());
+        let config = PgClientConfig::new()
+            .no_check()
+            .select_without_limit(SelectWithoutLimitPolicy::AutoLimit(10));
+        let pg = PgClient::with_config(DummyClient(capture.clone()), config);
+
+        pg.query("SELECT * FROM users", &[]).await.unwrap();
+
+        let executed = capture.0.lock().unwrap().clone().unwrap();
+        assert!(executed.to_uppercase().contains("LIMIT 10"));
+    }
+
+    #[tokio::test]
+    async fn sql_policy_delete_without_where_errors() {
+        #[derive(Default)]
+        struct Capture(std::sync::Mutex<Option<String>>);
+
+        #[derive(Clone)]
+        struct DummyClient(std::sync::Arc<Capture>);
+
+        impl GenericClient for DummyClient {
+            async fn query(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+                Ok(vec![])
+            }
+            async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+                Err(OrmError::not_found("no rows"))
+            }
+            async fn query_opt(
+                &self,
+                _: &str,
+                _: &[&(dyn ToSql + Sync)],
+            ) -> OrmResult<Option<Row>> {
+                Ok(None)
+            }
+            async fn execute(&self, sql: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+                *self.0 .0.lock().unwrap() = Some(sql.to_string());
+                Ok(0)
+            }
+        }
+
+        let capture = std::sync::Arc::new(Capture::default());
+        let config = PgClientConfig::new()
+            .no_check()
+            .delete_without_where(DangerousDmlPolicy::Error);
+        let pg = PgClient::with_config(DummyClient(capture.clone()), config);
+
+        let err = pg.execute("DELETE FROM users", &[]).await.unwrap_err();
+        assert!(matches!(err, OrmError::Validation(_)));
+        assert!(capture.0.lock().unwrap().is_none());
     }
 
     #[tokio::test]

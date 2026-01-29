@@ -1,8 +1,8 @@
 use crate::client::CheckClient;
 use crate::error::{CheckError, CheckResult};
-use crate::sql_analysis::analyze_sql;
 use crate::schema_cache::{SchemaCache, SchemaCacheConfig, SchemaCacheLoad};
 use crate::schema_introspect::DbSchema;
+use crate::sql_analysis::analyze_sql;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +36,10 @@ pub fn check_sql(schema: &DbSchema, sql: &str) -> CheckResult<Vec<SqlCheckIssue>
     check_sql_analysis(schema, &analysis)
 }
 
-pub fn check_sql_analysis(schema: &DbSchema, analysis: &crate::sql_analysis::SqlAnalysis) -> CheckResult<Vec<SqlCheckIssue>> {
+pub fn check_sql_analysis(
+    schema: &DbSchema,
+    analysis: &crate::sql_analysis::SqlAnalysis,
+) -> CheckResult<Vec<SqlCheckIssue>> {
     if !analysis.parse_result.valid {
         return Err(CheckError::Validation(format!(
             "pg_query parse failed: {}",
@@ -119,114 +122,114 @@ pub fn check_sql_analysis(schema: &DbSchema, analysis: &crate::sql_analysis::Sql
         // Unqualified: col
         if c.parts.len() == 1 {
             let col = c.parts[0].as_str();
-                if system_columns.contains(col) {
-                    continue;
-                }
+            if system_columns.contains(col) {
+                continue;
+            }
 
-                let mut matches = 0usize;
-                for t in &visible_tables {
-                    if table_has_column(schema, &t.schema, &t.table, col) {
-                        matches += 1;
-                    }
+            let mut matches = 0usize;
+            for t in &visible_tables {
+                if table_has_column(schema, &t.schema, &t.table, col) {
+                    matches += 1;
                 }
+            }
 
-                match matches {
-                    0 => issues.push(SqlCheckIssue {
+            match matches {
+                0 => issues.push(SqlCheckIssue {
+                    level: SqlCheckLevel::Error,
+                    kind: SqlCheckIssueKind::MissingColumn,
+                    message: format!("Column not found: {col}"),
+                    location: c.location,
+                }),
+                1 => {}
+                _ => issues.push(SqlCheckIssue {
+                    level: SqlCheckLevel::Error,
+                    kind: SqlCheckIssueKind::AmbiguousColumn,
+                    message: format!(
+                        "Ambiguous column reference: {col} (found in multiple tables)"
+                    ),
+                    location: c.location,
+                }),
+            }
+            continue;
+        }
+
+        // Qualified: qualifier.col
+        if c.parts.len() == 2 {
+            let qualifier = c.parts[0].as_str();
+            let col = c.parts[1].as_str();
+
+            if system_columns.contains(col) {
+                continue;
+            }
+
+            if let Some((resolved_schema, resolved_table)) = qualifier_to_table.get(qualifier) {
+                if !table_has_column(schema, resolved_schema, resolved_table, col) {
+                    issues.push(SqlCheckIssue {
                         level: SqlCheckLevel::Error,
                         kind: SqlCheckIssueKind::MissingColumn,
-                        message: format!("Column not found: {col}"),
-                        location: c.location,
-                    }),
-                    1 => {}
-                    _ => issues.push(SqlCheckIssue {
-                        level: SqlCheckLevel::Error,
-                        kind: SqlCheckIssueKind::AmbiguousColumn,
                         message: format!(
-                            "Ambiguous column reference: {col} (found in multiple tables)"
+                            "Column not found: {qualifier}.{col} (table resolved to {}.{})",
+                            resolved_schema, resolved_table
                         ),
                         location: c.location,
-                    }),
+                    });
                 }
+            } else {
+                issues.push(SqlCheckIssue {
+                    level: SqlCheckLevel::Error,
+                    kind: SqlCheckIssueKind::MissingTable,
+                    message: format!("Unknown table/alias qualifier: {qualifier}"),
+                    location: c.location,
+                });
+            }
+
+            continue;
+        }
+
+        // schema.table.col OR catalog.schema.table.col
+        if c.parts.len() == 3 || c.parts.len() == 4 {
+            let (schema_part, table_part, col_part) = if c.parts.len() == 3 {
+                (&c.parts[0], &c.parts[1], &c.parts[2])
+            } else {
+                (&c.parts[1], &c.parts[2], &c.parts[3])
+            };
+
+            if system_columns.contains(col_part.as_str()) {
                 continue;
             }
 
-            // Qualified: qualifier.col
-            if c.parts.len() == 2 {
-                let qualifier = c.parts[0].as_str();
-                let col = c.parts[1].as_str();
-
-                if system_columns.contains(col) {
-                    continue;
-                }
-
-                if let Some((resolved_schema, resolved_table)) = qualifier_to_table.get(qualifier) {
-                    if !table_has_column(schema, resolved_schema, resolved_table, col) {
-                        issues.push(SqlCheckIssue {
-                            level: SqlCheckLevel::Error,
-                            kind: SqlCheckIssueKind::MissingColumn,
-                            message: format!(
-                                "Column not found: {qualifier}.{col} (table resolved to {}.{})",
-                                resolved_schema, resolved_table
-                            ),
-                            location: c.location,
-                        });
-                    }
-                } else {
-                    issues.push(SqlCheckIssue {
-                        level: SqlCheckLevel::Error,
-                        kind: SqlCheckIssueKind::MissingTable,
-                        message: format!("Unknown table/alias qualifier: {qualifier}"),
-                        location: c.location,
-                    });
-                }
-
+            if schema.find_table(schema_part, table_part).is_none() {
+                issues.push(SqlCheckIssue {
+                    level: SqlCheckLevel::Error,
+                    kind: SqlCheckIssueKind::MissingTable,
+                    message: format!("Table not found: {schema_part}.{table_part}"),
+                    location: c.location,
+                });
                 continue;
             }
 
-            // schema.table.col OR catalog.schema.table.col
-            if c.parts.len() == 3 || c.parts.len() == 4 {
-                let (schema_part, table_part, col_part) = if c.parts.len() == 3 {
-                    (&c.parts[0], &c.parts[1], &c.parts[2])
-                } else {
-                    (&c.parts[1], &c.parts[2], &c.parts[3])
-                };
-
-                if system_columns.contains(col_part.as_str()) {
-                    continue;
-                }
-
-                if schema.find_table(schema_part, table_part).is_none() {
-                    issues.push(SqlCheckIssue {
-                        level: SqlCheckLevel::Error,
-                        kind: SqlCheckIssueKind::MissingTable,
-                        message: format!("Table not found: {schema_part}.{table_part}"),
-                        location: c.location,
-                    });
-                    continue;
-                }
-
-                if !table_has_column(schema, schema_part, table_part, col_part) {
-                    issues.push(SqlCheckIssue {
-                        level: SqlCheckLevel::Error,
-                        kind: SqlCheckIssueKind::MissingColumn,
-                        message: format!("Column not found: {schema_part}.{table_part}.{col_part}"),
-                        location: c.location,
-                    });
-                }
-
-                continue;
+            if !table_has_column(schema, schema_part, table_part, col_part) {
+                issues.push(SqlCheckIssue {
+                    level: SqlCheckLevel::Error,
+                    kind: SqlCheckIssueKind::MissingColumn,
+                    message: format!("Column not found: {schema_part}.{table_part}.{col_part}"),
+                    location: c.location,
+                });
             }
 
-            issues.push(SqlCheckIssue {
-                level: SqlCheckLevel::Warning,
-                kind: SqlCheckIssueKind::Unsupported,
-                message: format!(
-                    "Unsupported column reference form ({} parts): {}",
-                    c.parts.len(),
-                    c.parts.join(".")
-                ),
-                location: c.location,
-            });
+            continue;
+        }
+
+        issues.push(SqlCheckIssue {
+            level: SqlCheckLevel::Warning,
+            kind: SqlCheckIssueKind::Unsupported,
+            message: format!(
+                "Unsupported column reference form ({} parts): {}",
+                c.parts.len(),
+                c.parts.join(".")
+            ),
+            location: c.location,
+        });
     }
 
     // INSERT/UPDATE/ON CONFLICT target column validation.
@@ -243,7 +246,10 @@ pub fn check_sql_analysis(schema: &DbSchema, analysis: &crate::sql_analysis::Sql
                             issues.push(SqlCheckIssue {
                                 level: SqlCheckLevel::Error,
                                 kind: SqlCheckIssueKind::MissingColumn,
-                                message: format!("Column not found: {s}.{t}.{} (INSERT target)", col.name),
+                                message: format!(
+                                    "Column not found: {s}.{t}.{} (INSERT target)",
+                                    col.name
+                                ),
                                 location: col.location,
                             });
                         }
@@ -267,7 +273,10 @@ pub fn check_sql_analysis(schema: &DbSchema, analysis: &crate::sql_analysis::Sql
                                 issues.push(SqlCheckIssue {
                                     level: SqlCheckLevel::Error,
                                     kind: SqlCheckIssueKind::MissingColumn,
-                                    message: format!("Column not found: {s}.{t}.{} (ON CONFLICT target)", col.name),
+                                    message: format!(
+                                        "Column not found: {s}.{t}.{} (ON CONFLICT target)",
+                                        col.name
+                                    ),
                                     location: col.location,
                                 });
                             }
@@ -281,7 +290,10 @@ pub fn check_sql_analysis(schema: &DbSchema, analysis: &crate::sql_analysis::Sql
                                 issues.push(SqlCheckIssue {
                                     level: SqlCheckLevel::Error,
                                     kind: SqlCheckIssueKind::MissingColumn,
-                                    message: format!("Column not found: {s}.{t}.{} (ON CONFLICT DO UPDATE SET)", col.name),
+                                    message: format!(
+                                        "Column not found: {s}.{t}.{} (ON CONFLICT DO UPDATE SET)",
+                                        col.name
+                                    ),
                                     location: col.location,
                                 });
                             }
@@ -317,7 +329,10 @@ pub fn check_sql_analysis(schema: &DbSchema, analysis: &crate::sql_analysis::Sql
                             issues.push(SqlCheckIssue {
                                 level: SqlCheckLevel::Error,
                                 kind: SqlCheckIssueKind::MissingColumn,
-                                message: format!("Column not found: {s}.{t}.{} (UPDATE target)", col.name),
+                                message: format!(
+                                    "Column not found: {s}.{t}.{} (UPDATE target)",
+                                    col.name
+                                ),
                                 location: col.location,
                             });
                         }

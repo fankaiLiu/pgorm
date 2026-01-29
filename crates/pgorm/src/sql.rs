@@ -38,6 +38,7 @@ enum SqlPart {
 ///
 /// `Sql` stores SQL pieces and parameters separately and generates `$1, $2, ...`
 /// placeholders automatically in the final SQL string.
+#[must_use]
 pub struct Sql {
     parts: Vec<SqlPart>,
     params: Vec<Arc<dyn ToSql + Sync + Send>>,
@@ -46,6 +47,7 @@ pub struct Sql {
 /// A SQL string with pre-numbered placeholders (`$1, $2, ...`) plus bound parameters.
 ///
 /// Use this when you already have a complete SQL string and just want to bind values.
+#[must_use]
 pub struct Query {
     sql: String,
     params: Vec<Arc<dyn ToSql + Sync + Send>>,
