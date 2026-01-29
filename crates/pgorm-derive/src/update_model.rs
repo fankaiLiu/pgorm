@@ -266,7 +266,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             id: I,
         ) -> pgorm::OrmResult<u64>
         where
-            I: tokio_postgres::types::ToSql + Sync + Send + 'static,
+            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             #destructure
 
@@ -301,13 +301,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         pub async fn update_by_ids<I>(
             self,
             conn: &impl pgorm::GenericClient,
-            ids: Vec<I>,
+            ids: ::std::vec::Vec<I>,
         ) -> pgorm::OrmResult<u64>
         where
-            I: tokio_postgres::types::ToSql + Sync + Send + 'static,
+            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             if ids.is_empty() {
-                return Ok(0);
+                return ::std::result::Result::Ok(0);
             }
 
             #destructure
@@ -346,7 +346,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 id: I,
             ) -> pgorm::OrmResult<#returning_ty>
             where
-                I: tokio_postgres::types::ToSql + Sync + Send + 'static,
+                I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
                 #returning_ty: pgorm::FromRow,
             {
                 #destructure
@@ -391,14 +391,14 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             pub async fn update_by_ids_returning<I>(
                 self,
                 conn: &impl pgorm::GenericClient,
-                ids: Vec<I>,
-            ) -> pgorm::OrmResult<Vec<#returning_ty>>
+                ids: ::std::vec::Vec<I>,
+            ) -> pgorm::OrmResult<::std::vec::Vec<#returning_ty>>
             where
-                I: tokio_postgres::types::ToSql + Sync + Send + 'static,
+                I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
                 #returning_ty: pgorm::FromRow,
             {
                 if ids.is_empty() {
-                    return Ok(Vec::new());
+                    return ::std::result::Result::Ok(::std::vec::Vec::new());
                 }
 
                 #destructure

@@ -207,7 +207,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 where
                     Self: pgorm::FromRow,
                 {
-                    let sql = format!(
+                    let sql = ::std::format!(
                         "SELECT {} FROM {} {} WHERE {} = $1",
                         Self::SELECT_LIST,
                         Self::TABLE,
@@ -230,7 +230,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 where
                     Self: pgorm::FromRow,
                 {
-                    let sql = format!(
+                    let sql = ::std::format!(
                         "SELECT {} FROM {} WHERE {} = $1",
                         Self::SELECT_LIST,
                         Self::TABLE,
@@ -257,7 +257,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 conn: &impl pgorm::GenericClient,
                 id: #id_ty,
             ) -> pgorm::OrmResult<u64> {
-                let sql = format!("DELETE FROM {} WHERE {} = $1", Self::TABLE, #id_col_qualified);
+                let sql = ::std::format!("DELETE FROM {} WHERE {} = $1", Self::TABLE, #id_col_qualified);
                 conn.execute(&sql, &[&id]).await
             }
 
@@ -266,13 +266,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             /// Returns the number of affected rows.
             pub async fn delete_by_ids(
                 conn: &impl pgorm::GenericClient,
-                ids: Vec<#id_ty>,
+                ids: ::std::vec::Vec<#id_ty>,
             ) -> pgorm::OrmResult<u64> {
                 if ids.is_empty() {
-                    return Ok(0);
+                    return ::std::result::Result::Ok(0);
                 }
 
-                let sql = format!(
+                let sql = ::std::format!(
                     "DELETE FROM {} WHERE {} = ANY($1)",
                     Self::TABLE,
                     #id_col_qualified
@@ -290,7 +290,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             where
                 Self: pgorm::FromRow,
             {
-                let sql = format!(
+                let sql = ::std::format!(
                     "WITH {table} AS (DELETE FROM {table} WHERE {id_qualified} = $1 RETURNING *) \
         SELECT {} FROM {table} {}",
                     Self::SELECT_LIST,
@@ -305,16 +305,16 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             /// Delete multiple records by their primary keys and return deleted rows.
             pub async fn delete_by_ids_returning(
                 conn: &impl pgorm::GenericClient,
-                ids: Vec<#id_ty>,
-            ) -> pgorm::OrmResult<Vec<Self>>
+                ids: ::std::vec::Vec<#id_ty>,
+            ) -> pgorm::OrmResult<::std::vec::Vec<Self>>
             where
                 Self: pgorm::FromRow,
             {
                 if ids.is_empty() {
-                    return Ok(Vec::new());
+                    return ::std::result::Result::Ok(::std::vec::Vec::new());
                 }
 
-                let sql = format!(
+                let sql = ::std::format!(
                     "WITH {table} AS (DELETE FROM {table} WHERE {id_qualified} = ANY($1) RETURNING *) \
         SELECT {} FROM {table} {}",
                     Self::SELECT_LIST,
@@ -345,12 +345,12 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         pub async fn #method_name(
                             &self,
                             conn: &impl pgorm::GenericClient,
-                        ) -> pgorm::OrmResult<Vec<#related_model>>
+                        ) -> pgorm::OrmResult<::std::vec::Vec<#related_model>>
                         where
                             #related_model: pgorm::FromRow,
-                            #id_ty: tokio_postgres::types::ToSql + Sync,
+                            #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
                         {
-                            let sql = format!(
+                            let sql = ::std::format!(
                                 "SELECT {} FROM {} WHERE {} = $1",
                                 #related_model::SELECT_LIST,
                                 #related_model::TABLE,
@@ -384,9 +384,9 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 ) -> pgorm::OrmResult<#related_model>
                 where
                     #related_model: pgorm::FromRow,
-                    #fk_type: tokio_postgres::types::ToSql + Sync,
+                    #fk_type: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
                 {
-                    let sql = format!(
+                    let sql = ::std::format!(
                         "SELECT {} FROM {} WHERE {} = $1",
                         #related_model::SELECT_LIST,
                         #related_model::TABLE,
@@ -409,11 +409,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let select_all_method = if has_joins {
         quote! {
             /// Fetch all records from the table (with JOINs if defined).
-            pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Vec<Self>>
+            pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<::std::vec::Vec<Self>>
             where
                 Self: pgorm::FromRow,
             {
-                let sql = format!("SELECT {} FROM {} {}", Self::SELECT_LIST, Self::TABLE, Self::JOIN_CLAUSE);
+                let sql = ::std::format!("SELECT {} FROM {} {}", Self::SELECT_LIST, Self::TABLE, Self::JOIN_CLAUSE);
                 let rows = conn.query(&sql, &[]).await?;
                 rows.iter().map(pgorm::FromRow::from_row).collect()
             }
@@ -421,11 +421,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     } else {
         quote! {
             /// Fetch all records from the table.
-            pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Vec<Self>>
+            pub async fn select_all(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<::std::vec::Vec<Self>>
             where
                 Self: pgorm::FromRow,
             {
-                let sql = format!("SELECT {} FROM {}", Self::SELECT_LIST, Self::TABLE);
+                let sql = ::std::format!("SELECT {} FROM {}", Self::SELECT_LIST, Self::TABLE);
                 let rows = conn.query(&sql, &[]).await?;
                 rows.iter().map(pgorm::FromRow::from_row).collect()
             }
@@ -439,11 +439,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             ///
             /// This includes SELECT, DELETE, and relationship queries.
             /// Useful for schema validation and SQL auditing.
-            pub fn generated_sql() -> Vec<(&'static str, String)> {
-                let mut sqls = Vec::new();
+            pub fn generated_sql() -> ::std::vec::Vec<(&'static str, ::std::string::String)> {
+                let mut sqls = ::std::vec::Vec::new();
 
                 // select_all
-                let select_all = format!(
+                let select_all = ::std::format!(
                     "SELECT {} FROM {} {}",
                     Self::SELECT_LIST,
                     Self::TABLE,
@@ -452,7 +452,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 sqls.push(("select_all", select_all));
 
                 // select_one (by id)
-                let select_one = format!(
+                let select_one = ::std::format!(
                     "SELECT {} FROM {} {} WHERE {}.{} = $1",
                     Self::SELECT_LIST,
                     Self::TABLE,
@@ -463,7 +463,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 sqls.push(("select_one", select_one));
 
                 // delete_by_id
-                let delete_by_id = format!(
+                let delete_by_id = ::std::format!(
                     "DELETE FROM {} WHERE {} = $1",
                     Self::TABLE,
                     #id_col
@@ -471,7 +471,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 sqls.push(("delete_by_id", delete_by_id));
 
                 // delete_by_id_returning
-                let delete_returning = format!(
+                let delete_returning = ::std::format!(
                     "WITH {} AS (DELETE FROM {} WHERE {}.{} = $1 RETURNING *) SELECT {} FROM {} {}",
                     Self::TABLE,
                     Self::TABLE,
@@ -489,8 +489,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             /// Check all generated SQL against the provided registry.
             ///
             /// Returns a map of SQL name to issues found.
-            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> std::collections::HashMap<&'static str, Vec<pgorm::SchemaIssue>> {
-                let mut results = std::collections::HashMap::new();
+            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> ::std::collections::HashMap<&'static str, ::std::vec::Vec<pgorm::SchemaIssue>> {
+                let mut results = ::std::collections::HashMap::new();
                 for (name, sql) in Self::generated_sql() {
                     let issues = registry.check_sql(&sql);
                     if !issues.is_empty() {
@@ -503,11 +503,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     } else {
         quote! {
             /// Returns all SQL statements this model generates.
-            pub fn generated_sql() -> Vec<(&'static str, String)> {
-                let mut sqls = Vec::new();
+            pub fn generated_sql() -> ::std::vec::Vec<(&'static str, ::std::string::String)> {
+                let mut sqls = ::std::vec::Vec::new();
 
                 // select_all (no id, so only this method)
-                let select_all = format!(
+                let select_all = ::std::format!(
                     "SELECT {} FROM {} {}",
                     Self::SELECT_LIST,
                     Self::TABLE,
@@ -519,8 +519,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             }
 
             /// Check all generated SQL against the provided registry.
-            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> std::collections::HashMap<&'static str, Vec<pgorm::SchemaIssue>> {
-                let mut results = std::collections::HashMap::new();
+            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> ::std::collections::HashMap<&'static str, ::std::vec::Vec<pgorm::SchemaIssue>> {
+                let mut results = ::std::collections::HashMap::new();
                 for (name, sql) in Self::generated_sql() {
                     let issues = registry.check_sql(&sql);
                     if !issues.is_empty() {
@@ -1065,7 +1065,7 @@ fn generate_query_struct(
     // Generate the base SQL depending on whether we have JOINs
     let base_sql = if has_joins {
         quote! {
-            format!(
+            ::std::format!(
                 "SELECT {} FROM {} {}",
                 #model_name::SELECT_LIST,
                 #model_name::TABLE,
@@ -1074,7 +1074,7 @@ fn generate_query_struct(
         }
     } else {
         quote! {
-            format!(
+            ::std::format!(
                 "SELECT {} FROM {}",
                 #model_name::SELECT_LIST,
                 #model_name::TABLE
@@ -1133,7 +1133,7 @@ fn generate_query_struct(
         impl Default for #query_name {
             fn default() -> Self {
                 Self {
-                    where_expr: pgorm::WhereExpr::And(Vec::new()),
+                    where_expr: pgorm::WhereExpr::And(::std::vec::Vec::new()),
                     order_by: pgorm::OrderBy::new(),
                     pagination: pgorm::Pagination::new(),
                 }
@@ -1165,111 +1165,111 @@ fn generate_query_struct(
             /// Filter by equality: column = value
             pub fn eq<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::eq(column, value)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by inequality: column != value
             pub fn ne<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::ne(column, value)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by greater than: column > value
             pub fn gt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::gt(column, value)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by greater than or equal: column >= value
             pub fn gte<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::gte(column, value)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by less than: column < value
             pub fn lt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::lt(column, value)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by less than or equal: column <= value
             pub fn lte<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::lte(column, value)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by LIKE pattern: column LIKE pattern
             pub fn like<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::like(column, pattern)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by case-insensitive ILIKE pattern: column ILIKE pattern
             pub fn ilike<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::ilike(column, pattern)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by NOT LIKE pattern: column NOT LIKE pattern
             pub fn not_like<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::not_like(column, pattern)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by NOT ILIKE pattern: column NOT ILIKE pattern
             pub fn not_ilike<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::not_ilike(column, pattern)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by IS NULL: column IS NULL
@@ -1277,7 +1277,7 @@ fn generate_query_struct(
                 let cond = pgorm::Condition::is_null(column)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by IS NOT NULL: column IS NOT NULL
@@ -1285,29 +1285,29 @@ fn generate_query_struct(
                 let cond = pgorm::Condition::is_not_null(column)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by IN list: column IN (values...)
-            pub fn in_list<T>(mut self, column: impl pgorm::IntoIdent, values: Vec<T>) -> pgorm::OrmResult<Self>
+            pub fn in_list<T>(mut self, column: impl pgorm::IntoIdent, values: ::std::vec::Vec<T>) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::in_list(column, values)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by NOT IN list: column NOT IN (values...)
-            pub fn not_in<T>(mut self, column: impl pgorm::IntoIdent, values: Vec<T>) -> pgorm::OrmResult<Self>
+            pub fn not_in<T>(mut self, column: impl pgorm::IntoIdent, values: ::std::vec::Vec<T>) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::not_in(column, values)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by BETWEEN: column BETWEEN from AND to
@@ -1318,12 +1318,12 @@ fn generate_query_struct(
                 to: T,
             ) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::between(column, from, to)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Filter by NOT BETWEEN: column NOT BETWEEN from AND to
@@ -1334,19 +1334,19 @@ fn generate_query_struct(
                 to: T,
             ) -> pgorm::OrmResult<Self>
             where
-                T: tokio_postgres::types::ToSql + Send + Sync + 'static,
+                T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
             {
                 let cond = pgorm::Condition::not_between(column, from, to)?;
                 let current = self.where_expr;
                 self.where_expr = current.and_with(cond.into());
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Add a raw WHERE expression (escape hatch).
             ///
             /// # Safety
             /// Be careful with SQL injection when using raw expressions.
-            pub fn raw(mut self, sql: impl Into<String>) -> Self {
+            pub fn raw(mut self, sql: impl ::core::convert::Into<::std::string::String>) -> Self {
                 let current = self.where_expr;
                 self.where_expr = current.and_with(pgorm::WhereExpr::raw(sql));
                 self
@@ -1364,21 +1364,21 @@ fn generate_query_struct(
             pub fn order_by_asc(mut self, column: impl pgorm::IntoIdent) -> pgorm::OrmResult<Self> {
                 let order = self.order_by;
                 self.order_by = order.asc(column)?;
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Add a descending sort.
             pub fn order_by_desc(mut self, column: impl pgorm::IntoIdent) -> pgorm::OrmResult<Self> {
                 let order = self.order_by;
                 self.order_by = order.desc(column)?;
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             /// Add a raw ORDER BY item (escape hatch).
             ///
             /// # Safety
             /// Be careful with SQL injection when using raw ORDER BY strings.
-            pub fn order_by_raw(mut self, sql: impl Into<String>) -> Self {
+            pub fn order_by_raw(mut self, sql: impl ::core::convert::Into<::std::string::String>) -> Self {
                 let order = self.order_by;
                 self.order_by = order.add(pgorm::OrderItem::raw(sql));
                 self
@@ -1405,7 +1405,7 @@ fn generate_query_struct(
             /// Page-based pagination (page numbers start at 1).
             pub fn page(mut self, page: i64, per_page: i64) -> pgorm::OrmResult<Self> {
                 self.pagination = pgorm::Pagination::page(page, per_page)?;
-                Ok(self)
+                ::std::result::Result::Ok(self)
             }
 
             // ==================== Execution methods ====================
@@ -1437,7 +1437,7 @@ fn generate_query_struct(
             pub async fn find(
                 &self,
                 conn: &impl pgorm::GenericClient,
-            ) -> pgorm::OrmResult<Vec<#model_name>>
+            ) -> pgorm::OrmResult<::std::vec::Vec<#model_name>>
             where
                 #model_name: pgorm::FromRow,
             {
@@ -1448,13 +1448,13 @@ fn generate_query_struct(
             /// Count the number of matching records.
             pub async fn count(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<i64> {
                 let mut q = pgorm::sql(if #has_joins {
-                    format!(
+                    ::std::format!(
                         "SELECT COUNT(*) FROM {} {}",
                         #model_name::TABLE,
                         #model_name::JOIN_CLAUSE
                     )
                 } else {
-                    format!("SELECT COUNT(*) FROM {}", #model_name::TABLE)
+                    ::std::format!("SELECT COUNT(*) FROM {}", #model_name::TABLE)
                 });
 
                 if !self.where_expr.is_trivially_true() {
@@ -1481,7 +1481,7 @@ fn generate_query_struct(
             pub async fn find_one_opt(
                 &self,
                 conn: &impl pgorm::GenericClient,
-            ) -> pgorm::OrmResult<Option<#model_name>>
+            ) -> pgorm::OrmResult<::std::option::Option<#model_name>>
             where
                 #model_name: pgorm::FromRow,
             {

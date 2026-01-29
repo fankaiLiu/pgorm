@@ -236,17 +236,17 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             /// Falls back to per-row inserts when bulk insert isn't applicable.
             pub async fn insert_many(
                 conn: &impl pgorm::GenericClient,
-                rows: Vec<Self>,
+                rows: ::std::vec::Vec<Self>,
             ) -> pgorm::OrmResult<u64> {
                 if rows.is_empty() {
-                    return Ok(0);
+                    return ::std::result::Result::Ok(0);
                 }
 
                 let mut affected = 0_u64;
                 for row in rows {
                     affected += row.insert(conn).await?;
                 }
-                Ok(affected)
+                ::std::result::Result::Ok(affected)
             }
         }
     } else {
@@ -263,7 +263,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             .iter()
             .zip(field_tys.iter())
             .map(|(list_ident, ty)| {
-                quote! { let mut #list_ident: Vec<#ty> = Vec::with_capacity(rows.len()); }
+                quote! { let mut #list_ident: ::std::vec::Vec<#ty> = ::std::vec::Vec::with_capacity(rows.len()); }
             })
             .collect();
 
@@ -279,7 +279,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             .enumerate()
             .map(|(i, ty)| {
                 let idx = i + 1;
-                quote! { format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
+                quote! { ::std::format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
             })
             .collect();
 
@@ -292,10 +292,10 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             /// Insert multiple rows using a single statement (UNNEST bulk insert).
             pub async fn insert_many(
                 conn: &impl pgorm::GenericClient,
-                rows: Vec<Self>,
+                rows: ::std::vec::Vec<Self>,
             ) -> pgorm::OrmResult<u64> {
                 if rows.is_empty() {
-                    return Ok(0);
+                    return ::std::result::Result::Ok(0);
                 }
 
                 #(#init_lists)*
@@ -305,8 +305,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     #(#push_lists)*
                 }
 
-                let type_casts: Vec<String> = vec![#(#type_cast_exprs),*];
-                let sql = format!(
+                let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#type_cast_exprs),*];
+                let sql = ::std::format!(
                     "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
                     #table_name,
                     #batch_columns_str,
@@ -372,7 +372,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             .iter()
             .zip(upsert_batch_field_tys.iter())
             .map(|(list_ident, ty)| {
-                quote! { let mut #list_ident: Vec<#ty> = Vec::with_capacity(rows.len()); }
+                quote! { let mut #list_ident: ::std::vec::Vec<#ty> = ::std::vec::Vec::with_capacity(rows.len()); }
             })
             .collect();
 
@@ -388,7 +388,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             .enumerate()
             .map(|(i, ty)| {
                 let idx = i + 1;
-                quote! { format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
+                quote! { ::std::format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
             })
             .collect();
 
@@ -404,10 +404,10 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             /// Insert or update multiple rows using a single statement (UNNEST + ON CONFLICT).
             pub async fn upsert_many(
                 conn: &impl pgorm::GenericClient,
-                rows: Vec<Self>,
+                rows: ::std::vec::Vec<Self>,
             ) -> pgorm::OrmResult<u64> {
                 if rows.is_empty() {
-                    return Ok(0);
+                    return ::std::result::Result::Ok(0);
                 }
 
                 #(#upsert_batch_init_lists)*
@@ -417,8 +417,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     #(#upsert_batch_push_lists)*
                 }
 
-                let type_casts: Vec<String> = vec![#(#upsert_type_cast_exprs),*];
-                let upsert_batch_sql = format!(
+                let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#upsert_type_cast_exprs),*];
+                let upsert_batch_sql = ::std::format!(
                     "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
                     #table_name,
                     #upsert_columns_str,
@@ -451,7 +451,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     #returning_ty: pgorm::FromRow,
                 {
                     #upsert_destructure
-                    let sql = format!(
+                    let sql = ::std::format!(
                         "WITH {table} AS ({upsert} RETURNING *) SELECT {} FROM {table} {}",
                         #returning_ty::SELECT_LIST,
                         #returning_ty::JOIN_CLAUSE,
@@ -464,13 +464,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 /// UPSERT multiple rows and return resulting rows mapped as the configured returning type.
                 pub async fn upsert_many_returning(
                     conn: &impl pgorm::GenericClient,
-                    rows: Vec<Self>,
-                ) -> pgorm::OrmResult<Vec<#returning_ty>>
+                    rows: ::std::vec::Vec<Self>,
+                ) -> pgorm::OrmResult<::std::vec::Vec<#returning_ty>>
                 where
                     #returning_ty: pgorm::FromRow,
                 {
                     if rows.is_empty() {
-                        return Ok(Vec::new());
+                        return ::std::result::Result::Ok(::std::vec::Vec::new());
                     }
 
                     #(#upsert_batch_init_lists)*
@@ -480,8 +480,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         #(#upsert_batch_push_lists)*
                     }
 
-                    let type_casts: Vec<String> = vec![#(#upsert_type_cast_exprs),*];
-                    let upsert_batch_sql = format!(
+                    let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#upsert_type_cast_exprs),*];
+                    let upsert_batch_sql = ::std::format!(
                         "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
                         #table_name,
                         #upsert_columns_str,
@@ -490,7 +490,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         #update_assignments_str
                     );
 
-                    let sql = format!(
+                    let sql = ::std::format!(
                         "WITH {table} AS ({upsert} RETURNING *) SELECT {} FROM {table} {}",
                         #returning_ty::SELECT_LIST,
                         #returning_ty::JOIN_CLAUSE,
@@ -529,20 +529,20 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 /// Falls back to per-row inserts when bulk insert isn't applicable.
                 pub async fn insert_many_returning(
                     conn: &impl pgorm::GenericClient,
-                    rows: Vec<Self>,
-                ) -> pgorm::OrmResult<Vec<#returning_ty>>
+                    rows: ::std::vec::Vec<Self>,
+                ) -> pgorm::OrmResult<::std::vec::Vec<#returning_ty>>
                 where
                     #returning_ty: pgorm::FromRow,
                 {
                     if rows.is_empty() {
-                        return Ok(Vec::new());
+                        return ::std::result::Result::Ok(::std::vec::Vec::new());
                     }
 
-                    let mut out = Vec::with_capacity(rows.len());
+                    let mut out = ::std::vec::Vec::with_capacity(rows.len());
                     for row in rows {
                         out.push(row.insert_returning(conn).await?);
                     }
-                    Ok(out)
+                    ::std::result::Result::Ok(out)
                 }
             }
         } else {
@@ -561,7 +561,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 .iter()
                 .zip(field_tys.iter())
                 .map(|(list_ident, ty)| {
-                    quote! { let mut #list_ident: Vec<#ty> = Vec::with_capacity(rows.len()); }
+                    quote! { let mut #list_ident: ::std::vec::Vec<#ty> = ::std::vec::Vec::with_capacity(rows.len()); }
                 })
                 .collect();
 
@@ -582,7 +582,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 .enumerate()
                 .map(|(i, ty)| {
                     let idx = i + 1;
-                    quote! { format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
+                    quote! { ::std::format!("${}::{}", #idx, <#ty as pgorm::PgType>::pg_array_type()) }
                 })
                 .collect();
 
@@ -592,13 +592,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 /// Insert multiple rows and return created rows mapped as the configured returning type.
                 pub async fn insert_many_returning(
                     conn: &impl pgorm::GenericClient,
-                    rows: Vec<Self>,
-                ) -> pgorm::OrmResult<Vec<#returning_ty>>
+                    rows: ::std::vec::Vec<Self>,
+                ) -> pgorm::OrmResult<::std::vec::Vec<#returning_ty>>
                 where
                     #returning_ty: pgorm::FromRow,
                 {
                     if rows.is_empty() {
-                        return Ok(Vec::new());
+                        return ::std::result::Result::Ok(::std::vec::Vec::new());
                     }
 
                     #(#init_lists)*
@@ -608,15 +608,15 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         #(#push_lists)*
                     }
 
-                    let type_casts: Vec<String> = vec![#(#batch_type_cast_exprs),*];
-                    let batch_insert_sql = format!(
+                    let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#batch_type_cast_exprs),*];
+                    let batch_insert_sql = ::std::format!(
                         "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
                         #table_name,
                         #batch_columns_str,
                         type_casts.join(", ")
                     );
 
-                    let sql = format!(
+                    let sql = ::std::format!(
                         "WITH {table} AS ({insert} RETURNING *) SELECT {} FROM {table} {}",
                         #returning_ty::SELECT_LIST,
                         #returning_ty::JOIN_CLAUSE,
@@ -639,7 +639,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 #returning_ty: pgorm::FromRow,
             {
                 #destructure
-                let sql = format!(
+                let sql = ::std::format!(
                     "WITH {table} AS ({insert} RETURNING *) SELECT {} FROM {table} {}",
                     #returning_ty::SELECT_LIST,
                     #returning_ty::JOIN_CLAUSE,
