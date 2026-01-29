@@ -38,6 +38,9 @@ pub mod schema_cache;
 pub mod schema_introspect;
 
 #[cfg(feature = "sql")]
+pub mod sql_analysis;
+
+#[cfg(feature = "sql")]
 pub mod sql_check;
 
 #[cfg(feature = "sql")]
@@ -49,7 +52,15 @@ pub use schema_cache::{SchemaCache, SchemaCacheConfig, SchemaCacheLoad};
 pub use schema_introspect::{ColumnInfo, DbSchema, RelationKind, TableInfo};
 
 #[cfg(feature = "sql")]
-pub use sql_check::{SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel, check_sql, check_sql_cached};
+pub use sql_analysis::{
+    ColumnRefFull, InsertAnalysis, OnConflictAnalysis, RangeVarRef, SqlAnalysis, SqlParseCache,
+    TargetColumn, UpdateAnalysis, analyze_sql,
+};
+
+#[cfg(feature = "sql")]
+pub use sql_check::{
+    SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel, check_sql, check_sql_analysis, check_sql_cached,
+};
 
 #[cfg(feature = "sql")]
 pub use sql_lint::{

@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::sql_analysis::{ColumnRefFull, analyze_sql};
+
 /// Result of SQL parsing/validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseResult {
@@ -95,23 +97,7 @@ impl LintResult {
 /// assert!(!is_valid_sql("SELEC * FROM users").valid);
 /// ```
 pub fn is_valid_sql(sql: &str) -> ParseResult {
-    match pg_query::parse(sql) {
-        Ok(_) => ParseResult {
-            valid: true,
-            error: None,
-            error_location: None,
-        },
-        Err(e) => {
-            let error_str = e.to_string();
-            // pg_query error format: "error message at or near \"token\" at position N"
-            let location = extract_error_location(&error_str);
-            ParseResult {
-                valid: false,
-                error: Some(error_str),
-                error_location: location,
-            }
-        }
-    }
+    analyze_sql(sql).parse_result
 }
 
 /// Detect the type of SQL statement.
@@ -124,35 +110,11 @@ pub fn is_valid_sql(sql: &str) -> ParseResult {
 /// assert_eq!(detect_statement_kind("DELETE FROM users WHERE id = 1"), Some(StatementKind::Delete));
 /// ```
 pub fn detect_statement_kind(sql: &str) -> Option<StatementKind> {
-    let parsed = pg_query::parse(sql).ok()?;
-    let stmts = parsed.protobuf.stmts;
-
-    if stmts.is_empty() {
-        return None;
-    }
-
-    let stmt = stmts.first()?.stmt.as_ref()?;
-
-    use pg_query::NodeEnum;
-    match stmt.node.as_ref()? {
-        NodeEnum::SelectStmt(_) => Some(StatementKind::Select),
-        NodeEnum::InsertStmt(_) => Some(StatementKind::Insert),
-        NodeEnum::UpdateStmt(_) => Some(StatementKind::Update),
-        NodeEnum::DeleteStmt(_) => Some(StatementKind::Delete),
-        NodeEnum::CreateStmt(_) => Some(StatementKind::CreateTable),
-        NodeEnum::AlterTableStmt(_) => Some(StatementKind::AlterTable),
-        NodeEnum::DropStmt(_) => Some(StatementKind::DropTable),
-        NodeEnum::IndexStmt(_) => Some(StatementKind::CreateIndex),
-        NodeEnum::TruncateStmt(_) => Some(StatementKind::Truncate),
-        NodeEnum::TransactionStmt(t) => match t.kind() {
-            pg_query::protobuf::TransactionStmtKind::TransStmtBegin => Some(StatementKind::Begin),
-            pg_query::protobuf::TransactionStmtKind::TransStmtCommit => Some(StatementKind::Commit),
-            pg_query::protobuf::TransactionStmtKind::TransStmtRollback => {
-                Some(StatementKind::Rollback)
-            }
-            _ => Some(StatementKind::Other),
-        },
-        _ => Some(StatementKind::Other),
+    let analysis = analyze_sql(sql);
+    if analysis.parse_result.valid {
+        analysis.statement_kind
+    } else {
+        None
     }
 }
 
@@ -170,20 +132,12 @@ pub fn detect_statement_kind(sql: &str) -> Option<StatementKind> {
 /// assert_eq!(select_has_limit("DELETE FROM users"), None); // Not a SELECT
 /// ```
 pub fn select_has_limit(sql: &str) -> Option<bool> {
-    let parsed = pg_query::parse(sql).ok()?;
-    let stmts = parsed.protobuf.stmts;
-
-    if stmts.is_empty() {
-        return None;
+    let analysis = analyze_sql(sql);
+    if analysis.parse_result.valid {
+        analysis.select_has_limit
+    } else {
+        None
     }
-
-    let stmt = stmts.first()?.stmt.as_ref()?;
-
-    if let pg_query::NodeEnum::SelectStmt(select) = stmt.node.as_ref()? {
-        return Some(select.limit_count.is_some() || select.limit_offset.is_some());
-    }
-
-    None
 }
 
 /// Check if a DELETE query has a WHERE clause.
@@ -200,20 +154,12 @@ pub fn select_has_limit(sql: &str) -> Option<bool> {
 /// assert_eq!(delete_has_where("SELECT * FROM users"), None); // Not a DELETE
 /// ```
 pub fn delete_has_where(sql: &str) -> Option<bool> {
-    let parsed = pg_query::parse(sql).ok()?;
-    let stmts = parsed.protobuf.stmts;
-
-    if stmts.is_empty() {
-        return None;
+    let analysis = analyze_sql(sql);
+    if analysis.parse_result.valid {
+        analysis.delete_has_where
+    } else {
+        None
     }
-
-    let stmt = stmts.first()?.stmt.as_ref()?;
-
-    if let pg_query::NodeEnum::DeleteStmt(delete) = stmt.node.as_ref()? {
-        return Some(delete.where_clause.is_some());
-    }
-
-    None
 }
 
 /// Check if an UPDATE query has a WHERE clause.
@@ -230,20 +176,12 @@ pub fn delete_has_where(sql: &str) -> Option<bool> {
 /// assert_eq!(update_has_where("SELECT * FROM users"), None); // Not an UPDATE
 /// ```
 pub fn update_has_where(sql: &str) -> Option<bool> {
-    let parsed = pg_query::parse(sql).ok()?;
-    let stmts = parsed.protobuf.stmts;
-
-    if stmts.is_empty() {
-        return None;
+    let analysis = analyze_sql(sql);
+    if analysis.parse_result.valid {
+        analysis.update_has_where
+    } else {
+        None
     }
-
-    let stmt = stmts.first()?.stmt.as_ref()?;
-
-    if let pg_query::NodeEnum::UpdateStmt(update) = stmt.node.as_ref()? {
-        return Some(update.where_clause.is_some());
-    }
-
-    None
 }
 
 /// Check if a SELECT query uses SELECT *.
@@ -260,29 +198,12 @@ pub fn update_has_where(sql: &str) -> Option<bool> {
 /// assert_eq!(select_has_star("SELECT t.* FROM users t"), Some(true));
 /// ```
 pub fn select_has_star(sql: &str) -> Option<bool> {
-    let parsed = pg_query::parse(sql).ok()?;
-
-    for (node, _depth, _context, _has_filter_columns) in parsed.protobuf.nodes() {
-        if let pg_query::NodeRef::ColumnRef(c) = node {
-            for f in &c.fields {
-                if let Some(pg_query::NodeEnum::AStar(_)) = f.node.as_ref() {
-                    return Some(true);
-                }
-            }
-        }
+    let analysis = analyze_sql(sql);
+    if analysis.parse_result.valid {
+        analysis.select_has_star
+    } else {
+        None
     }
-
-    // Make sure it's a SELECT statement
-    let stmts = parsed.protobuf.stmts;
-    if stmts.is_empty() {
-        return None;
-    }
-    let stmt = stmts.first()?.stmt.as_ref()?;
-    if let pg_query::NodeEnum::SelectStmt(_) = stmt.node.as_ref()? {
-        return Some(false);
-    }
-
-    None
 }
 
 /// Get all table names referenced in a SQL query.
@@ -296,34 +217,12 @@ pub fn select_has_star(sql: &str) -> Option<bool> {
 /// assert!(tables.contains(&"orders".to_string()));
 /// ```
 pub fn get_table_names(sql: &str) -> Vec<String> {
-    let mut tables = Vec::new();
-
-    let Ok(parsed) = pg_query::parse(sql) else {
-        return tables;
-    };
-
-    let cte_names: std::collections::HashSet<String> = parsed.cte_names.into_iter().collect();
-
-    for (node, _depth, _context, _has_filter_columns) in parsed.protobuf.nodes() {
-        if let pg_query::NodeRef::RangeVar(v) = node {
-            // Skip CTE references
-            if cte_names.contains(&v.relname) {
-                continue;
-            }
-
-            let table_name = if v.schemaname.is_empty() {
-                v.relname.clone()
-            } else {
-                format!("{}.{}", v.schemaname, v.relname)
-            };
-
-            if !tables.contains(&table_name) {
-                tables.push(table_name);
-            }
-        }
+    let analysis = analyze_sql(sql);
+    if analysis.parse_result.valid {
+        analysis.table_names
+    } else {
+        Vec::new()
     }
-
-    tables
 }
 
 /// Lint a SQL query for common issues.
@@ -347,26 +246,23 @@ pub fn get_table_names(sql: &str) -> Vec<String> {
 pub fn lint_sql(sql: &str) -> LintResult {
     let mut result = LintResult::default();
 
-    // First check if SQL is valid
-    let parse_result = is_valid_sql(sql);
-    if !parse_result.valid {
+    let analysis = analyze_sql(sql);
+    if !analysis.parse_result.valid {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
             code: "E001",
             message: format!(
                 "SQL syntax error: {}",
-                parse_result.error.unwrap_or_default()
+                analysis.parse_result.error.unwrap_or_default()
             ),
         });
         return result;
     }
 
-    let kind = detect_statement_kind(sql);
-
-    match kind {
+    match analysis.statement_kind {
         Some(StatementKind::Select) => {
             // Check for SELECT *
-            if select_has_star(sql) == Some(true) {
+            if analysis.select_has_star == Some(true) {
                 result.issues.push(LintIssue {
                     level: LintLevel::Info,
                     code: "I001",
@@ -375,7 +271,7 @@ pub fn lint_sql(sql: &str) -> LintResult {
             }
         }
         Some(StatementKind::Delete) => {
-            if delete_has_where(sql) == Some(false) {
+            if analysis.delete_has_where == Some(false) {
                 result.issues.push(LintIssue {
                     level: LintLevel::Error,
                     code: "E002",
@@ -384,7 +280,7 @@ pub fn lint_sql(sql: &str) -> LintResult {
             }
         }
         Some(StatementKind::Update) => {
-            if update_has_where(sql) == Some(false) {
+            if analysis.update_has_where == Some(false) {
                 result.issues.push(LintIssue {
                     level: LintLevel::Error,
                     code: "E003",
@@ -430,21 +326,20 @@ pub fn lint_sql(sql: &str) -> LintResult {
 pub fn lint_select_many(sql: &str) -> LintResult {
     let mut result = LintResult::default();
 
-    let parse_result = is_valid_sql(sql);
-    if !parse_result.valid {
+    let analysis = analyze_sql(sql);
+    if !analysis.parse_result.valid {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
             code: "E001",
             message: format!(
                 "SQL syntax error: {}",
-                parse_result.error.unwrap_or_default()
+                analysis.parse_result.error.unwrap_or_default()
             ),
         });
         return result;
     }
 
-    let kind = detect_statement_kind(sql);
-    if kind != Some(StatementKind::Select) {
+    if analysis.statement_kind != Some(StatementKind::Select) {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
             code: "E004",
@@ -453,7 +348,7 @@ pub fn lint_select_many(sql: &str) -> LintResult {
         return result;
     }
 
-    if select_has_limit(sql) != Some(true) {
+    if analysis.select_has_limit != Some(true) {
         result.issues.push(LintIssue {
             level: LintLevel::Warning,
             code: "W003",
@@ -461,7 +356,7 @@ pub fn lint_select_many(sql: &str) -> LintResult {
         });
     }
 
-    if select_has_star(sql) == Some(true) {
+    if analysis.select_has_star == Some(true) {
         result.issues.push(LintIssue {
             level: LintLevel::Info,
             code: "I001",
@@ -496,69 +391,46 @@ pub struct ColumnRef {
 /// assert!(cols.iter().any(|c| c.column == "status" && c.qualifier == Some("u".to_string())));
 /// ```
 pub fn get_column_refs(sql: &str) -> Vec<ColumnRef> {
-    let mut columns = Vec::new();
-
-    let Ok(parsed) = pg_query::parse(sql) else {
-        return columns;
-    };
-
-    for (node, _depth, _context, _has_filter_columns) in parsed.protobuf.nodes() {
-        if let pg_query::NodeRef::ColumnRef(c) = node {
-            let mut parts: Vec<String> = Vec::new();
-            let mut has_star = false;
-
-            for f in &c.fields {
-                match f.node.as_ref() {
-                    Some(pg_query::NodeEnum::String(s)) => parts.push(s.sval.clone()),
-                    Some(pg_query::NodeEnum::AStar(_)) => has_star = true,
-                    _ => {}
-                }
-            }
-
-            // Skip SELECT * or table.*
-            if has_star || parts.is_empty() {
-                continue;
-            }
-
-            let col_ref = match parts.len() {
-                1 => ColumnRef {
-                    qualifier: None,
-                    column: parts[0].clone(),
-                },
-                2 => ColumnRef {
-                    qualifier: Some(parts[0].clone()),
-                    column: parts[1].clone(),
-                },
-                3 => ColumnRef {
-                    // schema.table.column -> qualifier = table
-                    qualifier: Some(parts[1].clone()),
-                    column: parts[2].clone(),
-                },
-                _ => continue,
-            };
-
-            // Avoid duplicates
-            if !columns.contains(&col_ref) {
-                columns.push(col_ref);
-            }
-        }
+    let analysis = analyze_sql(sql);
+    if !analysis.parse_result.valid {
+        return Vec::new();
     }
 
+    let mut columns = Vec::new();
+    for full in &analysis.column_refs {
+        let Some(col_ref) = to_column_ref(full) else {
+            continue;
+        };
+        if !columns.contains(&col_ref) {
+            columns.push(col_ref);
+        }
+    }
     columns
 }
 
-/// Extract error location from pg_query error message.
-fn extract_error_location(error: &str) -> Option<usize> {
-    // Format: "... at position N" or similar
-    if let Some(pos) = error.rfind("position ") {
-        let after_pos = &error[pos + 9..];
-        let num_str: String = after_pos
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        return num_str.parse().ok();
+fn to_column_ref(full: &ColumnRefFull) -> Option<ColumnRef> {
+    if full.has_star || full.parts.is_empty() {
+        return None;
     }
-    None
+
+    let col_ref = match full.parts.len() {
+        1 => ColumnRef {
+            qualifier: None,
+            column: full.parts[0].clone(),
+        },
+        2 => ColumnRef {
+            qualifier: Some(full.parts[0].clone()),
+            column: full.parts[1].clone(),
+        },
+        3 => ColumnRef {
+            // schema.table.column -> qualifier = table
+            qualifier: Some(full.parts[1].clone()),
+            column: full.parts[2].clone(),
+        },
+        _ => return None,
+    };
+
+    Some(col_ref)
 }
 
 #[cfg(test)]
