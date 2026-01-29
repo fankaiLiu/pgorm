@@ -1216,11 +1216,24 @@ fn generate_has_one_update_code(graph: &UpdateGraphDeclarations, _table_name: &s
                 }
             }
             UpdateStrategy::Upsert => {
+                // Per doc §6.2.2: Some(None) => DELETE, Some(Some(child)) => upsert
                 quote! {
-                    if let ::std::option::Option::Some(child) = inner_value {
-                        let child_with_fk = child.#setter_name(__pgorm_id.clone());
-                        let upserted = child_with_fk.upsert(conn).await?;
-                        __pgorm_total_affected += upserted;
+                    match inner_value {
+                        ::std::option::Option::None => {
+                            // Delete the child
+                            let delete_sql = ::std::format!(
+                                "DELETE FROM {} WHERE {} = $1",
+                                #child_type::TABLE,
+                                #fk_column
+                            );
+                            let deleted = ::pgorm::query(delete_sql).bind(__pgorm_id.clone()).execute(conn).await?;
+                            __pgorm_total_affected += deleted;
+                        }
+                        ::std::option::Option::Some(child) => {
+                            let child_with_fk = child.#setter_name(__pgorm_id.clone());
+                            let upserted = child_with_fk.upsert(conn).await?;
+                            __pgorm_total_affected += upserted;
+                        }
                     }
                 }
             }
