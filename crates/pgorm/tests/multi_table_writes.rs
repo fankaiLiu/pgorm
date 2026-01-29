@@ -112,7 +112,13 @@ struct Product {
 #[derive(InsertModel)]
 #[orm(table = "products", returning = "Product")]
 #[orm(graph_root_key = "id")]
-#[orm(belongs_to(NewCategory, field = "category", set_fk_field = "category_id", mode = "insert_returning", required = false))]
+#[orm(belongs_to(
+    NewCategory,
+    field = "category",
+    set_fk_field = "category_id",
+    mode = "insert_returning",
+    required = false
+))]
 struct NewProduct {
     name: String,
     category_id: Option<i64>,
@@ -324,7 +330,12 @@ fn test_insert_model_with_has_many_compiles() {
 #[derive(InsertModel)]
 #[orm(table = "users", returning = "User")]
 #[orm(graph_root_key = "id")]
-#[orm(has_one(NewUserProfile, field = "profile", fk_field = "user_id", fk_wrap = "some"))]
+#[orm(has_one(
+    NewUserProfile,
+    field = "profile",
+    fk_field = "user_id",
+    fk_wrap = "some"
+))]
 struct NewUserWithProfile {
     username: String,
     profile: Option<NewUserProfile>,
@@ -404,7 +415,11 @@ fn test_with_setters() {
 // ============================================
 
 #[derive(Clone, InsertModel)]
-#[orm(table = "order_items", conflict_target = "order_id, sku", conflict_update = "qty")]
+#[orm(
+    table = "order_items",
+    conflict_target = "order_id, sku",
+    conflict_update = "qty"
+)]
 struct NewOrderItemUpsertPartial {
     order_id: i64,
     sku: String,
