@@ -33,14 +33,10 @@ struct HasManyUpdate {
     fk_column: String,
     /// The child's foreign key field name.
     fk_field: String,
-    /// How to wrap the fk value: "value" or "some".
-    fk_wrap: FkWrap,
     /// Update strategy.
     strategy: UpdateStrategy,
-    /// For diff strategy: the key field in the child (Rust field name).
-    key_field: Option<String>,
-    /// For diff strategy: the key column in the child table.
-    key_column: Option<String>,
+    /// For diff strategy: the key columns (comma-separated SQL column names).
+    key_columns: Option<String>,
 }
 
 /// has_one_update declaration.
@@ -54,17 +50,8 @@ struct HasOneUpdate {
     fk_column: String,
     /// The child's foreign key field name.
     fk_field: String,
-    /// How to wrap the fk value: "value" or "some".
-    fk_wrap: FkWrap,
     /// Strategy: replace or upsert.
     strategy: UpdateStrategy,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-enum FkWrap {
-    #[default]
-    Value,
-    Some,
 }
 
 /// All graph declarations for an UpdateModel.
@@ -639,10 +626,8 @@ fn parse_has_many_update(tokens: &TokenStream) -> Result<Option<HasManyUpdate>> 
         field: parsed.field,
         fk_column: parsed.fk_column,
         fk_field: parsed.fk_field,
-        fk_wrap: parsed.fk_wrap,
         strategy: parsed.strategy,
-        key_field: parsed.key_field,
-        key_column: parsed.key_column,
+        key_columns: parsed.key_columns,
     }))
 }
 
@@ -652,10 +637,8 @@ struct HasManyUpdateAttr {
     field: String,
     fk_column: String,
     fk_field: String,
-    fk_wrap: FkWrap,
     strategy: UpdateStrategy,
-    key_field: Option<String>,
-    key_column: Option<String>,
+    key_columns: Option<String>,
 }
 
 impl syn::parse::Parse for HasManyUpdateAttr {
@@ -673,10 +656,8 @@ impl syn::parse::Parse for HasManyUpdateAttr {
         let mut field: Option<String> = None;
         let mut fk_column: Option<String> = None;
         let mut fk_field: Option<String> = None;
-        let mut fk_wrap = FkWrap::Value;
         let mut strategy = UpdateStrategy::Replace;
-        let mut key_field: Option<String> = None;
-        let mut key_column: Option<String> = None;
+        let mut key_columns: Option<String> = None;
 
         // Parse remaining key = "value" pairs
         while !content.is_empty() {
@@ -693,18 +674,8 @@ impl syn::parse::Parse for HasManyUpdateAttr {
                 "field" => field = Some(value.value()),
                 "fk_column" => fk_column = Some(value.value()),
                 "fk_field" => fk_field = Some(value.value()),
-                "fk_wrap" => {
-                    fk_wrap = match value.value().as_str() {
-                        "value" => FkWrap::Value,
-                        "some" => FkWrap::Some,
-                        _ => {
-                            return Err(syn::Error::new(
-                                value.span(),
-                                "fk_wrap must be \"value\" or \"some\"",
-                            ));
-                        }
-                    };
-                }
+                // fk_wrap is deprecated - now always use with_* setter
+                "fk_wrap" => { /* ignored for backward compatibility */ }
                 "strategy" => {
                     strategy = match value.value().as_str() {
                         "replace" => UpdateStrategy::Replace,
@@ -719,8 +690,9 @@ impl syn::parse::Parse for HasManyUpdateAttr {
                         }
                     };
                 }
-                "key_field" => key_field = Some(value.value()),
-                "key_column" => key_column = Some(value.value()),
+                "key_columns" => key_columns = Some(value.value()),
+                // Legacy key_field/key_column are ignored (replaced by key_columns)
+                "key_field" | "key_column" => { /* ignored for backward compatibility */ }
                 _ => {}
             }
         }
@@ -735,20 +707,12 @@ impl syn::parse::Parse for HasManyUpdateAttr {
             syn::Error::new(Span::call_site(), "has_many_update requires fk_field = \"...\"")
         })?;
 
-        // Validate diff strategy requires key_field and key_column
-        if strategy == UpdateStrategy::Diff {
-            if key_field.is_none() {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "has_many_update with strategy=\"diff\" requires key_field = \"...\"",
-                ));
-            }
-            if key_column.is_none() {
-                return Err(syn::Error::new(
-                    Span::call_site(),
-                    "has_many_update with strategy=\"diff\" requires key_column = \"...\"",
-                ));
-            }
+        // Validate diff strategy requires key_columns
+        if strategy == UpdateStrategy::Diff && key_columns.is_none() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "has_many_update with strategy=\"diff\" requires key_columns = \"...\"",
+            ));
         }
 
         Ok(Self {
@@ -756,10 +720,8 @@ impl syn::parse::Parse for HasManyUpdateAttr {
             field,
             fk_column,
             fk_field,
-            fk_wrap,
             strategy,
-            key_field,
-            key_column,
+            key_columns,
         })
     }
 }
@@ -772,7 +734,6 @@ fn parse_has_one_update(tokens: &TokenStream) -> Result<Option<HasOneUpdate>> {
         field: parsed.field,
         fk_column: parsed.fk_column,
         fk_field: parsed.fk_field,
-        fk_wrap: parsed.fk_wrap,
         strategy: parsed.strategy,
     }))
 }
@@ -783,7 +744,6 @@ struct HasOneUpdateAttr {
     field: String,
     fk_column: String,
     fk_field: String,
-    fk_wrap: FkWrap,
     strategy: UpdateStrategy,
 }
 
@@ -802,7 +762,6 @@ impl syn::parse::Parse for HasOneUpdateAttr {
         let mut field: Option<String> = None;
         let mut fk_column: Option<String> = None;
         let mut fk_field: Option<String> = None;
-        let mut fk_wrap = FkWrap::Value;
         let mut strategy = UpdateStrategy::Replace;
 
         // Parse remaining key = "value" pairs
@@ -820,18 +779,8 @@ impl syn::parse::Parse for HasOneUpdateAttr {
                 "field" => field = Some(value.value()),
                 "fk_column" => fk_column = Some(value.value()),
                 "fk_field" => fk_field = Some(value.value()),
-                "fk_wrap" => {
-                    fk_wrap = match value.value().as_str() {
-                        "value" => FkWrap::Value,
-                        "some" => FkWrap::Some,
-                        _ => {
-                            return Err(syn::Error::new(
-                                value.span(),
-                                "fk_wrap must be \"value\" or \"some\"",
-                            ));
-                        }
-                    };
-                }
+                // fk_wrap is deprecated - now always use with_* setter
+                "fk_wrap" => { /* ignored for backward compatibility */ }
                 "strategy" => {
                     strategy = match value.value().as_str() {
                         "replace" => UpdateStrategy::Replace,
@@ -863,7 +812,6 @@ impl syn::parse::Parse for HasOneUpdateAttr {
             field,
             fk_column,
             fk_field,
-            fk_wrap,
             strategy,
         })
     }
@@ -1036,6 +984,7 @@ fn generate_update_graph_methods(attrs: &StructAttrs, id_col_expr: &TokenStream)
 }
 
 /// Generate code for has_many_update child tables.
+/// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
 fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &str) -> Result<TokenStream> {
     if graph.has_many.is_empty() {
         return Ok(quote! {});
@@ -1045,14 +994,11 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
 
     for rel in &graph.has_many {
         let field_ident = format_ident!("{}", rel.field);
-        let fk_field_ident = format_ident!("{}", rel.fk_field);
         let child_type = &rel.child_type;
         let fk_column = &rel.fk_column;
 
-        let fk_assign = match rel.fk_wrap {
-            FkWrap::Value => quote! { child.#fk_field_ident = __pgorm_id.clone(); },
-            FkWrap::Some => quote! { child.#fk_field_ident = ::std::option::Option::Some(__pgorm_id.clone()); },
-        };
+        // Use with_* setter to inject FK
+        let setter_name = format_ident!("with_{}", rel.fk_field);
 
         let strategy_code = match rel.strategy {
             UpdateStrategy::Replace => {
@@ -1069,10 +1015,11 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
 
                     // Insert new children
                     if !children.is_empty() {
-                        for child in children.iter_mut() {
-                            #fk_assign
-                        }
-                        let inserted = #child_type::insert_many(conn, children).await?;
+                        let children_with_fk: ::std::vec::Vec<_> = children
+                            .into_iter()
+                            .map(|child| child.#setter_name(__pgorm_id.clone()))
+                            .collect();
+                        let inserted = #child_type::insert_many(conn, children_with_fk).await?;
                         __pgorm_total_affected += inserted;
                     }
                 }
@@ -1081,10 +1028,11 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
                 // Only insert new children
                 quote! {
                     if !children.is_empty() {
-                        for child in children.iter_mut() {
-                            #fk_assign
-                        }
-                        let inserted = #child_type::insert_many(conn, children).await?;
+                        let children_with_fk: ::std::vec::Vec<_> = children
+                            .into_iter()
+                            .map(|child| child.#setter_name(__pgorm_id.clone()))
+                            .collect();
+                        let inserted = #child_type::insert_many(conn, children_with_fk).await?;
                         __pgorm_total_affected += inserted;
                     }
                 }
@@ -1093,64 +1041,39 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
                 // Upsert children
                 quote! {
                     if !children.is_empty() {
-                        for child in children.iter_mut() {
-                            #fk_assign
-                        }
-                        let upserted = #child_type::upsert_many(conn, children).await?;
+                        let children_with_fk: ::std::vec::Vec<_> = children
+                            .into_iter()
+                            .map(|child| child.#setter_name(__pgorm_id.clone()))
+                            .collect();
+                        let upserted = #child_type::upsert_many(conn, children_with_fk).await?;
                         __pgorm_total_affected += upserted;
                     }
                 }
             }
             UpdateStrategy::Diff => {
-                // Upsert + delete missing
-                let key_field = rel.key_field.as_ref().unwrap();
-                let key_column = rel.key_column.as_ref().unwrap();
-                let key_field_ident = format_ident!("{}", key_field);
+                // Upsert + delete missing (uses __pgorm_diff_many_by_fk helper)
+                let key_columns = rel.key_columns.as_ref().unwrap();
 
                 quote! {
-                    if !children.is_empty() {
-                        // Collect keys from new children
-                        let keys: ::std::vec::Vec<_> = children.iter().map(|c| c.#key_field_ident.clone()).collect();
-
-                        // Inject fk into children
-                        for child in children.iter_mut() {
-                            #fk_assign
-                        }
-
-                        // Upsert children
-                        let upserted = #child_type::upsert_many(conn, children).await?;
-                        __pgorm_total_affected += upserted;
-
-                        // Delete children not in the new list
-                        let delete_sql = ::std::format!(
-                            "DELETE FROM {} WHERE {} = $1 AND {} != ALL($2)",
-                            #child_type::TABLE,
-                            #fk_column,
-                            #key_column
-                        );
-                        let deleted = ::pgorm::query(delete_sql)
-                            .bind(__pgorm_id.clone())
-                            .bind(keys)
-                            .execute(conn)
-                            .await?;
-                        __pgorm_total_affected += deleted;
-                    } else {
-                        // Empty list means delete all children
-                        let delete_sql = ::std::format!(
-                            "DELETE FROM {} WHERE {} = $1",
-                            #child_type::TABLE,
-                            #fk_column
-                        );
-                        let deleted = ::pgorm::query(delete_sql).bind(__pgorm_id.clone()).execute(conn).await?;
-                        __pgorm_total_affected += deleted;
-                    }
+                    // Use diff helper to upsert and delete missing children
+                    let diff_affected = #child_type::__pgorm_diff_many_by_fk(
+                        conn,
+                        #fk_column,
+                        __pgorm_id.clone(),
+                        &[#key_columns],
+                        children
+                            .into_iter()
+                            .map(|child| child.#setter_name(__pgorm_id.clone()))
+                            .collect(),
+                    ).await?;
+                    __pgorm_total_affected += diff_affected;
                 }
             }
         };
 
         let code = quote! {
             // has_many_update: #field_ident
-            if let ::std::option::Option::Some(mut children) = self.#field_ident {
+            if let ::std::option::Option::Some(children) = self.#field_ident {
                 #strategy_code
             }
         };
@@ -1164,6 +1087,7 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
 }
 
 /// Generate code for has_one_update child tables.
+/// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
 fn generate_has_one_update_code(graph: &UpdateGraphDeclarations, _table_name: &str) -> Result<TokenStream> {
     if graph.has_one.is_empty() {
         return Ok(quote! {});
@@ -1173,14 +1097,11 @@ fn generate_has_one_update_code(graph: &UpdateGraphDeclarations, _table_name: &s
 
     for rel in &graph.has_one {
         let field_ident = format_ident!("{}", rel.field);
-        let fk_field_ident = format_ident!("{}", rel.fk_field);
         let child_type = &rel.child_type;
         let fk_column = &rel.fk_column;
 
-        let fk_assign = match rel.fk_wrap {
-            FkWrap::Value => quote! { child.#fk_field_ident = __pgorm_id.clone(); },
-            FkWrap::Some => quote! { child.#fk_field_ident = ::std::option::Option::Some(__pgorm_id.clone()); },
-        };
+        // Use with_* setter to inject FK
+        let setter_name = format_ident!("with_{}", rel.fk_field);
 
         let strategy_code = match rel.strategy {
             UpdateStrategy::Replace => {
@@ -1195,18 +1116,18 @@ fn generate_has_one_update_code(graph: &UpdateGraphDeclarations, _table_name: &s
                     __pgorm_total_affected += deleted;
 
                     // Insert new child if present
-                    if let ::std::option::Option::Some(mut child) = inner_value {
-                        #fk_assign
-                        let inserted = child.insert(conn).await?;
+                    if let ::std::option::Option::Some(child) = inner_value {
+                        let child_with_fk = child.#setter_name(__pgorm_id.clone());
+                        let inserted = child_with_fk.insert(conn).await?;
                         __pgorm_total_affected += inserted;
                     }
                 }
             }
             UpdateStrategy::Upsert => {
                 quote! {
-                    if let ::std::option::Option::Some(mut child) = inner_value {
-                        #fk_assign
-                        let upserted = child.upsert(conn).await?;
+                    if let ::std::option::Option::Some(child) = inner_value {
+                        let child_with_fk = child.#setter_name(__pgorm_id.clone());
+                        let upserted = child_with_fk.upsert(conn).await?;
                         __pgorm_total_affected += upserted;
                     }
                 }

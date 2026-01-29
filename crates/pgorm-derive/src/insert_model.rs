@@ -31,8 +31,6 @@ struct HasRelation {
     field: String,
     /// The child's foreign key field name.
     fk_field: String,
-    /// How to wrap the fk value: "value" or "some".
-    fk_wrap: FkWrap,
     /// Is this has_one (single) or has_many (vec)?
     is_many: bool,
 }
@@ -65,13 +63,6 @@ struct InsertStep {
     mode: StepMode,
     /// Is this before or after the root insert?
     is_before: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum FkWrap {
-    #[default]
-    Value,
-    Some,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -130,6 +121,8 @@ struct StructAttrs {
     table: String,
     returning: Option<syn::Path>,
     conflict_target: Option<Vec<String>>,
+    conflict_constraint: Option<String>,
+    conflict_update: Option<Vec<String>>,
     graph: GraphDeclarations,
 }
 
@@ -137,6 +130,8 @@ struct StructAttrList {
     table: Option<String>,
     returning: Option<syn::Path>,
     conflict_target: Option<Vec<String>>,
+    conflict_constraint: Option<String>,
+    conflict_update: Option<Vec<String>>,
 }
 
 impl syn::parse::Parse for StructAttrList {
@@ -144,6 +139,8 @@ impl syn::parse::Parse for StructAttrList {
         let mut table: Option<String> = None;
         let mut returning: Option<syn::Path> = None;
         let mut conflict_target: Option<Vec<String>> = None;
+        let mut conflict_constraint: Option<String> = None;
+        let mut conflict_update: Option<Vec<String>> = None;
 
         loop {
             if input.is_empty() {
@@ -179,6 +176,25 @@ impl syn::parse::Parse for StructAttrList {
                     }
                     conflict_target = Some(cols);
                 }
+                "conflict_constraint" => {
+                    let constraint_name = value.value().trim().to_string();
+                    if constraint_name.is_empty() {
+                        return Err(syn::Error::new(
+                            value.span(),
+                            "conflict_constraint must specify a constraint name",
+                        ));
+                    }
+                    conflict_constraint = Some(constraint_name);
+                }
+                "conflict_update" => {
+                    let cols: Vec<String> = value
+                        .value()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    conflict_update = Some(cols);
+                }
                 _ => {}
             }
 
@@ -189,7 +205,7 @@ impl syn::parse::Parse for StructAttrList {
             }
         }
 
-        Ok(Self { table, returning, conflict_target })
+        Ok(Self { table, returning, conflict_target, conflict_constraint, conflict_update })
     }
 }
 
@@ -461,71 +477,119 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
-    // Determine conflict columns: prefer explicit conflict_target, fallback to id field
-    let conflict_cols: Option<Vec<String>> = struct_attrs.conflict_target.clone().or_else(|| {
-        id_field.as_ref().map(|f| vec![f.column.clone()])
-    });
+    // Determine conflict specification for UPSERT:
+    // - conflict_constraint: ON CONFLICT ON CONSTRAINT constraint_name
+    // - conflict_target: ON CONFLICT (col1, col2, ...)
+    // - fallback: ON CONFLICT (id_column)
 
-    let upsert_methods = if let Some(conflict_cols) = conflict_cols {
-        let conflict_cols_str = conflict_cols.join(", ");
+    enum ConflictSpec {
+        Constraint(String),
+        Columns(Vec<String>),
+    }
+
+    let conflict_spec: Option<ConflictSpec> = if let Some(constraint) = struct_attrs.conflict_constraint.clone() {
+        Some(ConflictSpec::Constraint(constraint))
+    } else if let Some(cols) = struct_attrs.conflict_target.clone() {
+        Some(ConflictSpec::Columns(cols))
+    } else {
+        id_field.as_ref().map(|f| ConflictSpec::Columns(vec![f.column.clone()]))
+    };
+
+    let upsert_methods = if let Some(conflict_spec) = conflict_spec {
+        // Build the ON CONFLICT clause
+        let (on_conflict_clause, conflict_cols_for_exclusion): (String, Vec<String>) = match &conflict_spec {
+            ConflictSpec::Constraint(name) => {
+                (format!("ON CONFLICT ON CONSTRAINT {}", name), vec![])
+            }
+            ConflictSpec::Columns(cols) => {
+                (format!("ON CONFLICT ({})", cols.join(", ")), cols.clone())
+            }
+        };
 
         // For upsert, we need all fields that should be in the INSERT (including conflict columns)
         // If conflict_target is set, we use all bind fields + any fields matching conflict columns
         // If using id field, we include id + bind fields
+        // For conflict_constraint, we use bind fields only (constraint defines uniqueness)
         let (upsert_columns, upsert_bind_idents, upsert_bind_field_tys): (Vec<String>, Vec<syn::Ident>, Vec<syn::Type>) =
-            if struct_attrs.conflict_target.is_some() {
-                // With explicit conflict_target, include all insert columns (bind fields)
-                // but we need to also include conflict columns if they're not already in bind_field_idents
-                let mut columns: Vec<String> = batch_bind_fields.iter().map(|f| f.column.clone()).collect();
-                let mut idents: Vec<syn::Ident> = batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
-                let mut tys: Vec<syn::Type> = batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
+            match &conflict_spec {
+                ConflictSpec::Constraint(_) => {
+                    // With constraint-based conflict, include all bind fields
+                    // (the constraint already defines which columns make up uniqueness)
+                    (
+                        batch_bind_fields.iter().map(|f| f.column.clone()).collect(),
+                        batch_bind_fields.iter().map(|f| f.ident.clone()).collect(),
+                        batch_bind_fields.iter().map(|f| f.ty.clone()).collect(),
+                    )
+                }
+                ConflictSpec::Columns(conflict_cols) => {
+                    if struct_attrs.conflict_target.is_some() {
+                        // With explicit conflict_target, include all insert columns (bind fields)
+                        // but we need to also include conflict columns if they're not already in bind_field_idents
+                        let mut columns: Vec<String> = batch_bind_fields.iter().map(|f| f.column.clone()).collect();
+                        let mut idents: Vec<syn::Ident> = batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
+                        let mut tys: Vec<syn::Type> = batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
 
-                // If we have an id field and it's in the conflict columns, add it
-                if let Some(id_f) = id_field.as_ref() {
-                    if conflict_cols.contains(&id_f.column) && !columns.contains(&id_f.column) {
-                        columns.insert(0, id_f.column.clone());
-                        idents.insert(0, id_f.ident.clone());
-                        tys.insert(0, id_f.ty.clone());
+                        // If we have an id field and it's in the conflict columns, add it
+                        if let Some(id_f) = id_field.as_ref() {
+                            if conflict_cols.contains(&id_f.column) && !columns.contains(&id_f.column) {
+                                columns.insert(0, id_f.column.clone());
+                                idents.insert(0, id_f.ident.clone());
+                                tys.insert(0, id_f.ty.clone());
+                            }
+                        }
+
+                        (columns, idents, tys)
+                    } else if let Some(id_f) = id_field.as_ref() {
+                        // Using id field as conflict target (original behavior)
+                        let columns: Vec<String> = std::iter::once(id_f.column.clone())
+                            .chain(batch_bind_fields.iter().map(|f| f.column.clone()))
+                            .collect();
+                        let idents: Vec<syn::Ident> = std::iter::once(id_f.ident.clone())
+                            .chain(batch_bind_fields.iter().map(|f| f.ident.clone()))
+                            .collect();
+                        let tys: Vec<syn::Type> = std::iter::once(id_f.ty.clone())
+                            .chain(batch_bind_fields.iter().map(|f| f.ty.clone()))
+                            .collect();
+                        (columns, idents, tys)
+                    } else {
+                        // Should not happen since we have conflict_cols
+                        (vec![], vec![], vec![])
                     }
                 }
-
-                (columns, idents, tys)
-            } else if let Some(id_f) = id_field.as_ref() {
-                // Using id field as conflict target (original behavior)
-                let columns: Vec<String> = std::iter::once(id_f.column.clone())
-                    .chain(batch_bind_fields.iter().map(|f| f.column.clone()))
-                    .collect();
-                let idents: Vec<syn::Ident> = std::iter::once(id_f.ident.clone())
-                    .chain(batch_bind_fields.iter().map(|f| f.ident.clone()))
-                    .collect();
-                let tys: Vec<syn::Type> = std::iter::once(id_f.ty.clone())
-                    .chain(batch_bind_fields.iter().map(|f| f.ty.clone()))
-                    .collect();
-                (columns, idents, tys)
-            } else {
-                // Should not happen since we have conflict_cols
-                (vec![], vec![], vec![])
             };
 
         let placeholders: Vec<String> = (1..=upsert_bind_idents.len()).map(|i| format!("${}", i)).collect();
 
-        // Update assignments: all columns except the conflict columns
-        let mut update_assignments: Vec<String> = upsert_columns
-            .iter()
-            .filter(|col| !conflict_cols.contains(col))
-            .map(|col| format!("{} = EXCLUDED.{}", col, col))
-            .collect();
+        // Update assignments:
+        // - If conflict_update is set, only update specified columns
+        // - Otherwise, update all columns except the conflict columns
+        let mut update_assignments: Vec<String> = if let Some(update_cols) = &struct_attrs.conflict_update {
+            // Only update specified columns
+            update_cols
+                .iter()
+                .map(|col| format!("{} = EXCLUDED.{}", col, col))
+                .collect()
+        } else {
+            // Default: update all columns except conflict columns
+            upsert_columns
+                .iter()
+                .filter(|col| !conflict_cols_for_exclusion.contains(col))
+                .map(|col| format!("{} = EXCLUDED.{}", col, col))
+                .collect()
+        };
         if update_assignments.is_empty() {
-            // If all columns are conflict columns, update first conflict column to itself (no-op update)
-            update_assignments.push(format!("{} = EXCLUDED.{}", conflict_cols[0], conflict_cols[0]));
+            // If no columns to update, generate a no-op update (assign first column to itself)
+            if let Some(first_col) = upsert_columns.first() {
+                update_assignments.push(format!("{} = EXCLUDED.{}", first_col, first_col));
+            }
         }
 
         let upsert_sql = format!(
-            "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}",
+            "INSERT INTO {} ({}) VALUES ({}) {} DO UPDATE SET {}",
             table_name,
             upsert_columns.join(", "),
             placeholders.join(", "),
-            conflict_cols_str,
+            on_conflict_clause,
             update_assignments.join(", ")
         );
 
@@ -599,11 +663,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
                 let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#upsert_type_cast_exprs),*];
                 let upsert_batch_sql = ::std::format!(
-                    "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
+                    "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) {} DO UPDATE SET {}",
                     #table_name,
                     #upsert_columns_str,
                     type_casts.join(", "),
-                    #conflict_cols_str,
+                    #on_conflict_clause,
                     #update_assignments_str
                 );
 
@@ -662,11 +726,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
                     let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#upsert_type_cast_exprs),*];
                     let upsert_batch_sql = ::std::format!(
-                        "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) ON CONFLICT ({}) DO UPDATE SET {}",
+                        "INSERT INTO {} ({}) SELECT * FROM UNNEST({}) {} DO UPDATE SET {}",
                         #table_name,
                         #upsert_columns_str,
                         type_casts.join(", "),
-                        #conflict_cols_str,
+                        #on_conflict_clause,
                         #update_assignments_str
                     );
 
@@ -685,10 +749,139 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             quote! {}
         };
 
+        // Generate __pgorm_diff_many_by_fk helper for diff strategy
+        // This uses a CTE to:
+        // 1. UPSERT all rows using UNNEST
+        // 2. DELETE rows with matching fk that are not in the upserted set
+        // 3. Return combined affected count
+        let diff_helper = {
+            // We need the same batch bind fields and their types
+            let field_idents: Vec<syn::Ident> = upsert_bind_idents.clone();
+            let field_tys: Vec<syn::Type> = upsert_bind_field_tys.clone();
+            let upsert_list_idents: Vec<syn::Ident> = field_idents
+                .iter()
+                .map(|ident| format_ident!("__pgorm_diff_{}_list", ident))
+                .collect();
+
+            let init_lists: Vec<TokenStream> = upsert_list_idents
+                .iter()
+                .zip(field_tys.iter())
+                .map(|(list_ident, ty)| {
+                    quote! { let mut #list_ident: ::std::vec::Vec<#ty> = ::std::vec::Vec::with_capacity(rows.len()); }
+                })
+                .collect();
+
+            let push_lists: Vec<TokenStream> = upsert_list_idents
+                .iter()
+                .zip(field_idents.iter())
+                .map(|(list_ident, field_ident)| quote! { #list_ident.push(#field_ident); })
+                .collect();
+
+            // Generate type casts using PgType trait
+            let type_cast_exprs: Vec<TokenStream> = field_tys
+                .iter()
+                .enumerate()
+                .map(|(i, ty)| {
+                    // fk_value is $1, so columns start at $2
+                    let idx = i + 2;
+                    quote! { ::std::format!("${}::{}", #idx, <#ty as ::pgorm::PgType>::pg_array_type()) }
+                })
+                .collect();
+
+            let bind_lists_expr = upsert_list_idents.iter().fold(
+                quote! { ::pgorm::query(&sql).bind(fk_value) },
+                |acc, list_ident| quote! { #acc.bind(#list_ident) },
+            );
+
+            quote! {
+                /// Internal helper for diff strategy. Upserts rows and deletes rows not in the new list.
+                ///
+                /// This method is used by UpdateModel's has_many_update with strategy = "diff".
+                #[doc(hidden)]
+                pub async fn __pgorm_diff_many_by_fk<I>(
+                    conn: &impl ::pgorm::GenericClient,
+                    fk_column: &'static str,
+                    fk_value: I,
+                    key_columns: &'static [&'static str],
+                    rows: ::std::vec::Vec<Self>,
+                ) -> ::pgorm::OrmResult<u64>
+                where
+                    I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
+                {
+                    let rows_count = rows.len() as u64;
+
+                    if rows.is_empty() {
+                        // Empty list means delete all children with this fk
+                        let delete_sql = ::std::format!(
+                            "DELETE FROM {} WHERE {} = $1",
+                            #table_name,
+                            fk_column
+                        );
+                        return ::pgorm::query(delete_sql).bind(fk_value).execute(conn).await;
+                    }
+
+                    // Collect columns into arrays
+                    #(#init_lists)*
+
+                    for row in rows {
+                        let Self { #(#field_idents),*, .. } = row;
+                        #(#push_lists)*
+                    }
+
+                    // Build the CTE query
+                    let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#type_cast_exprs),*];
+
+                    // Build key column equality conditions for NOT EXISTS
+                    let key_conditions: ::std::string::String = key_columns
+                        .iter()
+                        .map(|col| ::std::format!("u.{} = c.{}", col, col))
+                        .collect::<::std::vec::Vec<_>>()
+                        .join(" AND ");
+
+                    // Build RETURNING clause for key columns
+                    let returning_keys = key_columns.join(", ");
+
+                    let sql = ::std::format!(
+                        "WITH upserted AS (\
+                            INSERT INTO {} ({}) \
+                            SELECT * FROM UNNEST({}) AS t({}) \
+                            {} DO UPDATE SET {} \
+                            RETURNING {}\
+                        ), \
+                        deleted AS (\
+                            DELETE FROM {} c \
+                            WHERE c.{} = $1 \
+                            AND NOT EXISTS (\
+                                SELECT 1 FROM upserted u WHERE {}\
+                            ) \
+                            RETURNING 1\
+                        ) \
+                        SELECT (SELECT COUNT(*) FROM deleted) AS deleted_count",
+                        #table_name,
+                        #upsert_columns_str,
+                        type_casts.join(", "),
+                        #upsert_columns_str,
+                        #on_conflict_clause,
+                        #update_assignments_str,
+                        returning_keys,
+                        #table_name,
+                        fk_column,
+                        key_conditions
+                    );
+
+                    let row = #bind_lists_expr.fetch_one(conn).await?;
+                    let deleted_count: i64 = row.get(0);
+
+                    ::std::result::Result::Ok(rows_count + deleted_count as u64)
+                }
+            }
+        };
+
         quote! {
             #upsert_method
             #upsert_many_method
             #upsert_returning_methods
+            #diff_helper
         }
     } else {
         quote! {}
@@ -836,6 +1029,9 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Generate insert_graph methods if there are any graph declarations
+    // Generate with_* setters for all fields
+    let with_setters = generate_with_setters(fields);
+
     let insert_graph_methods = generate_insert_graph_methods(
         &struct_attrs,
         &input,
@@ -855,6 +1051,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #returning_method
 
             #insert_graph_methods
+
+            #with_setters
         }
     })
 }
@@ -863,6 +1061,8 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
     let mut table: Option<String> = None;
     let mut returning: Option<syn::Path> = None;
     let mut conflict_target: Option<Vec<String>> = None;
+    let mut conflict_constraint: Option<String> = None;
+    let mut conflict_update: Option<Vec<String>> = None;
     let mut graph = GraphDeclarations::default();
 
     for attr in &input.attrs {
@@ -882,6 +1082,12 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
                 if parsed.conflict_target.is_some() {
                     conflict_target = parsed.conflict_target;
                 }
+                if parsed.conflict_constraint.is_some() {
+                    conflict_constraint = parsed.conflict_constraint;
+                }
+                if parsed.conflict_update.is_some() {
+                    conflict_update = parsed.conflict_update;
+                }
                 continue;
             }
 
@@ -897,7 +1103,15 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
         )
     })?;
 
-    Ok(StructAttrs { table, returning, conflict_target, graph })
+    // Validate: conflict_target and conflict_constraint are mutually exclusive
+    if conflict_target.is_some() && conflict_constraint.is_some() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "conflict_target and conflict_constraint are mutually exclusive; use only one",
+        ));
+    }
+
+    Ok(StructAttrs { table, returning, conflict_target, conflict_constraint, conflict_update, graph })
 }
 
 /// Parse a graph-style attribute like `has_many(Type, field = "x", fk_field = "y")`.
@@ -977,14 +1191,13 @@ fn extract_string_value(s: &str, key: &str) -> Option<String> {
 
 /// Parse has_one/has_many attribute content.
 fn parse_has_relation(tokens: &TokenStream, is_many: bool) -> Result<Option<HasRelation>> {
-    // Parse: has_one(Type, field = "x", fk_field = "y", fk_wrap = "value")
-    // or:    has_many(Type, field = "x", fk_field = "y", fk_wrap = "value")
+    // Parse: has_one(Type, field = "x", fk_field = "y")
+    // or:    has_many(Type, field = "x", fk_field = "y")
     let parsed: HasRelationAttr = syn::parse2(tokens.clone())?;
     Ok(Some(HasRelation {
         child_type: parsed.child_type,
         field: parsed.field,
         fk_field: parsed.fk_field,
-        fk_wrap: parsed.fk_wrap,
         is_many,
     }))
 }
@@ -994,7 +1207,6 @@ struct HasRelationAttr {
     child_type: syn::Path,
     field: String,
     fk_field: String,
-    fk_wrap: FkWrap,
 }
 
 impl syn::parse::Parse for HasRelationAttr {
@@ -1011,7 +1223,6 @@ impl syn::parse::Parse for HasRelationAttr {
 
         let mut field: Option<String> = None;
         let mut fk_field: Option<String> = None;
-        let mut fk_wrap = FkWrap::Value;
 
         // Parse remaining key = "value" pairs
         while !content.is_empty() {
@@ -1027,18 +1238,8 @@ impl syn::parse::Parse for HasRelationAttr {
             match key.to_string().as_str() {
                 "field" => field = Some(value.value()),
                 "fk_field" => fk_field = Some(value.value()),
-                "fk_wrap" => {
-                    fk_wrap = match value.value().as_str() {
-                        "value" => FkWrap::Value,
-                        "some" => FkWrap::Some,
-                        _ => {
-                            return Err(syn::Error::new(
-                                value.span(),
-                                "fk_wrap must be \"value\" or \"some\"",
-                            ));
-                        }
-                    };
-                }
+                // fk_wrap is deprecated - now always use with_* setter
+                "fk_wrap" => { /* ignored for backward compatibility */ }
                 _ => {}
             }
         }
@@ -1054,7 +1255,6 @@ impl syn::parse::Parse for HasRelationAttr {
             child_type,
             field,
             fk_field,
-            fk_wrap,
         })
     }
 }
@@ -1280,7 +1480,7 @@ fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
 /// Generate insert_graph, insert_graph_returning, and insert_graph_report methods.
 fn generate_insert_graph_methods(
     struct_attrs: &StructAttrs,
-    _input: &DeriveInput,
+    input: &DeriveInput,
     fields: &syn::punctuated::Punctuated<syn::Field, syn::Token![,]>,
 ) -> Result<TokenStream> {
     let graph = &struct_attrs.graph;
@@ -1288,6 +1488,26 @@ fn generate_insert_graph_methods(
     // If no graph declarations, don't generate graph methods
     if !graph.has_any() {
         return Ok(quote! {});
+    }
+
+    // Compile-time check: has_one/has_many with graph_root_key_source = "returning" (default)
+    // requires #[orm(returning = "...")] to be set, because we need the root ID to inject into children.
+    if !graph.has_relations.is_empty() && graph.root_key_source == GraphRootKeySource::Returning {
+        if struct_attrs.returning.is_none() {
+            let relation_names: Vec<_> = graph.has_relations.iter().map(|r| &r.field).collect();
+            return Err(syn::Error::new_spanned(
+                input,
+                format!(
+                    "InsertModel with has_one/has_many relations ({:?}) requires #[orm(returning = \"...\")] \
+                    when graph_root_key_source = \"returning\" (default). \
+                    The returning type must have the root key field '{}' to inject into child foreign keys. \
+                    Either add #[orm(returning = \"YourModel\")] or set graph_root_key_source = \"input\" \
+                    with a corresponding input field.",
+                    relation_names,
+                    graph.root_key.as_deref().unwrap_or("id")
+                ),
+            ));
+        }
     }
 
     let table_name = &struct_attrs.table;
@@ -1341,9 +1561,23 @@ fn generate_insert_graph_methods(
     };
 
     // Generate the three methods
+    // Only require ModelPk bound if we have has_relations that need root ID
+    let needs_model_pk = !graph.has_relations.is_empty();
+
     let insert_graph_method = if returning_ty.is_some() {
         // Even if returning just u64, we need root ID for children, so use insert_returning internally
         let returning_ty = returning_ty.unwrap();
+        let where_clause = if needs_model_pk {
+            quote! {
+                where
+                    #returning_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
+            }
+        } else {
+            quote! {
+                where
+                    #returning_ty: ::pgorm::FromRow,
+            }
+        };
         quote! {
             /// Insert this struct and all related graph nodes.
             ///
@@ -1352,14 +1586,13 @@ fn generate_insert_graph_methods(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
             ) -> ::pgorm::OrmResult<u64>
-            where
-                #returning_ty: ::pgorm::FromRow,
+            #where_clause
             {
                 #pre_insert_code
 
                 // Root insert with returning to get the ID
                 let __pgorm_root_result: #returning_ty = self.insert_returning(conn).await?;
-                let __pgorm_root_id = __pgorm_root_result.#root_key_ident.clone();
+                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
                 __pgorm_steps.push(::pgorm::WriteStepReport {
                     tag: #root_tag,
                     affected: 1,
@@ -1400,6 +1633,17 @@ fn generate_insert_graph_methods(
     };
 
     let insert_graph_returning_method = if let Some(returning_ty) = returning_ty {
+        let where_clause = if needs_model_pk {
+            quote! {
+                where
+                    #returning_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
+            }
+        } else {
+            quote! {
+                where
+                    #returning_ty: ::pgorm::FromRow,
+            }
+        };
         quote! {
             /// Insert this struct and all related graph nodes, returning the root row.
             ///
@@ -1408,14 +1652,13 @@ fn generate_insert_graph_methods(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
             ) -> ::pgorm::OrmResult<#returning_ty>
-            where
-                #returning_ty: ::pgorm::FromRow,
+            #where_clause
             {
                 #pre_insert_code
 
                 // Root insert with returning
                 let __pgorm_root_result: #returning_ty = self.insert_returning(conn).await?;
-                let __pgorm_root_id = __pgorm_root_result.#root_key_ident.clone();
+                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
                 __pgorm_steps.push(::pgorm::WriteStepReport {
                     tag: #root_tag,
                     affected: 1,
@@ -1434,6 +1677,17 @@ fn generate_insert_graph_methods(
     };
 
     let insert_graph_report_method = if let Some(returning_ty) = returning_ty {
+        let where_clause = if needs_model_pk {
+            quote! {
+                where
+                    #returning_ty: ::pgorm::FromRow + ::pgorm::ModelPk,
+            }
+        } else {
+            quote! {
+                where
+                    #returning_ty: ::pgorm::FromRow,
+            }
+        };
         quote! {
             /// Insert this struct and all related graph nodes, returning a detailed report.
             ///
@@ -1442,14 +1696,13 @@ fn generate_insert_graph_methods(
                 mut self,
                 conn: &impl ::pgorm::GenericClient,
             ) -> ::pgorm::OrmResult<::pgorm::WriteReport<#returning_ty>>
-            where
-                #returning_ty: ::pgorm::FromRow,
+            #where_clause
             {
                 #pre_insert_code
 
                 // Root insert with returning
                 let __pgorm_root_result: #returning_ty = self.insert_returning(conn).await?;
-                let __pgorm_root_id = __pgorm_root_result.#root_key_ident.clone();
+                let __pgorm_root_id = ::pgorm::ModelPk::pk(&__pgorm_root_result).clone();
                 __pgorm_steps.push(::pgorm::WriteStepReport {
                     tag: #root_tag,
                     affected: 1,
@@ -1468,7 +1721,34 @@ fn generate_insert_graph_methods(
             }
         }
     } else {
-        quote! {}
+        // When no returning type is configured, return WriteReport<()>
+        // Note: has_one/has_many won't work in this case (compile error enforced above)
+        quote! {
+            /// Insert this struct and all related graph nodes, returning a detailed report.
+            ///
+            /// Note: has_one/has_many relations require `#[orm(returning = "...")]` to be set.
+            /// Without returning, this method returns `WriteReport<()>` with `root: None`.
+            pub async fn insert_graph_report(
+                mut self,
+                conn: &impl ::pgorm::GenericClient,
+            ) -> ::pgorm::OrmResult<::pgorm::WriteReport<()>> {
+                #pre_insert_code
+
+                // Root insert (without returning)
+                let __pgorm_root_affected = self.insert(conn).await?;
+                __pgorm_steps.push(::pgorm::WriteStepReport {
+                    tag: #root_tag,
+                    affected: __pgorm_root_affected,
+                });
+                __pgorm_total_affected += __pgorm_root_affected;
+
+                ::std::result::Result::Ok(::pgorm::WriteReport {
+                    affected: __pgorm_total_affected,
+                    steps: __pgorm_steps,
+                    root: ::std::option::Option::None,
+                })
+            }
+        }
     };
 
     Ok(quote! {
@@ -1642,6 +1922,7 @@ fn generate_insert_step_code(graph: &GraphDeclarations, is_before: bool) -> Resu
 }
 
 /// Generate code for has_one/has_many (post-insert) steps.
+/// Uses with_* setters to inject FK values (avoiding direct field access for cross-module compatibility).
 fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::Ident) -> Result<TokenStream> {
     if graph.has_relations.is_empty() {
         return Ok(quote! {});
@@ -1650,9 +1931,8 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
     let mut code_blocks = Vec::new();
 
     for rel in &graph.has_relations {
-        let field_ident = format_ident!("{}", rel.field);
+        let _field_ident = format_ident!("{}", rel.field);
         let extracted_field_ident = format_ident!("__pgorm_graph_{}", rel.field);
-        let fk_field_ident = format_ident!("{}", rel.fk_field);
         let child_type = &rel.child_type;
         let tag = format!(
             "graph:{}:{}",
@@ -1660,23 +1940,22 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
             rel.field
         );
 
-        let fk_assign = match rel.fk_wrap {
-            FkWrap::Value => quote! { child.#fk_field_ident = __pgorm_root_id.clone(); },
-            FkWrap::Some => quote! { child.#fk_field_ident = ::std::option::Option::Some(__pgorm_root_id.clone()); },
-        };
+        // Generate setter call using with_* method
+        let setter_name = format_ident!("with_{}", rel.fk_field);
 
         let code = if rel.is_many {
             // has_many: Vec<Child> or Option<Vec<Child>>
             quote! {
                 // has_many: #field_ident
-                if let ::std::option::Option::Some(mut children) = #extracted_field_ident {
+                if let ::std::option::Option::Some(children) = #extracted_field_ident {
                     if !children.is_empty() {
-                        // Inject root ID into each child's fk field
-                        for child in children.iter_mut() {
-                            #fk_assign
-                        }
+                        // Inject root ID into each child's fk field using with_* setter
+                        let children_with_fk: ::std::vec::Vec<_> = children
+                            .into_iter()
+                            .map(|child| child.#setter_name(__pgorm_root_id.clone()))
+                            .collect();
                         // Insert all children
-                        let affected = #child_type::insert_many(conn, children).await?;
+                        let affected = #child_type::insert_many(conn, children_with_fk).await?;
                         __pgorm_steps.push(::pgorm::WriteStepReport {
                             tag: #tag,
                             affected,
@@ -1689,11 +1968,11 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
             // has_one: Child or Option<Child>
             quote! {
                 // has_one: #field_ident
-                if let ::std::option::Option::Some(mut child) = #extracted_field_ident {
-                    // Inject root ID into child's fk field
-                    #fk_assign
+                if let ::std::option::Option::Some(child) = #extracted_field_ident {
+                    // Inject root ID into child's fk field using with_* setter
+                    let child_with_fk = child.#setter_name(__pgorm_root_id.clone());
                     // Insert child
-                    let affected = child.insert(conn).await?;
+                    let affected = child_with_fk.insert(conn).await?;
                     __pgorm_steps.push(::pgorm::WriteStepReport {
                         tag: #tag,
                         affected,
@@ -1709,4 +1988,86 @@ fn generate_has_relation_code(graph: &GraphDeclarations, _root_key_ident: &syn::
     Ok(quote! {
         #(#code_blocks)*
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// with_* setters generation (§2.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generate builder-style `with_*` setters for every field.
+///
+/// For `T` fields:
+///   - `pub fn with_<field>(mut self, v: T) -> Self`
+///
+/// For `Option<T>` fields:
+///   - `pub fn with_<field>(mut self, v: T) -> Self` (wraps in Some)
+///   - `pub fn with_<field>_opt(mut self, v: Option<T>) -> Self`
+fn generate_with_setters(
+    fields: &syn::punctuated::Punctuated<syn::Field, syn::Token![,]>,
+) -> TokenStream {
+    let mut setters = Vec::new();
+
+    for field in fields.iter() {
+        let field_ident = match &field.ident {
+            Some(ident) => ident.clone(),
+            None => continue,
+        };
+        let field_ty = &field.ty;
+        let setter_name = format_ident!("with_{}", field_ident);
+
+        // Check if the field type is Option<T>
+        if let Some(inner_ty) = extract_option_inner_type(field_ty) {
+            // For Option<T>: generate both with_<field>(T) and with_<field>_opt(Option<T>)
+            let setter_opt_name = format_ident!("with_{}_opt", field_ident);
+
+            setters.push(quote! {
+                /// Builder-style setter: sets the field to `Some(v)`.
+                #[inline]
+                pub fn #setter_name(mut self, v: #inner_ty) -> Self {
+                    self.#field_ident = ::std::option::Option::Some(v);
+                    self
+                }
+
+                /// Builder-style setter: sets the field to the given Option value.
+                #[inline]
+                pub fn #setter_opt_name(mut self, v: ::std::option::Option<#inner_ty>) -> Self {
+                    self.#field_ident = v;
+                    self
+                }
+            });
+        } else {
+            // For non-Option types: generate with_<field>(T)
+            setters.push(quote! {
+                /// Builder-style setter.
+                #[inline]
+                pub fn #setter_name(mut self, v: #field_ty) -> Self {
+                    self.#field_ident = v;
+                    self
+                }
+            });
+        }
+    }
+
+    quote! {
+        #(#setters)*
+    }
+}
+
+/// Extract the inner type T from Option<T>, or return None if not an Option type.
+fn extract_option_inner_type(ty: &syn::Type) -> Option<&syn::Type> {
+    if let syn::Type::Path(type_path) = ty {
+        let path = &type_path.path;
+        // Check for Option or std::option::Option or core::option::Option
+        let last_segment = path.segments.last()?;
+        if last_segment.ident != "Option" {
+            return None;
+        }
+        // Extract the generic argument
+        if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
+            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                return Some(inner_ty);
+            }
+        }
+    }
+    None
 }

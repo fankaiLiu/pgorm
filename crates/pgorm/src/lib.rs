@@ -115,6 +115,35 @@ pub use check::{
 // Write Graph Types (for multi-table writes)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Trait for models with a primary key.
+///
+/// This trait is automatically implemented by `#[derive(Model)]` for structs
+/// with an `#[orm(id)]` field. It provides a way to access the primary key
+/// value without requiring field visibility.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Model)]
+/// #[orm(table = "orders")]
+/// struct Order {
+///     #[orm(id)]
+///     id: i64,
+///     user_id: i64,
+/// }
+///
+/// // ModelPk is automatically implemented:
+/// let order: Order = /* ... */;
+/// let pk: &i64 = order.pk();
+/// ```
+pub trait ModelPk {
+    /// The type of the primary key.
+    type Id: Clone + Send + Sync + 'static;
+
+    /// Returns a reference to the primary key value.
+    fn pk(&self) -> &Self::Id;
+}
+
 /// Report returned by `insert_graph_report` / `update_by_id_graph_report`.
 ///
 /// Contains detailed information about each step in the write graph execution.

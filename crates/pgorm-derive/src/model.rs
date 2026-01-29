@@ -535,6 +535,21 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     // Generate Query struct for dynamic queries
     let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
 
+    // Generate ModelPk implementation only if there's an ID field
+    let model_pk_impl = if let (Some(id_ty), Some(id_ident)) = (id_field_type, id_field_ident.as_ref()) {
+        quote! {
+            impl ::pgorm::ModelPk for #name {
+                type Id = #id_ty;
+
+                fn pk(&self) -> &Self::Id {
+                    &self.#id_ident
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         impl #name {
             pub const TABLE: &'static str = #table_name;
@@ -578,6 +593,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
 
         #query_struct
+
+        #model_pk_impl
 
         // Auto-register this model with CheckedClient via inventory
         pgorm::inventory::submit! {
