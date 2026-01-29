@@ -27,11 +27,11 @@
 //! let products = Product::select_all(&checked).await?;
 //! ```
 
-use crate::error::{OrmError, OrmResult};
 use crate::GenericClient;
+use crate::error::{OrmError, OrmResult};
 use std::sync::Arc;
-use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
+use tokio_postgres::types::ToSql;
 
 #[cfg(feature = "check")]
 use crate::check::SchemaRegistry;

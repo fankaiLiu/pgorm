@@ -226,18 +226,42 @@ pub struct SchemaIssue {
 // Re-export from pgorm-check when check feature is enabled
 #[cfg(feature = "check")]
 pub use pgorm_check::{
+    CheckClient,
+    CheckError,
+    CheckResult,
+    ColumnInfo,
     // Lint types
-    ColumnRef, LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
-    // Lint functions
-    delete_has_where, detect_statement_kind, get_column_refs, get_table_names, is_valid_sql,
-    lint_select_many, lint_sql, select_has_limit, select_has_star, update_has_where,
+    ColumnRef,
+    DbSchema,
+    LintIssue,
+    LintLevel,
+    LintResult,
+    ParseResult,
+    RelationKind,
+    SchemaCache,
+    SchemaCacheConfig,
+    SchemaCacheLoad,
+    SqlCheckIssue,
+    SqlCheckIssueKind,
+    SqlCheckLevel,
+    StatementKind,
+    TableInfo,
     // Schema check from database
-    check_sql, check_sql_cached, CheckClient, CheckError, CheckResult,
-    DbSchema, SchemaCache, SchemaCacheConfig, SchemaCacheLoad,
-    SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel,
-    ColumnInfo, RelationKind, TableInfo,
+    check_sql,
+    check_sql_cached,
+    // Lint functions
+    delete_has_where,
+    detect_statement_kind,
+    get_column_refs,
+    get_table_names,
+    is_valid_sql,
+    lint_select_many,
+    lint_sql,
     // Schema introspection
     schema_introspect::load_schema_from_db,
+    select_has_limit,
+    select_has_star,
+    update_has_where,
 };
 
 // Schema checking with lint features

@@ -36,4 +36,3 @@ pub async fn run_pool(pool: &deadpool_postgres::Pool, runner: Runner) -> OrmResu
     let mut client = pool.get().await?;
     run(&mut client, runner).await
 }
-

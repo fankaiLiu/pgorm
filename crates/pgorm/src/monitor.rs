@@ -38,8 +38,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
+use tokio_postgres::types::ToSql;
 
 /// The type of SQL operation being performed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,7 +311,11 @@ impl QueryMonitor for LoggingMonitor {
 
         let canonical = self.truncate_sql(&ctx.canonical_sql);
         let sql = if ctx.exec_sql != ctx.canonical_sql {
-            format!("canonical: {} | exec: {}", canonical, self.truncate_sql(&ctx.exec_sql))
+            format!(
+                "canonical: {} | exec: {}",
+                canonical,
+                self.truncate_sql(&ctx.exec_sql)
+            )
         } else {
             canonical
         };
@@ -325,7 +329,11 @@ impl QueryMonitor for LoggingMonitor {
     fn on_slow_query(&self, ctx: &QueryContext, duration: Duration) {
         let canonical = self.truncate_sql(&ctx.canonical_sql);
         let sql = if ctx.exec_sql != ctx.canonical_sql {
-            format!("canonical: {} | exec: {}", canonical, self.truncate_sql(&ctx.exec_sql))
+            format!(
+                "canonical: {} | exec: {}",
+                canonical,
+                self.truncate_sql(&ctx.exec_sql)
+            )
         } else {
             canonical
         };
@@ -635,7 +643,10 @@ impl<C: GenericClient> InstrumentedClient<C> {
     /// Set the slow query threshold.
     ///
     /// Queries taking longer than this will trigger `on_slow_query`.
-    #[deprecated(since = "0.2.0", note = "Use `with_config(MonitorConfig::new().with_slow_query_threshold(...))` instead")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `with_config(MonitorConfig::new().with_slow_query_threshold(...))` instead"
+    )]
     pub fn with_slow_query_threshold(mut self, threshold: Duration) -> Self {
         self.config.slow_query_threshold = Some(threshold);
         self
@@ -951,7 +962,10 @@ mod tests {
 
     #[test]
     fn test_query_type_detection() {
-        assert_eq!(QueryType::from_sql("SELECT * FROM users"), QueryType::Select);
+        assert_eq!(
+            QueryType::from_sql("SELECT * FROM users"),
+            QueryType::Select
+        );
         assert_eq!(
             QueryType::from_sql("  select * FROM users"),
             QueryType::Select
@@ -1089,10 +1103,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            capture.0.lock().unwrap().as_deref(),
-            Some("test-tag")
-        );
+        assert_eq!(capture.0.lock().unwrap().as_deref(), Some("test-tag"));
     }
 
     #[tokio::test]

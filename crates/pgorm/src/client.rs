@@ -1,8 +1,8 @@
 //! Generic client trait for unified database access.
 
 use crate::error::{OrmError, OrmResult};
-use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
+use tokio_postgres::types::ToSql;
 
 /// A trait that unifies database clients and transactions.
 ///

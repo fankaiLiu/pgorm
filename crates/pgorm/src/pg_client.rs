@@ -48,6 +48,7 @@
 //! println!("Stats: {:?}", pg.stats());
 //! ```
 
+use crate::GenericClient;
 use crate::check::{DbSchema, SchemaRegistry, TableMeta};
 use crate::checked_client::ModelRegistration;
 use crate::error::{OrmError, OrmResult};
@@ -56,15 +57,14 @@ use crate::monitor::{
     StatsMonitor,
 };
 use crate::row::FromRow;
-use crate::GenericClient;
 
 // Re-export CheckMode from checked_client for public API
 pub use crate::checked_client::CheckMode;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
+use tokio_postgres::types::ToSql;
 
 /// Result of checking a model against the database schema.
 #[derive(Debug, Clone)]
@@ -96,7 +96,10 @@ impl ModelCheckResult {
         if self.is_valid() {
             println!("  ✓ {} (table: {})", self.model, self.table);
         } else if !self.table_found {
-            println!("  ✗ {} - table '{}' not found in database", self.model, self.table);
+            println!(
+                "  ✗ {} - table '{}' not found in database",
+                self.model, self.table
+            );
         } else {
             println!(
                 "  ✗ {} - missing columns: {:?}",
@@ -115,7 +118,8 @@ impl ModelCheckResult {
 
         match db_table {
             Some(table) => {
-                let db_columns: Vec<String> = table.columns.iter().map(|c| c.name.clone()).collect();
+                let db_columns: Vec<String> =
+                    table.columns.iter().map(|c| c.name.clone()).collect();
 
                 let missing_in_db: Vec<&'static str> = model_columns
                     .iter()
@@ -130,7 +134,10 @@ impl ModelCheckResult {
                     .collect();
 
                 ModelCheckResult {
-                    model: std::any::type_name::<T>().rsplit("::").next().unwrap_or("Unknown"),
+                    model: std::any::type_name::<T>()
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or("Unknown"),
                     table: table_name,
                     model_columns,
                     db_columns: Some(db_columns),
@@ -140,7 +147,10 @@ impl ModelCheckResult {
                 }
             }
             None => ModelCheckResult {
-                model: std::any::type_name::<T>().rsplit("::").next().unwrap_or("Unknown"),
+                model: std::any::type_name::<T>()
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or("Unknown"),
                 table: table_name,
                 model_columns,
                 db_columns: None,
@@ -390,8 +400,10 @@ impl<C: GenericClient> PgClient<C> {
     /// Load the database schema for specific schemas.
     pub async fn load_db_schema_for(&self, schemas: &[String]) -> OrmResult<DbSchema> {
         // Query to get all tables and columns
-        let rows = self.client.query(
-            r#"
+        let rows = self
+            .client
+            .query(
+                r#"
 SELECT
   n.nspname AS schema_name,
   c.relname AS table_name,
@@ -411,11 +423,12 @@ WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
   AND n.nspname = ANY($1::text[])
 ORDER BY n.nspname, c.relname, a.attnum
 "#,
-            &[&schemas],
-        ).await?;
+                &[&schemas],
+            )
+            .await?;
 
+        use crate::check::{ColumnInfo, RelationKind, TableInfo};
         use std::collections::BTreeMap;
-        use crate::check::{TableInfo, ColumnInfo, RelationKind};
 
         let mut tables: BTreeMap<(String, String), TableInfo> = BTreeMap::new();
 
@@ -570,16 +583,14 @@ impl<C: GenericClient> PgClient<C> {
         F: std::future::Future<Output = OrmResult<T>> + Send,
     {
         match self.config.query_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, future)
-                .await
-                .map_err(|_| {
-                    if let Some(cancel_token) = self.client.cancel_token() {
-                        tokio::spawn(async move {
-                            let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
-                        });
-                    }
-                    OrmError::Timeout(timeout)
-                })?,
+            Some(timeout) => tokio::time::timeout(timeout, future).await.map_err(|_| {
+                if let Some(cancel_token) = self.client.cancel_token() {
+                    tokio::spawn(async move {
+                        let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+                    });
+                }
+                OrmError::Timeout(timeout)
+            })?,
             None => future.await,
         }
     }
@@ -665,11 +676,7 @@ impl<C: GenericClient> PgClient<C> {
     ///     &[&"inactive", &cutoff_date]
     /// ).await?;
     /// ```
-    pub async fn sql_execute(
-        &self,
-        sql: &str,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> OrmResult<u64> {
+    pub async fn sql_execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
         self.execute(sql, params).await
     }
 
@@ -701,11 +708,7 @@ impl<C: GenericClient> PgClient<C> {
     ///     &[&user_id]
     /// ).await?;
     /// ```
-    pub async fn sql_query_one(
-        &self,
-        sql: &str,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> OrmResult<Row> {
+    pub async fn sql_query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         self.query_one(sql, params).await
     }
 
@@ -913,8 +916,8 @@ impl<C: GenericClient> PgClient<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_postgres::types::ToSql;
     use tokio_postgres::Row;
+    use tokio_postgres::types::ToSql;
 
     #[test]
     fn test_config_defaults() {
@@ -971,13 +974,8 @@ mod tests {
         let pg = PgClient::with_config(DummyClient, PgClientConfig::new().no_check())
             .with_monitor_arc(capture.clone());
 
-        pg.query_tagged("test-tag", "SELECT 1", &[])
-            .await
-            .unwrap();
+        pg.query_tagged("test-tag", "SELECT 1", &[]).await.unwrap();
 
-        assert_eq!(
-            capture.0.lock().unwrap().as_deref(),
-            Some("test-tag")
-        );
+        assert_eq!(capture.0.lock().unwrap().as_deref(), Some("test-tag"));
     }
 }

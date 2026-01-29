@@ -105,7 +105,9 @@ impl OrmError {
 
             match db_err.code().code() {
                 "23505" => return Self::UniqueViolation(format!("{}: {}", constraint, message)),
-                "23503" => return Self::ForeignKeyViolation(format!("{}: {}", constraint, message)),
+                "23503" => {
+                    return Self::ForeignKeyViolation(format!("{}: {}", constraint, message));
+                }
                 "23514" => return Self::CheckViolation(format!("{}: {}", constraint, message)),
                 _ => {}
             }

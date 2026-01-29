@@ -42,7 +42,9 @@ impl Ident {
             return Err(OrmError::validation("Empty quoted identifier"));
         }
         if name.contains('\0') {
-            return Err(OrmError::validation("Identifier cannot contain NUL character"));
+            return Err(OrmError::validation(
+                "Identifier cannot contain NUL character",
+            ));
         }
         Ok(Self {
             parts: vec![IdentPart::Quoted(name.to_string())],
@@ -59,7 +61,9 @@ impl Ident {
             return Err(OrmError::validation("Identifier cannot be empty"));
         }
         if s.contains('\0') {
-            return Err(OrmError::validation("Identifier cannot contain NUL character"));
+            return Err(OrmError::validation(
+                "Identifier cannot contain NUL character",
+            ));
         }
 
         let mut parts = Vec::new();
@@ -273,4 +277,3 @@ mod tests {
         assert!(Ident::parse(r#""unclosed"#).is_err());
     }
 }
-

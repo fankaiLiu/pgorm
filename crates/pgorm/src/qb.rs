@@ -9,4 +9,3 @@ use crate::Query;
 pub fn query(initial_sql: impl Into<String>) -> Query {
     crate::query(initial_sql)
 }
-

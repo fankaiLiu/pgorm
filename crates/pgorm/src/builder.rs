@@ -6,10 +6,10 @@
 //! - [`Pagination`]: LIMIT/OFFSET builder
 //! - [`Ident`]: Safe SQL identifier handling (see [`crate::Ident`])
 
+use crate::Ident;
 use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
 use crate::ident::IntoIdent;
-use crate::Ident;
 use crate::sql::Sql;
 
 // ==================== WhereExpr: Boolean expression tree ====================
@@ -476,10 +476,7 @@ mod tests {
         ]);
         let mut sql = Sql::empty();
         expr.append_to_sql(&mut sql);
-        assert_eq!(
-            sql.to_sql(),
-            "(status = $1 AND (role = $2 OR role = $3))"
-        );
+        assert_eq!(sql.to_sql(), "(status = $1 AND (role = $2 OR role = $3))");
     }
 
     #[test]
@@ -537,10 +534,7 @@ mod tests {
             .unwrap()
             .desc("created_at")
             .unwrap();
-        assert_eq!(
-            order.to_sql(),
-            "ORDER BY status ASC, created_at DESC"
-        );
+        assert_eq!(order.to_sql(), "ORDER BY status ASC, created_at DESC");
     }
 
     #[test]
@@ -548,10 +542,7 @@ mod tests {
         let order = OrderBy::new()
             .with_nulls("last_login", SortDir::Desc, NullsOrder::Last)
             .unwrap();
-        assert_eq!(
-            order.to_sql(),
-            "ORDER BY last_login DESC NULLS LAST"
-        );
+        assert_eq!(order.to_sql(), "ORDER BY last_login DESC NULLS LAST");
     }
 
     #[test]

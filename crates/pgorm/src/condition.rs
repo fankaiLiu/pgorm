@@ -3,10 +3,10 @@
 //! This module provides [`Op`] (operator) and [`Condition`] primitives for building
 //! flexible WHERE clauses with various comparison operators.
 
+use crate::Ident;
 use crate::error::OrmResult;
 use crate::ident::IntoIdent;
 use crate::sql::Sql;
-use crate::Ident;
 use std::sync::Arc;
 use tokio_postgres::types::ToSql;
 

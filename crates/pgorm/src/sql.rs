@@ -25,8 +25,8 @@ use crate::error::{OrmError, OrmResult};
 use crate::ident::IntoIdent;
 use crate::row::FromRow;
 use std::sync::Arc;
-use tokio_postgres::types::{FromSql, ToSql};
 use tokio_postgres::Row;
+use tokio_postgres::types::{FromSql, ToSql};
 
 #[derive(Debug)]
 enum SqlPart {
@@ -205,11 +205,7 @@ impl Query {
         rows.iter().map(T::from_row).collect()
     }
 
-    pub async fn fetch_one_tagged(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<Row> {
+    pub async fn fetch_one_tagged(&self, conn: &impl GenericClient, tag: &str) -> OrmResult<Row> {
         let params = self.params_ref();
         conn.query_one_tagged(tag, &self.sql, &params).await
     }
@@ -241,11 +237,7 @@ impl Query {
         row.as_ref().map(T::from_row).transpose()
     }
 
-    pub async fn execute_tagged(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<u64> {
+    pub async fn execute_tagged(&self, conn: &impl GenericClient, tag: &str) -> OrmResult<u64> {
         let params = self.params_ref();
         conn.execute_tagged(tag, &self.sql, &params).await
     }
@@ -257,7 +249,8 @@ impl Query {
         T: for<'b> FromSql<'b> + Send + Sync,
     {
         let row = self.fetch_one(conn).await?;
-        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+        row.try_get(0)
+            .map_err(|e| OrmError::decode("0", e.to_string()))
     }
 
     pub async fn fetch_scalar_opt<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Option<T>>
@@ -266,7 +259,10 @@ impl Query {
     {
         let row = self.fetch_opt(conn).await?;
         match row {
-            Some(r) => r.try_get(0).map(Some).map_err(|e| OrmError::decode("0", e.to_string())),
+            Some(r) => r
+                .try_get(0)
+                .map(Some)
+                .map_err(|e| OrmError::decode("0", e.to_string())),
             None => Ok(None),
         }
     }
@@ -277,7 +273,10 @@ impl Query {
     {
         let rows = self.fetch_all(conn).await?;
         rows.iter()
-            .map(|r| r.try_get(0).map_err(|e| OrmError::decode("0", e.to_string())))
+            .map(|r| {
+                r.try_get(0)
+                    .map_err(|e| OrmError::decode("0", e.to_string()))
+            })
             .collect()
     }
 
@@ -296,7 +295,8 @@ impl Query {
         let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
         let params = self.params_ref();
         let row = conn.query_one(&wrapped_sql, &params).await?;
-        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+        row.try_get(0)
+            .map_err(|e| OrmError::decode("0", e.to_string()))
     }
 }
 
@@ -537,11 +537,7 @@ impl Sql {
     }
 
     /// Execute the built SQL tagged (if the underlying client supports it) and return affected row count.
-    pub async fn execute_tagged(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<u64> {
+    pub async fn execute_tagged(&self, conn: &impl GenericClient, tag: &str) -> OrmResult<u64> {
         self.validate()?;
         let sql = self.to_sql();
         let params = self.params_ref();
@@ -567,7 +563,8 @@ impl Sql {
         T: for<'b> FromSql<'b> + Send + Sync,
     {
         let row = self.fetch_one(conn).await?;
-        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+        row.try_get(0)
+            .map_err(|e| OrmError::decode("0", e.to_string()))
     }
 
     /// Execute the built SQL and return at most one scalar value.
@@ -587,7 +584,10 @@ impl Sql {
     {
         let row = self.fetch_opt(conn).await?;
         match row {
-            Some(r) => r.try_get(0).map(Some).map_err(|e| OrmError::decode("0", e.to_string())),
+            Some(r) => r
+                .try_get(0)
+                .map(Some)
+                .map_err(|e| OrmError::decode("0", e.to_string())),
             None => Ok(None),
         }
     }
@@ -607,7 +607,10 @@ impl Sql {
     {
         let rows = self.fetch_all(conn).await?;
         rows.iter()
-            .map(|r| r.try_get(0).map_err(|e| OrmError::decode("0", e.to_string())))
+            .map(|r| {
+                r.try_get(0)
+                    .map_err(|e| OrmError::decode("0", e.to_string()))
+            })
             .collect()
     }
 
@@ -635,14 +638,16 @@ impl Sql {
         let trimmed = strip_sql_prefix(inner_sql);
         if !starts_with_keyword(trimmed, "SELECT") && !starts_with_keyword(trimmed, "WITH") {
             return Err(OrmError::Validation(
-                "exists() only works with SELECT statements (including WITH ... SELECT)".to_string(),
+                "exists() only works with SELECT statements (including WITH ... SELECT)"
+                    .to_string(),
             ));
         }
 
         let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
         let params = self.params_ref();
         let row = conn.query_one(&wrapped_sql, &params).await?;
-        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+        row.try_get(0)
+            .map_err(|e| OrmError::decode("0", e.to_string()))
     }
 
     /// Append `LIMIT $n` to the query with a bound parameter.
@@ -682,7 +687,10 @@ impl Sql {
     ///     .await?;
     /// ```
     pub fn limit_offset(&mut self, limit: i64, offset: i64) -> &mut Self {
-        self.push(" LIMIT ").push_bind(limit).push(" OFFSET ").push_bind(offset)
+        self.push(" LIMIT ")
+            .push_bind(limit)
+            .push(" OFFSET ")
+            .push_bind(offset)
     }
 
     /// Append pagination using page number and page size.
@@ -740,10 +748,7 @@ mod tests {
     fn bind_list_renders_commas() {
         let mut q = sql("SELECT * FROM users WHERE id IN (");
         q.push_bind_list(vec![1, 2, 3]).push(")");
-        assert_eq!(
-            q.to_sql(),
-            "SELECT * FROM users WHERE id IN ($1, $2, $3)"
-        );
+        assert_eq!(q.to_sql(), "SELECT * FROM users WHERE id IN ($1, $2, $3)");
         assert_eq!(q.params_ref().len(), 3);
     }
 
