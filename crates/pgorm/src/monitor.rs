@@ -17,7 +17,7 @@
 //!
 //! impl QueryMonitor for LoggingMonitor {
 //!     fn on_query_complete(&self, ctx: &QueryContext, duration: Duration, result: &QueryResult) {
-//!         println!("[{:?}] {} - {:?}", duration, ctx.sql, result);
+//!         println!("[{:?}] {} - {:?}", duration, ctx.canonical_sql, result);
 //!     }
 //! }
 //!
@@ -34,6 +34,7 @@
 
 use crate::client::GenericClient;
 use crate::error::{OrmError, OrmResult};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -58,14 +59,51 @@ pub enum QueryType {
 impl QueryType {
     /// Detect query type from SQL string.
     pub fn from_sql(sql: &str) -> Self {
-        let trimmed = sql.trim_start().to_uppercase();
-        if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+        fn strip_sql_prefix(sql: &str) -> &str {
+            let mut s = sql;
+            loop {
+                let before = s;
+                s = s.trim_start();
+                if s.starts_with("--") {
+                    if let Some(pos) = s.find('\n') {
+                        s = &s[pos + 1..];
+                        continue;
+                    }
+                    return "";
+                }
+                if s.starts_with("/*") {
+                    if let Some(pos) = s.find("*/") {
+                        s = &s[pos + 2..];
+                        continue;
+                    }
+                    return "";
+                }
+                if s.starts_with('(') {
+                    s = &s[1..];
+                    continue;
+                }
+                if s == before {
+                    break;
+                }
+            }
+            s
+        }
+
+        fn starts_with_keyword(s: &str, keyword: &str) -> bool {
+            match s.get(0..keyword.len()) {
+                Some(prefix) => prefix.eq_ignore_ascii_case(keyword),
+                None => false,
+            }
+        }
+
+        let trimmed = strip_sql_prefix(sql);
+        if starts_with_keyword(trimmed, "SELECT") || starts_with_keyword(trimmed, "WITH") {
             QueryType::Select
-        } else if trimmed.starts_with("INSERT") {
+        } else if starts_with_keyword(trimmed, "INSERT") {
             QueryType::Insert
-        } else if trimmed.starts_with("UPDATE") {
+        } else if starts_with_keyword(trimmed, "UPDATE") {
             QueryType::Update
-        } else if trimmed.starts_with("DELETE") {
+        } else if starts_with_keyword(trimmed, "DELETE") {
             QueryType::Delete
         } else {
             QueryType::Other
@@ -76,30 +114,42 @@ impl QueryType {
 /// Context information about the query being executed.
 #[derive(Debug, Clone)]
 pub struct QueryContext {
-    /// The SQL statement.
-    pub sql: String,
+    /// Canonical SQL used for statement cache keys and metrics aggregation.
+    pub canonical_sql: String,
+    /// The SQL statement actually executed against Postgres.
+    pub exec_sql: String,
     /// Number of parameters.
     pub param_count: usize,
     /// Detected query type.
     pub query_type: QueryType,
     /// Optional query name/tag for identification.
     pub tag: Option<String>,
+    /// Optional structured fields for observability (low-cardinality).
+    pub fields: BTreeMap<String, String>,
 }
 
 impl QueryContext {
     /// Create a new query context.
     pub fn new(sql: &str, param_count: usize) -> Self {
         Self {
-            sql: sql.to_string(),
+            canonical_sql: sql.to_string(),
+            exec_sql: sql.to_string(),
             param_count,
             query_type: QueryType::from_sql(sql),
             tag: None,
+            fields: BTreeMap::new(),
         }
     }
 
     /// Add a tag to identify this query.
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tag = Some(tag.into());
+        self
+    }
+
+    /// Add a structured field (low-cardinality).
+    pub fn with_field(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.insert(key.into(), value.into());
         self
     }
 }
@@ -160,7 +210,12 @@ pub enum HookAction {
     /// Continue with the original query.
     Continue,
     /// Continue with a modified SQL statement.
-    ModifySql(String),
+    ModifySql {
+        /// SQL to execute against Postgres.
+        exec_sql: String,
+        /// Optional override for canonical SQL (cache/metrics key).
+        canonical_sql: Option<String>,
+    },
     /// Abort the query with an error.
     Abort(String),
 }
@@ -254,7 +309,12 @@ impl QueryMonitor for LoggingMonitor {
             }
         }
 
-        let sql = self.truncate_sql(&ctx.sql);
+        let canonical = self.truncate_sql(&ctx.canonical_sql);
+        let sql = if ctx.exec_sql != ctx.canonical_sql {
+            format!("canonical: {} | exec: {}", canonical, self.truncate_sql(&ctx.exec_sql))
+        } else {
+            canonical
+        };
         let tag = ctx.tag.as_deref().unwrap_or("-");
         eprintln!(
             "{} [{:?}] [{}] {:?} | {} | {}",
@@ -263,7 +323,12 @@ impl QueryMonitor for LoggingMonitor {
     }
 
     fn on_slow_query(&self, ctx: &QueryContext, duration: Duration) {
-        let sql = self.truncate_sql(&ctx.sql);
+        let canonical = self.truncate_sql(&ctx.canonical_sql);
+        let sql = if ctx.exec_sql != ctx.canonical_sql {
+            format!("canonical: {} | exec: {}", canonical, self.truncate_sql(&ctx.exec_sql))
+        } else {
+            canonical
+        };
         eprintln!(
             "{} SLOW QUERY [{:?}]: {:?} | {}",
             self.prefix, ctx.query_type, duration, sql
@@ -337,7 +402,7 @@ impl QueryMonitor for StatsMonitor {
 
         if duration > stats.max_duration {
             stats.max_duration = duration;
-            stats.slowest_query = Some(ctx.sql.clone());
+            stats.slowest_query = Some(ctx.canonical_sql.clone());
         }
     }
 }
@@ -424,14 +489,25 @@ impl QueryHook for CompositeHook {
         for hook in &self.hooks {
             match hook.before_query(&current_ctx) {
                 HookAction::Continue => {}
-                HookAction::ModifySql(new_sql) => {
-                    current_ctx.sql = new_sql;
+                HookAction::ModifySql {
+                    exec_sql,
+                    canonical_sql,
+                } => {
+                    current_ctx.exec_sql = exec_sql;
+                    if let Some(canonical_sql) = canonical_sql {
+                        current_ctx.canonical_sql = canonical_sql;
+                    }
+                    current_ctx.query_type = QueryType::from_sql(&current_ctx.canonical_sql);
                 }
                 action @ HookAction::Abort(_) => return action,
             }
         }
-        if current_ctx.sql != ctx.sql {
-            HookAction::ModifySql(current_ctx.sql)
+        if current_ctx.exec_sql != ctx.exec_sql || current_ctx.canonical_sql != ctx.canonical_sql {
+            HookAction::ModifySql {
+                exec_sql: current_ctx.exec_sql,
+                canonical_sql: (current_ctx.canonical_sql != ctx.canonical_sql)
+                    .then_some(current_ctx.canonical_sql),
+            }
         } else {
             HookAction::Continue
         }
@@ -610,18 +686,28 @@ impl<C: GenericClient> InstrumentedClient<C> {
         self.client
     }
 
-    fn process_hook(&self, ctx: &QueryContext) -> Result<Option<String>, OrmError> {
-        if let Some(hook) = &self.hook {
-            match hook.before_query(ctx) {
-                HookAction::Continue => Ok(None),
-                HookAction::ModifySql(sql) => Ok(Some(sql)),
-                HookAction::Abort(reason) => Err(OrmError::validation(format!(
-                    "Query aborted by hook: {}",
-                    reason
-                ))),
+    fn apply_hook(&self, ctx: &mut QueryContext) -> Result<(), OrmError> {
+        let Some(hook) = &self.hook else {
+            return Ok(());
+        };
+
+        match hook.before_query(ctx) {
+            HookAction::Continue => Ok(()),
+            HookAction::ModifySql {
+                exec_sql,
+                canonical_sql,
+            } => {
+                ctx.exec_sql = exec_sql;
+                if let Some(canonical_sql) = canonical_sql {
+                    ctx.canonical_sql = canonical_sql;
+                }
+                ctx.query_type = QueryType::from_sql(&ctx.canonical_sql);
+                Ok(())
             }
-        } else {
-            Ok(None)
+            HookAction::Abort(reason) => Err(OrmError::validation(format!(
+                "Query aborted by hook: {}",
+                reason
+            ))),
         }
     }
 
@@ -677,16 +763,15 @@ impl<C: GenericClient> InstrumentedClient<C> {
             ctx.tag = Some(tag.to_string());
         }
 
+        self.apply_hook(&mut ctx)?;
+
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
         }
 
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
-
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.query(effective_sql, params))
+            .execute_with_timeout(self.client.query(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -711,16 +796,15 @@ impl<C: GenericClient> InstrumentedClient<C> {
             ctx.tag = Some(tag.to_string());
         }
 
+        self.apply_hook(&mut ctx)?;
+
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
         }
 
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
-
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.query_one(effective_sql, params))
+            .execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -746,16 +830,15 @@ impl<C: GenericClient> InstrumentedClient<C> {
             ctx.tag = Some(tag.to_string());
         }
 
+        self.apply_hook(&mut ctx)?;
+
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
         }
 
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
-
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.query_opt(effective_sql, params))
+            .execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -781,16 +864,15 @@ impl<C: GenericClient> InstrumentedClient<C> {
             ctx.tag = Some(tag.to_string());
         }
 
+        self.apply_hook(&mut ctx)?;
+
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
         }
 
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
-
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.execute(effective_sql, params))
+            .execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -922,7 +1004,10 @@ mod tests {
         struct AddCommentHook;
         impl QueryHook for AddCommentHook {
             fn before_query(&self, ctx: &QueryContext) -> HookAction {
-                HookAction::ModifySql(format!("/* instrumented */ {}", ctx.sql))
+                HookAction::ModifySql {
+                    exec_sql: format!("/* instrumented */ {}", ctx.exec_sql),
+                    canonical_sql: None,
+                }
             }
         }
 
@@ -930,7 +1015,13 @@ mod tests {
         let ctx = QueryContext::new("SELECT 1", 0);
 
         match hook.before_query(&ctx) {
-            HookAction::ModifySql(sql) => assert_eq!(sql, "/* instrumented */ SELECT 1"),
+            HookAction::ModifySql {
+                exec_sql,
+                canonical_sql,
+            } => {
+                assert_eq!(exec_sql, "/* instrumented */ SELECT 1");
+                assert!(canonical_sql.is_none());
+            }
             _ => panic!("Expected ModifySql"),
         }
     }

@@ -21,7 +21,7 @@
 //!
 //! let users: Vec<User> = qb::query("SELECT * FROM users WHERE status = $1")
 //!     .bind("active")
-//!     .query_as(&client)
+//!     .fetch_all_as(&client)
 //!     .await?;
 //! ```
 
@@ -32,7 +32,9 @@ pub mod monitor;
 pub mod row;
 pub mod sql;
 pub mod transaction;
+pub mod ident;
 pub mod builder;
+pub mod qb;
 
 // SQL migrations (via refinery)
 #[cfg(feature = "migrate")]
@@ -47,20 +49,13 @@ pub use monitor::{
     StatsMonitor,
 };
 pub use row::{FromRow, PgType, RowExt};
-pub use sql::{Sql, sql};
-pub use builder::{Ident, IdentPart, WhereExpr, OrderBy, OrderItem, SortDir, NullsOrder, Pagination};
+pub use sql::{Query, Sql, query, sql};
+pub use ident::{Ident, IdentPart, IntoIdent};
+pub use builder::{WhereExpr, OrderBy, OrderItem, SortDir, NullsOrder, Pagination};
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
 pub use migrate::{Migration, Report, Runner, Target, embed_migrations};
-
-/// Alias for `sql()` - start building a SQL query.
-///
-/// This is the same as `sql()` but uses the name `query()` for familiarity
-/// with other query builder libraries.
-pub fn query(initial_sql: impl Into<String>) -> Sql {
-    sql(initial_sql)
-}
 
 #[cfg(feature = "pool")]
 pub mod pool;

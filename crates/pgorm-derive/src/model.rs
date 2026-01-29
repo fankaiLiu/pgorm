@@ -1031,11 +1031,17 @@ fn generate_query_struct(
                     | "not_in"
                     | "between"
                     | "not_between"
+                    | "and"
+                    | "or"
                     | "raw"
+                    | "paginate"
+                    | "limit"
+                    | "offset"
                     | "page"
-                    | "per_page"
                     | "order_by"
-                    | "build_where"
+                    | "order_by_asc"
+                    | "order_by_desc"
+                    | "order_by_raw"
                     | "find"
                     | "count"
                     | "find_one"
@@ -1085,39 +1091,37 @@ fn generate_query_struct(
         /// ```ignore
         /// // Simple equality
         /// let products = Product::query()
-        ///     .eq("category_id", 1_i64)
+        ///     .eq("category_id", 1_i64)?
         ///     .find(&client).await?;
         ///
         /// // ILIKE query (case-insensitive pattern match)
         /// let products = Product::query()
-        ///     .ilike("name", "%phone%")
+        ///     .ilike("name", "%phone%")?
         ///     .find(&client).await?;
         ///
         /// // Range query
         /// let products = Product::query()
-        ///     .gte("price_cents", 1000_i64)
-        ///     .lt("price_cents", 5000_i64)
+        ///     .gte("price_cents", 1000_i64)?
+        ///     .lt("price_cents", 5000_i64)?
         ///     .find(&client).await?;
         ///
         /// // IN query
         /// let products = Product::query()
-        ///     .in_list("category_id", vec![1_i64, 2, 3])
+        ///     .in_list("category_id", vec![1_i64, 2, 3])?
         ///     .find(&client).await?;
         ///
-        /// // Pagination
+        /// // Pagination + ordering
         /// let products = Product::query()
-        ///     .eq("in_stock", true)
-        ///     .page(1)
-        ///     .per_page(10)
-        ///     .order_by("created_at DESC")
+        ///     .eq("in_stock", true)?
+        ///     .page(1, 10)?
+        ///     .order_by_desc("created_at")?
         ///     .find(&client).await?;
         /// ```
         #[derive(Debug, Clone)]
         pub struct #query_name {
-            conditions: Vec<pgorm::Condition>,
-            page: Option<i64>,
-            per_page: Option<i64>,
-            order_by: Option<String>,
+            where_expr: pgorm::WhereExpr,
+            order_by: pgorm::OrderBy,
+            pagination: pgorm::Pagination,
         }
 
         impl #query_name {
@@ -1129,10 +1133,9 @@ fn generate_query_struct(
         impl Default for #query_name {
             fn default() -> Self {
                 Self {
-                    conditions: Vec::new(),
-                    page: None,
-                    per_page: None,
-                    order_by: None,
+                    where_expr: pgorm::WhereExpr::And(Vec::new()),
+                    order_by: pgorm::OrderBy::new(),
+                    pagination: pgorm::Pagination::new(),
                 }
             }
         }
@@ -1143,222 +1146,308 @@ fn generate_query_struct(
                 Self::default()
             }
 
-            // ==================== Filter methods ====================
+            // ==================== Filtering ====================
+
+            /// Combine the current WHERE expression with another using `AND`.
+            pub fn and(mut self, expr: pgorm::WhereExpr) -> Self {
+                let current = self.where_expr;
+                self.where_expr = current.and_with(expr);
+                self
+            }
+
+            /// Combine the current WHERE expression with another using `OR`.
+            pub fn or(mut self, expr: pgorm::WhereExpr) -> Self {
+                let current = self.where_expr;
+                self.where_expr = current.or_with(expr);
+                self
+            }
 
             /// Filter by equality: column = value
-            pub fn eq<T>(mut self, column: &str, value: T) -> Self
+            pub fn eq<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::eq(column, value));
-                self
+                let cond = pgorm::Condition::eq(column, value)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by inequality: column != value
-            pub fn ne<T>(mut self, column: &str, value: T) -> Self
+            pub fn ne<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::ne(column, value));
-                self
+                let cond = pgorm::Condition::ne(column, value)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by greater than: column > value
-            pub fn gt<T>(mut self, column: &str, value: T) -> Self
+            pub fn gt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::gt(column, value));
-                self
+                let cond = pgorm::Condition::gt(column, value)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by greater than or equal: column >= value
-            pub fn gte<T>(mut self, column: &str, value: T) -> Self
+            pub fn gte<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::gte(column, value));
-                self
+                let cond = pgorm::Condition::gte(column, value)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by less than: column < value
-            pub fn lt<T>(mut self, column: &str, value: T) -> Self
+            pub fn lt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::lt(column, value));
-                self
+                let cond = pgorm::Condition::lt(column, value)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by less than or equal: column <= value
-            pub fn lte<T>(mut self, column: &str, value: T) -> Self
+            pub fn lte<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::lte(column, value));
-                self
+                let cond = pgorm::Condition::lte(column, value)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by LIKE pattern: column LIKE pattern
-            pub fn like<T>(mut self, column: &str, pattern: T) -> Self
+            pub fn like<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::like(column, pattern));
-                self
+                let cond = pgorm::Condition::like(column, pattern)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by case-insensitive ILIKE pattern: column ILIKE pattern
-            pub fn ilike<T>(mut self, column: &str, pattern: T) -> Self
+            pub fn ilike<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::ilike(column, pattern));
-                self
+                let cond = pgorm::Condition::ilike(column, pattern)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by NOT LIKE pattern: column NOT LIKE pattern
-            pub fn not_like<T>(mut self, column: &str, pattern: T) -> Self
+            pub fn not_like<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::not_like(column, pattern));
-                self
+                let cond = pgorm::Condition::not_like(column, pattern)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by NOT ILIKE pattern: column NOT ILIKE pattern
-            pub fn not_ilike<T>(mut self, column: &str, pattern: T) -> Self
+            pub fn not_ilike<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::not_ilike(column, pattern));
-                self
+                let cond = pgorm::Condition::not_ilike(column, pattern)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by IS NULL: column IS NULL
-            pub fn is_null(mut self, column: &str) -> Self {
-                self.conditions.push(pgorm::Condition::is_null(column));
-                self
+            pub fn is_null(mut self, column: impl pgorm::IntoIdent) -> pgorm::OrmResult<Self> {
+                let cond = pgorm::Condition::is_null(column)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by IS NOT NULL: column IS NOT NULL
-            pub fn is_not_null(mut self, column: &str) -> Self {
-                self.conditions.push(pgorm::Condition::is_not_null(column));
-                self
+            pub fn is_not_null(mut self, column: impl pgorm::IntoIdent) -> pgorm::OrmResult<Self> {
+                let cond = pgorm::Condition::is_not_null(column)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by IN list: column IN (values...)
-            pub fn in_list<T>(mut self, column: &str, values: Vec<T>) -> Self
+            pub fn in_list<T>(mut self, column: impl pgorm::IntoIdent, values: Vec<T>) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::in_list(column, values));
-                self
+                let cond = pgorm::Condition::in_list(column, values)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by NOT IN list: column NOT IN (values...)
-            pub fn not_in<T>(mut self, column: &str, values: Vec<T>) -> Self
+            pub fn not_in<T>(mut self, column: impl pgorm::IntoIdent, values: Vec<T>) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::not_in(column, values));
-                self
+                let cond = pgorm::Condition::not_in(column, values)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by BETWEEN: column BETWEEN from AND to
-            pub fn between<T>(mut self, column: &str, from: T, to: T) -> Self
+            pub fn between<T>(
+                mut self,
+                column: impl pgorm::IntoIdent,
+                from: T,
+                to: T,
+            ) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::between(column, from, to));
-                self
+                let cond = pgorm::Condition::between(column, from, to)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
             /// Filter by NOT BETWEEN: column NOT BETWEEN from AND to
-            pub fn not_between<T>(mut self, column: &str, from: T, to: T) -> Self
+            pub fn not_between<T>(
+                mut self,
+                column: impl pgorm::IntoIdent,
+                from: T,
+                to: T,
+            ) -> pgorm::OrmResult<Self>
             where
                 T: tokio_postgres::types::ToSql + Send + Sync + 'static,
             {
-                self.conditions.push(pgorm::Condition::not_between(column, from, to));
-                self
+                let cond = pgorm::Condition::not_between(column, from, to)?;
+                let current = self.where_expr;
+                self.where_expr = current.and_with(cond.into());
+                Ok(self)
             }
 
-            /// Add a raw SQL condition (be careful with SQL injection).
-            pub fn raw(mut self, sql: &str) -> Self {
-                self.conditions.push(pgorm::Condition::raw(sql));
+            /// Add a raw WHERE expression (escape hatch).
+            ///
+            /// # Safety
+            /// Be careful with SQL injection when using raw expressions.
+            pub fn raw(mut self, sql: impl Into<String>) -> Self {
+                let current = self.where_expr;
+                self.where_expr = current.and_with(pgorm::WhereExpr::raw(sql));
                 self
             }
 
             // ==================== Pagination & ordering ====================
 
-            /// Set the page number (1-based).
-            pub fn page(mut self, page: i64) -> Self {
-                self.page = Some(page);
+            /// Replace the ORDER BY builder.
+            pub fn order_by(mut self, order_by: pgorm::OrderBy) -> Self {
+                self.order_by = order_by;
                 self
             }
 
-            /// Set the number of items per page.
-            pub fn per_page(mut self, per_page: i64) -> Self {
-                self.per_page = Some(per_page);
+            /// Add an ascending sort.
+            pub fn order_by_asc(mut self, column: impl pgorm::IntoIdent) -> pgorm::OrmResult<Self> {
+                let order = self.order_by;
+                self.order_by = order.asc(column)?;
+                Ok(self)
+            }
+
+            /// Add a descending sort.
+            pub fn order_by_desc(mut self, column: impl pgorm::IntoIdent) -> pgorm::OrmResult<Self> {
+                let order = self.order_by;
+                self.order_by = order.desc(column)?;
+                Ok(self)
+            }
+
+            /// Add a raw ORDER BY item (escape hatch).
+            ///
+            /// # Safety
+            /// Be careful with SQL injection when using raw ORDER BY strings.
+            pub fn order_by_raw(mut self, sql: impl Into<String>) -> Self {
+                let order = self.order_by;
+                self.order_by = order.add(pgorm::OrderItem::raw(sql));
                 self
             }
 
-            /// Set the order by clause.
-            pub fn order_by(mut self, order_by: impl Into<String>) -> Self {
-                self.order_by = Some(order_by.into());
+            /// Replace the pagination builder.
+            pub fn paginate(mut self, pagination: pgorm::Pagination) -> Self {
+                self.pagination = pagination;
                 self
+            }
+
+            /// Set LIMIT.
+            pub fn limit(mut self, limit: i64) -> Self {
+                self.pagination = self.pagination.limit(limit);
+                self
+            }
+
+            /// Set OFFSET.
+            pub fn offset(mut self, offset: i64) -> Self {
+                self.pagination = self.pagination.offset(offset);
+                self
+            }
+
+            /// Page-based pagination (page numbers start at 1).
+            pub fn page(mut self, page: i64, per_page: i64) -> pgorm::OrmResult<Self> {
+                self.pagination = pgorm::Pagination::page(page, per_page)?;
+                Ok(self)
             }
 
             // ==================== Execution methods ====================
 
-            /// Build the WHERE clause and collect parameters.
-            fn build_where(&self) -> (String, Vec<&(dyn tokio_postgres::types::ToSql + Sync)>) {
-                if self.conditions.is_empty() {
-                    return (String::new(), Vec::new());
+            fn build_base_sql(&self) -> pgorm::Sql {
+                let mut q = pgorm::sql(#base_sql);
+                if !self.where_expr.is_trivially_true() {
+                    q.push(" WHERE ");
+                    self.where_expr.append_to_sql(&mut q);
                 }
+                q
+            }
 
-                let mut sql_parts: Vec<String> = Vec::new();
-                let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
-                let mut param_idx = 0_usize;
+            fn build_find_sql(&self) -> pgorm::Sql {
+                let mut q = self.build_base_sql();
+                self.order_by.append_to_sql(&mut q);
+                self.pagination.append_to_sql(&mut q);
+                q
+            }
 
-                for cond in &self.conditions {
-                    let (sql, cond_params) = cond.build(&mut param_idx);
-                    sql_parts.push(sql);
-                    params.extend(cond_params);
-                }
-
-                let where_clause = format!(" WHERE {}", sql_parts.join(" AND "));
-                (where_clause, params)
+            fn build_first_sql(&self) -> pgorm::Sql {
+                let mut q = self.build_base_sql();
+                self.order_by.append_to_sql(&mut q);
+                q.limit(1);
+                q
             }
 
             /// Execute the query and return matching records.
-            pub async fn find(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Vec<#model_name>>
+            pub async fn find(
+                &self,
+                conn: &impl pgorm::GenericClient,
+            ) -> pgorm::OrmResult<Vec<#model_name>>
             where
                 #model_name: pgorm::FromRow,
             {
-                let (where_clause, params) = self.build_where();
-                let mut sql = #base_sql;
-                sql.push_str(&where_clause);
-
-                if let Some(ref order) = self.order_by {
-                    sql.push_str(" ORDER BY ");
-                    sql.push_str(order);
-                }
-
-                if let Some(per_page) = self.per_page {
-                    let page = self.page.unwrap_or(1).max(1);
-                    let offset = (page - 1) * per_page;
-                    sql.push_str(&format!(" LIMIT {} OFFSET {}", per_page, offset));
-                }
-
-                let rows = conn.query(&sql, &params).await?;
-                rows.iter().map(pgorm::FromRow::from_row).collect()
+                let q = self.build_find_sql();
+                q.fetch_all_as(conn).await
             }
 
             /// Count the number of matching records.
             pub async fn count(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<i64> {
-                let (where_clause, params) = self.build_where();
-                let mut sql = if #has_joins {
+                let mut q = pgorm::sql(if #has_joins {
                     format!(
                         "SELECT COUNT(*) FROM {} {}",
                         #model_name::TABLE,
@@ -1366,53 +1455,38 @@ fn generate_query_struct(
                     )
                 } else {
                     format!("SELECT COUNT(*) FROM {}", #model_name::TABLE)
-                };
-                sql.push_str(&where_clause);
-                let row = conn.query_one(&sql, &params).await?;
-                Ok(row.get(0))
+                });
+
+                if !self.where_expr.is_trivially_true() {
+                    q.push(" WHERE ");
+                    self.where_expr.append_to_sql(&mut q);
+                }
+
+                q.fetch_scalar_one(conn).await
             }
 
             /// Execute the query and return the first matching record.
-            pub async fn find_one(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<#model_name>
+            pub async fn find_one(
+                &self,
+                conn: &impl pgorm::GenericClient,
+            ) -> pgorm::OrmResult<#model_name>
             where
                 #model_name: pgorm::FromRow,
             {
-                let (where_clause, params) = self.build_where();
-                let mut sql = #base_sql;
-                sql.push_str(&where_clause);
-
-                if let Some(ref order) = self.order_by {
-                    sql.push_str(" ORDER BY ");
-                    sql.push_str(order);
-                }
-
-                sql.push_str(" LIMIT 1");
-
-                let row = conn.query_one(&sql, &params).await?;
-                pgorm::FromRow::from_row(&row)
+                let q = self.build_first_sql();
+                q.fetch_one_as(conn).await
             }
 
             /// Execute the query and return the first matching record, or None if not found.
-            pub async fn find_one_opt(&self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<Option<#model_name>>
+            pub async fn find_one_opt(
+                &self,
+                conn: &impl pgorm::GenericClient,
+            ) -> pgorm::OrmResult<Option<#model_name>>
             where
                 #model_name: pgorm::FromRow,
             {
-                let (where_clause, params) = self.build_where();
-                let mut sql = #base_sql;
-                sql.push_str(&where_clause);
-
-                if let Some(ref order) = self.order_by {
-                    sql.push_str(" ORDER BY ");
-                    sql.push_str(order);
-                }
-
-                sql.push_str(" LIMIT 1");
-
-                let row = conn.query_opt(&sql, &params).await?;
-                match row {
-                    Some(r) => Ok(Some(pgorm::FromRow::from_row(&r)?)),
-                    None => Ok(None),
-                }
+                let q = self.build_first_sql();
+                q.fetch_opt_as(conn).await
             }
         }
 

@@ -22,6 +22,7 @@
 use crate::client::GenericClient;
 use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
+use crate::ident::IntoIdent;
 use crate::row::FromRow;
 use std::sync::Arc;
 use tokio_postgres::types::{FromSql, ToSql};
@@ -40,6 +41,19 @@ enum SqlPart {
 pub struct Sql {
     parts: Vec<SqlPart>,
     params: Vec<Arc<dyn ToSql + Sync + Send>>,
+}
+
+/// A SQL string with pre-numbered placeholders (`$1, $2, ...`) plus bound parameters.
+///
+/// Use this when you already have a complete SQL string and just want to bind values.
+pub struct Query {
+    sql: String,
+    params: Vec<Arc<dyn ToSql + Sync + Send>>,
+}
+
+/// Build a SQL query from a pre-numbered SQL string (`$1, $2, ...`).
+pub fn query(initial_sql: impl Into<String>) -> Query {
+    Query::new(initial_sql)
 }
 
 /// Start building a SQL statement.
@@ -81,6 +95,209 @@ fn strip_sql_prefix(sql: &str) -> &str {
         }
     }
     s
+}
+
+fn starts_with_keyword(s: &str, keyword: &str) -> bool {
+    match s.get(0..keyword.len()) {
+        Some(prefix) => prefix.eq_ignore_ascii_case(keyword),
+        None => false,
+    }
+}
+
+impl Query {
+    /// Create a new pre-numbered query.
+    pub fn new(sql: impl Into<String>) -> Self {
+        Self {
+            sql: sql.into(),
+            params: Vec::new(),
+        }
+    }
+
+    /// Bind a parameter value.
+    ///
+    /// This does not modify the SQL string; it only appends the value to the
+    /// parameter list. The SQL string must already contain `$1, $2, ...`.
+    pub fn bind<T>(mut self, value: T) -> Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.params.push(Arc::new(value));
+        self
+    }
+
+    /// Access the SQL string.
+    pub fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// Parameter refs compatible with `tokio-postgres`.
+    pub fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
+        self.params
+            .iter()
+            .map(|p| p.as_ref() as &(dyn ToSql + Sync))
+            .collect()
+    }
+
+    // ==================== Execution ====================
+
+    /// Execute the query and return all rows.
+    pub async fn fetch_all(&self, conn: &impl GenericClient) -> OrmResult<Vec<Row>> {
+        let params = self.params_ref();
+        conn.query(&self.sql, &params).await
+    }
+
+    /// Execute the query and return all rows mapped to `T`.
+    pub async fn fetch_all_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<Vec<T>> {
+        let rows = self.fetch_all(conn).await?;
+        rows.iter().map(T::from_row).collect()
+    }
+
+    /// Execute the query and return exactly one row.
+    pub async fn fetch_one(&self, conn: &impl GenericClient) -> OrmResult<Row> {
+        let params = self.params_ref();
+        conn.query_one(&self.sql, &params).await
+    }
+
+    /// Execute the query and return exactly one row mapped to `T`.
+    pub async fn fetch_one_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
+        let row = self.fetch_one(conn).await?;
+        T::from_row(&row)
+    }
+
+    /// Execute the query and return at most one row.
+    pub async fn fetch_opt(&self, conn: &impl GenericClient) -> OrmResult<Option<Row>> {
+        let params = self.params_ref();
+        conn.query_opt(&self.sql, &params).await
+    }
+
+    /// Execute the query and return at most one row mapped to `T`.
+    pub async fn fetch_opt_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+    ) -> OrmResult<Option<T>> {
+        let row = self.fetch_opt(conn).await?;
+        row.as_ref().map(T::from_row).transpose()
+    }
+
+    /// Execute the query and return affected row count.
+    pub async fn execute(&self, conn: &impl GenericClient) -> OrmResult<u64> {
+        let params = self.params_ref();
+        conn.execute(&self.sql, &params).await
+    }
+
+    // ==================== Tagged execution ====================
+
+    pub async fn fetch_all_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Vec<Row>> {
+        let params = self.params_ref();
+        conn.query_tagged(tag, &self.sql, &params).await
+    }
+
+    pub async fn fetch_all_tagged_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Vec<T>> {
+        let rows = self.fetch_all_tagged(conn, tag).await?;
+        rows.iter().map(T::from_row).collect()
+    }
+
+    pub async fn fetch_one_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Row> {
+        let params = self.params_ref();
+        conn.query_one_tagged(tag, &self.sql, &params).await
+    }
+
+    pub async fn fetch_one_tagged_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<T> {
+        let row = self.fetch_one_tagged(conn, tag).await?;
+        T::from_row(&row)
+    }
+
+    pub async fn fetch_opt_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Option<Row>> {
+        let params = self.params_ref();
+        conn.query_opt_tagged(tag, &self.sql, &params).await
+    }
+
+    pub async fn fetch_opt_tagged_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Option<T>> {
+        let row = self.fetch_opt_tagged(conn, tag).await?;
+        row.as_ref().map(T::from_row).transpose()
+    }
+
+    pub async fn execute_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<u64> {
+        let params = self.params_ref();
+        conn.execute_tagged(tag, &self.sql, &params).await
+    }
+
+    // ==================== Convenience APIs ====================
+
+    pub async fn fetch_scalar_one<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<T>
+    where
+        T: for<'b> FromSql<'b> + Send + Sync,
+    {
+        let row = self.fetch_one(conn).await?;
+        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+    }
+
+    pub async fn fetch_scalar_opt<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Option<T>>
+    where
+        T: for<'b> FromSql<'b> + Send + Sync,
+    {
+        let row = self.fetch_opt(conn).await?;
+        match row {
+            Some(r) => r.try_get(0).map(Some).map_err(|e| OrmError::decode("0", e.to_string())),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn fetch_scalar_all<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Vec<T>>
+    where
+        T: for<'b> FromSql<'b> + Send + Sync,
+    {
+        let rows = self.fetch_all(conn).await?;
+        rows.iter()
+            .map(|r| r.try_get(0).map_err(|e| OrmError::decode("0", e.to_string())))
+            .collect()
+    }
+
+    pub async fn exists(&self, conn: &impl GenericClient) -> OrmResult<bool> {
+        let inner_sql = self.sql.trim_end();
+        let inner_sql = inner_sql.strip_suffix(';').unwrap_or(inner_sql).trim_end();
+
+        let trimmed = strip_sql_prefix(inner_sql);
+        if !starts_with_keyword(trimmed, "SELECT") && !starts_with_keyword(trimmed, "WITH") {
+            return Err(OrmError::Validation(
+                "exists() only works with SELECT statements (including WITH ... SELECT)"
+                    .to_string(),
+            ));
+        }
+
+        let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
+        let params = self.params_ref();
+        let row = conn.query_one(&wrapped_sql, &params).await?;
+        row.try_get(0).map_err(|e| OrmError::decode("0", e.to_string()))
+    }
 }
 
 impl Sql {
@@ -129,27 +346,6 @@ impl Sql {
         self
     }
 
-    /// Chainable bind method (consumes self, returns Self).
-    ///
-    /// This is syntactic sugar for chained query building:
-    /// ```ignore
-    /// query("INSERT INTO users (name, email) VALUES ($1, $2)")
-    ///     .bind("Alice")
-    ///     .bind("alice@example.com")
-    ///     .execute(&conn).await?;
-    /// ```
-    ///
-    /// Note: This method is for SQL strings that already contain `$1, $2, ...` placeholders.
-    /// It only stores the parameter value without adding a new placeholder to the SQL.
-    pub fn bind<T>(mut self, value: T) -> Self
-    where
-        T: ToSql + Sync + Send + 'static,
-    {
-        // Only add the parameter, don't add a placeholder (the SQL already has $1, $2, ...)
-        self.params.push(Arc::new(value));
-        self
-    }
-
     /// Append a comma-separated list of placeholders and bind all values.
     ///
     /// If `values` is empty, this appends `NULL` (so `IN (NULL)` is valid SQL).
@@ -180,46 +376,14 @@ impl Sql {
     /// Append a SQL identifier (schema/table/column) safely.
     ///
     /// This does **not** use parameters (Postgres doesn't allow parameterizing
-    /// identifiers). To prevent SQL injection when identifiers are dynamic,
-    /// this validates that each `.`-separated segment matches:
-    /// `[A-Za-z_][A-Za-z0-9_]*`.
-    pub fn push_ident(&mut self, ident: &str) -> OrmResult<&mut Self> {
-        if ident.is_empty() {
-            return Err(OrmError::Validation("Sql::push_ident: empty identifier".to_string()));
-        }
-
-        for seg in ident.split('.') {
-            if seg.is_empty() {
-                return Err(OrmError::Validation(format!(
-                    "Sql::push_ident: invalid identifier '{}'",
-                    ident
-                )));
-            }
-
-            let mut chars = seg.chars();
-            let Some(first) = chars.next() else {
-                return Err(OrmError::Validation(format!(
-                    "Sql::push_ident: invalid identifier '{}'",
-                    ident
-                )));
-            };
-            let first_ok = first == '_' || first.is_ascii_alphabetic();
-            if !first_ok {
-                return Err(OrmError::Validation(format!(
-                    "Sql::push_ident: invalid identifier '{}'",
-                    ident
-                )));
-            }
-
-            if !chars.all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-                return Err(OrmError::Validation(format!(
-                    "Sql::push_ident: invalid identifier '{}'",
-                    ident
-                )));
-            }
-        }
-
-        Ok(self.push(ident))
+    /// identifiers). To prevent SQL injection when identifiers are dynamic, this
+    /// parses and validates identifiers via [`crate::Ident`].
+    pub fn push_ident<I>(&mut self, ident: I) -> OrmResult<&mut Self>
+    where
+        I: IntoIdent,
+    {
+        let ident = ident.into_ident()?;
+        Ok(self.push(&ident.to_sql()))
     }
 
     /// Render SQL with `$1, $2, ...` placeholders.
@@ -255,12 +419,9 @@ impl Sql {
             .filter(|p| matches!(p, SqlPart::Param))
             .count();
 
-        // When using bind() with pre-existing $1, $2, ... placeholders,
-        // params.len() may be greater than placeholder_count.
-        // We only validate that push_bind placeholders match their params.
-        if placeholder_count > self.params.len() {
+        if placeholder_count != self.params.len() {
             return Err(OrmError::Validation(format!(
-                "Sql: more placeholders({}) than params({})",
+                "Sql: placeholders({}) != params({})",
                 placeholder_count,
                 self.params.len()
             )));
@@ -465,14 +626,14 @@ impl Sql {
     pub async fn exists(&self, conn: &impl GenericClient) -> OrmResult<bool> {
         self.validate()?;
         let inner_sql = self.to_sql();
+        let inner_sql = inner_sql.trim_end();
+        let inner_sql = inner_sql.strip_suffix(';').unwrap_or(inner_sql).trim_end();
 
         // Validate that this is a SELECT-like statement.
         // Strip leading whitespace, SQL comments (-- and /* */), and parentheses
         // to handle: SELECT, WITH ... SELECT, (SELECT ...), /* comment */ SELECT, etc.
-        let trimmed = strip_sql_prefix(&inner_sql);
-        if !trimmed.starts_with("SELECT") && !trimmed.starts_with("select")
-            && !trimmed.starts_with("WITH") && !trimmed.starts_with("with")
-        {
+        let trimmed = strip_sql_prefix(inner_sql);
+        if !starts_with_keyword(trimmed, "SELECT") && !starts_with_keyword(trimmed, "WITH") {
             return Err(OrmError::Validation(
                 "exists() only works with SELECT statements (including WITH ... SELECT)".to_string(),
             ));
@@ -615,7 +776,7 @@ mod tests {
     #[test]
     fn can_append_condition_as_placeholders() {
         let mut q = sql("SELECT * FROM users WHERE ");
-        q.push_condition(&Condition::eq("id", 42_i64));
+        q.push_condition(&Condition::eq("id", 42_i64).unwrap());
 
         assert_eq!(q.to_sql(), "SELECT * FROM users WHERE id = $1");
         assert_eq!(q.params_ref().len(), 1);
@@ -626,7 +787,7 @@ mod tests {
         let mut q = sql("SELECT * FROM users WHERE a = ");
         q.push_bind(1_i64);
         q.push(" AND ");
-        q.push_condition(&Condition::eq("b", "x"));
+        q.push_condition(&Condition::eq("b", "x").unwrap());
 
         assert_eq!(q.to_sql(), "SELECT * FROM users WHERE a = $1 AND b = $2");
         assert_eq!(q.params_ref().len(), 2);
@@ -635,7 +796,7 @@ mod tests {
     #[test]
     fn empty_in_list_condition_is_valid_sql() {
         let mut q = sql("SELECT * FROM users WHERE ");
-        q.push_condition(&Condition::in_list::<i32>("id", vec![]));
+        q.push_condition(&Condition::in_list("id", Vec::<i32>::new()).unwrap());
 
         assert_eq!(q.to_sql(), "SELECT * FROM users WHERE 1=0");
         assert_eq!(q.params_ref().len(), 0);
@@ -697,7 +858,7 @@ mod tests {
     #[test]
     fn pagination_composes_with_conditions() {
         let mut q = sql("SELECT * FROM users WHERE ");
-        q.push_condition(&Condition::eq("status", "active"));
+        q.push_condition(&Condition::eq("status", "active").unwrap());
         q.push(" ORDER BY id");
         q.limit_offset(10, 0);
         assert_eq!(

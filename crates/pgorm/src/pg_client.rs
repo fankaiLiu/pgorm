@@ -52,7 +52,8 @@ use crate::check::{DbSchema, SchemaRegistry, TableMeta};
 use crate::checked_client::ModelRegistration;
 use crate::error::{OrmError, OrmResult};
 use crate::monitor::{
-    LoggingMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, StatsMonitor,
+    LoggingMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType,
+    StatsMonitor,
 };
 use crate::row::FromRow;
 use crate::GenericClient;
@@ -499,20 +500,30 @@ ORDER BY n.nspname, c.relname, a.attnum
     }
 
     /// Process hook before query.
-    fn process_hook(&self, ctx: &QueryContext) -> Result<Option<String>, OrmError> {
+    fn apply_hook(&self, ctx: &mut QueryContext) -> Result<(), OrmError> {
         use crate::monitor::HookAction;
 
         if let Some(hook) = &self.hook {
             match hook.before_query(ctx) {
-                HookAction::Continue => Ok(None),
-                HookAction::ModifySql(sql) => Ok(Some(sql)),
+                HookAction::Continue => Ok(()),
+                HookAction::ModifySql {
+                    exec_sql,
+                    canonical_sql,
+                } => {
+                    ctx.exec_sql = exec_sql;
+                    if let Some(canonical_sql) = canonical_sql {
+                        ctx.canonical_sql = canonical_sql;
+                    }
+                    ctx.query_type = QueryType::from_sql(&ctx.canonical_sql);
+                    Ok(())
+                }
                 HookAction::Abort(reason) => Err(OrmError::validation(format!(
                     "Query aborted by hook: {}",
                     reason
                 ))),
             }
         } else {
-            Ok(None)
+            Ok(())
         }
     }
 
@@ -782,22 +793,19 @@ impl<C: GenericClient> PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Vec<Row>> {
-        // Check SQL first
-        self.check_sql(sql)?;
-
         let mut ctx = QueryContext::new(sql, params.len());
         if let Some(tag) = tag {
             ctx.tag = Some(tag.to_string());
         }
 
-        // Process hook
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
+        // Process hook first, then check the canonical SQL.
+        self.apply_hook(&mut ctx)?;
+        self.check_sql(&ctx.canonical_sql)?;
 
         // Execute
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.query(effective_sql, params))
+            .execute_with_timeout(self.client.query(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -818,18 +826,16 @@ impl<C: GenericClient> PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Row> {
-        self.check_sql(sql)?;
-
         let mut ctx = QueryContext::new(sql, params.len());
         if let Some(tag) = tag {
             ctx.tag = Some(tag.to_string());
         }
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
+        self.apply_hook(&mut ctx)?;
+        self.check_sql(&ctx.canonical_sql)?;
 
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.query_one(effective_sql, params))
+            .execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -850,18 +856,16 @@ impl<C: GenericClient> PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Option<Row>> {
-        self.check_sql(sql)?;
-
         let mut ctx = QueryContext::new(sql, params.len());
         if let Some(tag) = tag {
             ctx.tag = Some(tag.to_string());
         }
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
+        self.apply_hook(&mut ctx)?;
+        self.check_sql(&ctx.canonical_sql)?;
 
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.query_opt(effective_sql, params))
+            .execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 
@@ -882,18 +886,16 @@ impl<C: GenericClient> PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<u64> {
-        self.check_sql(sql)?;
-
         let mut ctx = QueryContext::new(sql, params.len());
         if let Some(tag) = tag {
             ctx.tag = Some(tag.to_string());
         }
-        let modified_sql = self.process_hook(&ctx)?;
-        let effective_sql = modified_sql.as_deref().unwrap_or(sql);
+        self.apply_hook(&mut ctx)?;
+        self.check_sql(&ctx.canonical_sql)?;
 
         let start = Instant::now();
         let result = self
-            .execute_with_timeout(self.client.execute(effective_sql, params))
+            .execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
 

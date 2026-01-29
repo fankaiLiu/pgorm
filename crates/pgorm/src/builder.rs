@@ -4,176 +4,13 @@
 //! - [`WhereExpr`]: Boolean expression tree for WHERE clauses (AND/OR/NOT/grouping)
 //! - [`OrderBy`]: Structured ORDER BY builder with nulls handling
 //! - [`Pagination`]: LIMIT/OFFSET builder
-//! - [`Ident`]: Safe SQL identifier handling
+//! - [`Ident`]: Safe SQL identifier handling (see [`crate::Ident`])
 
 use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
+use crate::ident::IntoIdent;
+use crate::Ident;
 use crate::sql::Sql;
-
-// ==================== Ident: Safe SQL identifier ====================
-
-/// A part of a SQL identifier.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IdentPart {
-    /// Unquoted identifier: must match `[A-Za-z_][A-Za-z0-9_$]*`
-    Unquoted(String),
-    /// Quoted identifier: allows any characters except NUL, output with double quotes
-    Quoted(String),
-}
-
-/// A SQL identifier (column, table, or schema name).
-///
-/// Supports dotted notation (e.g., `schema.table.column`) and quoted identifiers
-/// (e.g., `"CamelCase"."User"`).
-///
-/// # Example
-/// ```ignore
-/// use pgorm::builder::Ident;
-///
-/// let ident = Ident::parse("public.users")?;
-/// let quoted = Ident::parse(r#""CamelCase"."UserTable""#)?;
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ident {
-    pub parts: Vec<IdentPart>,
-}
-
-impl Ident {
-    /// Create a simple unquoted identifier.
-    pub fn new(name: &str) -> OrmResult<Self> {
-        Self::parse(name)
-    }
-
-    /// Create a quoted identifier.
-    pub fn quoted(name: &str) -> OrmResult<Self> {
-        if name.contains('\0') {
-            return Err(OrmError::validation("Identifier cannot contain NUL character"));
-        }
-        Ok(Self {
-            parts: vec![IdentPart::Quoted(name.to_string())],
-        })
-    }
-
-    /// Parse an identifier string, supporting dotted and quoted forms.
-    ///
-    /// - Dotted: `schema.table.column`
-    /// - Quoted: `"CamelCase"."UserTable"`
-    /// - Mixed: `public."UserTable".id`
-    pub fn parse(s: &str) -> OrmResult<Self> {
-        if s.is_empty() {
-            return Err(OrmError::validation("Identifier cannot be empty"));
-        }
-
-        let mut parts = Vec::new();
-        let mut chars = s.chars().peekable();
-
-        while chars.peek().is_some() {
-            // Skip leading dot (except at start)
-            if !parts.is_empty() {
-                match chars.next() {
-                    Some('.') => {}
-                    Some(c) => {
-                        return Err(OrmError::validation(format!(
-                            "Expected '.' between identifier parts, got '{}'",
-                            c
-                        )));
-                    }
-                    None => break,
-                }
-            }
-
-            // Check for quoted identifier
-            if chars.peek() == Some(&'"') {
-                chars.next(); // consume opening quote
-                let mut name = String::new();
-                loop {
-                    match chars.next() {
-                        Some('"') => {
-                            // Check for escaped quote ""
-                            if chars.peek() == Some(&'"') {
-                                chars.next();
-                                name.push('"');
-                            } else {
-                                break;
-                            }
-                        }
-                        Some('\0') => {
-                            return Err(OrmError::validation(
-                                "Identifier cannot contain NUL character",
-                            ));
-                        }
-                        Some(c) => name.push(c),
-                        None => {
-                            return Err(OrmError::validation("Unclosed quoted identifier"));
-                        }
-                    }
-                }
-                if name.is_empty() {
-                    return Err(OrmError::validation("Empty quoted identifier"));
-                }
-                parts.push(IdentPart::Quoted(name));
-            } else {
-                // Unquoted identifier
-                let mut name = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c == '.' {
-                        break;
-                    }
-                    if name.is_empty() {
-                        // First character must be letter or underscore
-                        if c == '_' || c.is_ascii_alphabetic() {
-                            name.push(c);
-                            chars.next();
-                        } else {
-                            return Err(OrmError::validation(format!(
-                                "Invalid identifier start character: '{}'",
-                                c
-                            )));
-                        }
-                    } else {
-                        // Subsequent characters: letter, digit, underscore, or $
-                        if c == '_' || c == '$' || c.is_ascii_alphanumeric() {
-                            name.push(c);
-                            chars.next();
-                        } else {
-                            return Err(OrmError::validation(format!(
-                                "Invalid character in identifier: '{}'",
-                                c
-                            )));
-                        }
-                    }
-                }
-                if name.is_empty() {
-                    return Err(OrmError::validation("Empty identifier segment"));
-                }
-                parts.push(IdentPart::Unquoted(name));
-            }
-        }
-
-        if parts.is_empty() {
-            return Err(OrmError::validation("Empty identifier"));
-        }
-
-        Ok(Self { parts })
-    }
-
-    /// Render the identifier as SQL.
-    pub fn to_sql(&self) -> String {
-        self.parts
-            .iter()
-            .map(|p| match p {
-                IdentPart::Unquoted(s) => s.clone(),
-                IdentPart::Quoted(s) => format!("\"{}\"", s.replace('"', "\"\"")),
-            })
-            .collect::<Vec<_>>()
-            .join(".")
-    }
-
-    /// Append this identifier to a SQL builder.
-    pub fn append_to_sql(&self, sql: &mut Sql) {
-        sql.push(&self.to_sql());
-    }
-}
 
 // ==================== WhereExpr: Boolean expression tree ====================
 
@@ -185,10 +22,10 @@ impl Ident {
 /// use pgorm::Condition;
 ///
 /// let expr = WhereExpr::And(vec![
-///     WhereExpr::Atom(Condition::eq("status", "active")),
+///     WhereExpr::Atom(Condition::eq("status", "active")?),
 ///     WhereExpr::Or(vec![
-///         WhereExpr::Atom(Condition::eq("role", "admin")),
-///         WhereExpr::Atom(Condition::eq("role", "owner")),
+///         WhereExpr::Atom(Condition::eq("role", "admin")?),
+///         WhereExpr::Atom(Condition::eq("role", "owner")?),
 ///     ]),
 /// ]);
 /// ```
@@ -260,13 +97,14 @@ impl WhereExpr {
         }
     }
 
-    /// Check if this expression is empty (evaluates to TRUE).
-    pub fn is_empty(&self) -> bool {
-        match self {
-            WhereExpr::And(exprs) => exprs.is_empty(),
-            WhereExpr::Or(exprs) => exprs.is_empty(),
-            _ => false,
-        }
+    /// Returns `true` if this expression is the identity `TRUE` (i.e. `AND([])`).
+    pub fn is_trivially_true(&self) -> bool {
+        matches!(self, WhereExpr::And(exprs) if exprs.is_empty())
+    }
+
+    /// Returns `true` if this expression is the identity `FALSE` (i.e. `OR([])`).
+    pub fn is_trivially_false(&self) -> bool {
+        matches!(self, WhereExpr::Or(exprs) if exprs.is_empty())
     }
 
     /// Append this expression to a SQL builder.
@@ -366,42 +204,54 @@ impl NullsOrder {
 
 /// A single ORDER BY item.
 #[derive(Debug, Clone)]
-pub struct OrderItem {
-    /// The column to sort by.
-    pub column: String,
-    /// Sort direction (ASC/DESC).
-    pub dir: SortDir,
-    /// Optional NULLS ordering.
-    pub nulls: Option<NullsOrder>,
+pub enum OrderItem {
+    Column {
+        column: Ident,
+        dir: SortDir,
+        nulls: Option<NullsOrder>,
+    },
+    /// Raw SQL (escape hatch - use with extreme caution).
+    Raw(String),
 }
 
 impl OrderItem {
-    /// Create a new order item.
-    pub fn new(column: impl Into<String>, dir: SortDir) -> Self {
-        Self {
-            column: column.into(),
+    /// Create a new order item (validated identifier).
+    pub fn new(column: Ident, dir: SortDir) -> Self {
+        Self::Column {
+            column,
             dir,
             nulls: None,
         }
     }
 
-    /// Set NULLS ordering.
+    /// Create a raw SQL order item.
+    pub fn raw(sql: impl Into<String>) -> Self {
+        Self::Raw(sql.into())
+    }
+
+    /// Set NULLS ordering (no-op for raw items).
     pub fn nulls(mut self, order: NullsOrder) -> Self {
-        self.nulls = Some(order);
+        if let OrderItem::Column { nulls, .. } = &mut self {
+            *nulls = Some(order);
+        }
         self
     }
 
-    fn to_sql(&self) -> OrmResult<String> {
-        // Validate the column name using Ident
-        let ident = Ident::parse(&self.column)?;
-        let mut s = ident.to_sql();
-        s.push(' ');
-        s.push_str(self.dir.to_sql());
-        if let Some(nulls) = &self.nulls {
-            s.push(' ');
-            s.push_str(nulls.to_sql());
+    fn append_to_sql(&self, sql: &mut Sql) {
+        match self {
+            OrderItem::Column { column, dir, nulls } => {
+                sql.push(&column.to_sql());
+                sql.push(" ");
+                sql.push(dir.to_sql());
+                if let Some(nulls) = nulls {
+                    sql.push(" ");
+                    sql.push(nulls.to_sql());
+                }
+            }
+            OrderItem::Raw(s) => {
+                sql.push(s);
+            }
         }
-        Ok(s)
     }
 }
 
@@ -427,27 +277,30 @@ impl OrderBy {
         Self::default()
     }
 
-    /// Add an ascending sort.
-    pub fn asc(mut self, column: impl Into<String>) -> Self {
-        self.items.push(OrderItem::new(column, SortDir::Asc));
-        self
+    /// Add an ascending sort (validated identifier).
+    pub fn asc(mut self, column: impl IntoIdent) -> OrmResult<Self> {
+        self.items
+            .push(OrderItem::new(column.into_ident()?, SortDir::Asc));
+        Ok(self)
     }
 
-    /// Add a descending sort.
-    pub fn desc(mut self, column: impl Into<String>) -> Self {
-        self.items.push(OrderItem::new(column, SortDir::Desc));
-        self
+    /// Add a descending sort (validated identifier).
+    pub fn desc(mut self, column: impl IntoIdent) -> OrmResult<Self> {
+        self.items
+            .push(OrderItem::new(column.into_ident()?, SortDir::Desc));
+        Ok(self)
     }
 
     /// Add a sort with custom direction and nulls ordering.
     pub fn with_nulls(
         mut self,
-        column: impl Into<String>,
+        column: impl IntoIdent,
         dir: SortDir,
         nulls: NullsOrder,
-    ) -> Self {
-        self.items.push(OrderItem::new(column, dir).nulls(nulls));
-        self
+    ) -> OrmResult<Self> {
+        self.items
+            .push(OrderItem::new(column.into_ident()?, dir).nulls(nulls));
+        Ok(self)
     }
 
     /// Add a custom order item.
@@ -464,27 +317,33 @@ impl OrderBy {
     /// Append this ORDER BY clause to a SQL builder.
     ///
     /// Does nothing if the OrderBy is empty.
-    pub fn append_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+    pub fn append_to_sql(&self, sql: &mut Sql) {
         if self.items.is_empty() {
-            return Ok(());
+            return;
         }
         sql.push(" ORDER BY ");
         for (i, item) in self.items.iter().enumerate() {
             if i > 0 {
                 sql.push(", ");
             }
-            sql.push(&item.to_sql()?);
+            item.append_to_sql(sql);
         }
-        Ok(())
     }
 
     /// Build the ORDER BY clause as a string.
-    pub fn to_sql(&self) -> OrmResult<String> {
+    pub fn to_sql(&self) -> String {
         if self.items.is_empty() {
-            return Ok(String::new());
+            return String::new();
         }
-        let parts: Result<Vec<_>, _> = self.items.iter().map(|i| i.to_sql()).collect();
-        Ok(format!("ORDER BY {}", parts?.join(", ")))
+        let mut sql = Sql::empty();
+        sql.push("ORDER BY ");
+        for (i, item) in self.items.iter().enumerate() {
+            if i > 0 {
+                sql.push(", ");
+            }
+            item.append_to_sql(&mut sql);
+        }
+        sql.to_sql()
     }
 }
 
@@ -564,80 +423,11 @@ impl Pagination {
 mod tests {
     use super::*;
 
-    // ==================== Ident tests ====================
-
-    #[test]
-    fn ident_simple() {
-        let ident = Ident::parse("users").unwrap();
-        assert_eq!(ident.to_sql(), "users");
-    }
-
-    #[test]
-    fn ident_dotted() {
-        let ident = Ident::parse("public.users").unwrap();
-        assert_eq!(ident.to_sql(), "public.users");
-    }
-
-    #[test]
-    fn ident_three_parts() {
-        let ident = Ident::parse("schema.table.column").unwrap();
-        assert_eq!(ident.to_sql(), "schema.table.column");
-    }
-
-    #[test]
-    fn ident_quoted() {
-        let ident = Ident::parse(r#""CamelCase""#).unwrap();
-        assert_eq!(ident.to_sql(), r#""CamelCase""#);
-    }
-
-    #[test]
-    fn ident_quoted_with_escape() {
-        let ident = Ident::parse(r#""has""quote""#).unwrap();
-        assert_eq!(ident.to_sql(), r#""has""quote""#);
-    }
-
-    #[test]
-    fn ident_mixed_quoted_unquoted() {
-        let ident = Ident::parse(r#"public."UserTable".id"#).unwrap();
-        assert_eq!(ident.to_sql(), r#"public."UserTable".id"#);
-    }
-
-    #[test]
-    fn ident_with_dollar() {
-        let ident = Ident::parse("my_var$1").unwrap();
-        assert_eq!(ident.to_sql(), "my_var$1");
-    }
-
-    #[test]
-    fn ident_rejects_empty() {
-        assert!(Ident::parse("").is_err());
-    }
-
-    #[test]
-    fn ident_rejects_start_digit() {
-        assert!(Ident::parse("1table").is_err());
-    }
-
-    #[test]
-    fn ident_rejects_space() {
-        assert!(Ident::parse("my table").is_err());
-    }
-
-    #[test]
-    fn ident_rejects_double_dot() {
-        assert!(Ident::parse("schema..table").is_err());
-    }
-
-    #[test]
-    fn ident_rejects_unclosed_quote() {
-        assert!(Ident::parse(r#""unclosed"#).is_err());
-    }
-
     // ==================== WhereExpr tests ====================
 
     #[test]
     fn where_atom() {
-        let expr = WhereExpr::atom(Condition::eq("status", "active"));
+        let expr = WhereExpr::atom(Condition::eq("status", "active").unwrap());
         let mut sql = Sql::empty();
         expr.append_to_sql(&mut sql);
         assert_eq!(sql.to_sql(), "status = $1");
@@ -646,8 +436,8 @@ mod tests {
     #[test]
     fn where_and() {
         let expr = WhereExpr::And(vec![
-            WhereExpr::Atom(Condition::eq("a", 1_i32)),
-            WhereExpr::Atom(Condition::eq("b", 2_i32)),
+            WhereExpr::Atom(Condition::eq("a", 1_i32).unwrap()),
+            WhereExpr::Atom(Condition::eq("b", 2_i32).unwrap()),
         ]);
         let mut sql = Sql::empty();
         expr.append_to_sql(&mut sql);
@@ -657,8 +447,8 @@ mod tests {
     #[test]
     fn where_or() {
         let expr = WhereExpr::Or(vec![
-            WhereExpr::Atom(Condition::eq("role", "admin")),
-            WhereExpr::Atom(Condition::eq("role", "owner")),
+            WhereExpr::Atom(Condition::eq("role", "admin").unwrap()),
+            WhereExpr::Atom(Condition::eq("role", "owner").unwrap()),
         ]);
         let mut sql = Sql::empty();
         expr.append_to_sql(&mut sql);
@@ -667,7 +457,9 @@ mod tests {
 
     #[test]
     fn where_not() {
-        let expr = WhereExpr::Not(Box::new(WhereExpr::Atom(Condition::eq("deleted", true))));
+        let expr = WhereExpr::Not(Box::new(WhereExpr::Atom(
+            Condition::eq("deleted", true).unwrap(),
+        )));
         let mut sql = Sql::empty();
         expr.append_to_sql(&mut sql);
         assert_eq!(sql.to_sql(), "(NOT deleted = $1)");
@@ -676,10 +468,10 @@ mod tests {
     #[test]
     fn where_nested() {
         let expr = WhereExpr::And(vec![
-            WhereExpr::Atom(Condition::eq("status", "active")),
+            WhereExpr::Atom(Condition::eq("status", "active").unwrap()),
             WhereExpr::Or(vec![
-                WhereExpr::Atom(Condition::eq("role", "admin")),
-                WhereExpr::Atom(Condition::eq("role", "owner")),
+                WhereExpr::Atom(Condition::eq("role", "admin").unwrap()),
+                WhereExpr::Atom(Condition::eq("role", "owner").unwrap()),
             ]),
         ]);
         let mut sql = Sql::empty();
@@ -708,8 +500,8 @@ mod tests {
 
     #[test]
     fn where_and_with_combines() {
-        let a = WhereExpr::atom(Condition::eq("a", 1_i32));
-        let b = WhereExpr::atom(Condition::eq("b", 2_i32));
+        let a = WhereExpr::atom(Condition::eq("a", 1_i32).unwrap());
+        let b = WhereExpr::atom(Condition::eq("b", 2_i32).unwrap());
         let expr = a.and_with(b);
         let mut sql = Sql::empty();
         expr.append_to_sql(&mut sql);
@@ -728,30 +520,36 @@ mod tests {
 
     #[test]
     fn order_by_single_asc() {
-        let order = OrderBy::new().asc("created_at");
-        assert_eq!(order.to_sql().unwrap(), "ORDER BY created_at ASC");
+        let order = OrderBy::new().asc("created_at").unwrap();
+        assert_eq!(order.to_sql(), "ORDER BY created_at ASC");
     }
 
     #[test]
     fn order_by_single_desc() {
-        let order = OrderBy::new().desc("priority");
-        assert_eq!(order.to_sql().unwrap(), "ORDER BY priority DESC");
+        let order = OrderBy::new().desc("priority").unwrap();
+        assert_eq!(order.to_sql(), "ORDER BY priority DESC");
     }
 
     #[test]
     fn order_by_multiple() {
-        let order = OrderBy::new().asc("status").desc("created_at");
+        let order = OrderBy::new()
+            .asc("status")
+            .unwrap()
+            .desc("created_at")
+            .unwrap();
         assert_eq!(
-            order.to_sql().unwrap(),
+            order.to_sql(),
             "ORDER BY status ASC, created_at DESC"
         );
     }
 
     #[test]
     fn order_by_with_nulls() {
-        let order = OrderBy::new().with_nulls("last_login", SortDir::Desc, NullsOrder::Last);
+        let order = OrderBy::new()
+            .with_nulls("last_login", SortDir::Desc, NullsOrder::Last)
+            .unwrap();
         assert_eq!(
-            order.to_sql().unwrap(),
+            order.to_sql(),
             "ORDER BY last_login DESC NULLS LAST"
         );
     }
@@ -760,21 +558,21 @@ mod tests {
     fn order_by_empty() {
         let order = OrderBy::new();
         assert!(order.is_empty());
-        assert_eq!(order.to_sql().unwrap(), "");
+        assert_eq!(order.to_sql(), "");
     }
 
     #[test]
     fn order_by_append() {
-        let order = OrderBy::new().asc("id");
+        let order = OrderBy::new().asc("id").unwrap();
         let mut sql = Sql::new("SELECT * FROM users");
-        order.append_to_sql(&mut sql).unwrap();
+        order.append_to_sql(&mut sql);
         assert_eq!(sql.to_sql(), "SELECT * FROM users ORDER BY id ASC");
     }
 
     #[test]
     fn order_by_validates_column() {
-        let order = OrderBy::new().asc("valid_column; DROP TABLE users;");
-        assert!(order.to_sql().is_err());
+        let res = OrderBy::new().asc("valid_column; DROP TABLE users;");
+        assert!(res.is_err());
     }
 
     // ==================== Pagination tests ====================

@@ -65,17 +65,16 @@ pub struct BuiltSql {
 }
 
 #[cfg(feature = "stream")]
-pub type RowStream =
-    std::pin::Pin<Box<dyn futures_core::Stream<Item = OrmResult<tokio_postgres::Row>> + Send>>;
+pub type RowStream<'a> =
+    std::pin::Pin<Box<dyn futures_core::Stream<Item = OrmResult<tokio_postgres::Row>> + Send + 'a>>;
 
 #[cfg(feature = "stream")]
 pub trait StreamingClient: Send + Sync {
-    /// 接受 owned 的 SQL 和参数，stream 内部持有它们的生命周期。
-    /// 这样 Sql::fetch_stream 可以把 to_sql() 产生的 String 移入 stream。
-    fn query_stream_owned(
-        &self,
-        built: BuiltSql,
-    ) -> RowStream;
+    /// 接受 owned 的 SQL 和参数，避免 lifetime 被 sql/params 的借用卡死。
+    ///
+    /// `RowStream<'a>` 仍然绑定 `&'a self`，这样 `Transaction<'_>` 等“非 `'static` 客户端”
+    /// 也能实现 streaming（stream 持有对连接/事务的借用直到消费结束）。
+    fn query_stream<'a>(&'a self, built: BuiltSql) -> RowStream<'a>;
 }
 ```
 
@@ -83,30 +82,29 @@ pub trait StreamingClient: Send + Sync {
 >
 > 最初设计为 `query_stream<'a>(&'a self, sql: &'a str, params: &'a [...]) -> RowStream<'a>`，
 > 但 `Sql::fetch_stream` 需要把 `to_sql()` 产生的临时 `String` 借出 `'a` 生命周期，
-> 这在 Rust 的借用模型下无法实现。因此改为 **stream 内部持有 owned 数据**（`BuiltSql`），
-> stream 本身为 `'static`（仅受 `&self` 约束）。
+> 这在 Rust 的借用模型下无法实现。因此改为 **stream 内部持有 owned 数据**（`BuiltSql`）。
 
 在 `Sql` builder 上提供对等能力：
 
 ```rust
 #[cfg(feature = "stream")]
 impl Sql {
-    pub fn fetch_stream(
-        &self,
-        conn: &impl StreamingClient,
-    ) -> OrmResult<RowStream> {
+    pub fn fetch_stream<'a>(
+        &'a self,
+        conn: &'a impl StreamingClient,
+    ) -> OrmResult<RowStream<'a>> {
         self.validate()?;
         let built = BuiltSql {
             sql: self.to_sql(),
             params: self.params.clone(), // Arc clone, cheap
         };
-        Ok(conn.query_stream_owned(built))
+        Ok(conn.query_stream(built))
     }
 
-    pub fn fetch_stream_as<T: FromRow + Send + 'static>(
-        &self,
-        conn: &impl StreamingClient,
-    ) -> OrmResult<impl Stream<Item = OrmResult<T>> + Send> { /* row->T map */ }
+    pub fn fetch_stream_as<'a, T: FromRow + Send + 'a>(
+        &'a self,
+        conn: &'a impl StreamingClient,
+    ) -> OrmResult<impl Stream<Item = OrmResult<T>> + Send + 'a> { /* row->T map */ }
 }
 ```
 
@@ -300,14 +298,14 @@ impl WhereExpr {
 
 ```rust
 let q = User::query()
-    .eq(UserQuery::COL_STATUS, "active")
+    .eq(UserQuery::COL_STATUS, "active")?
     .and(
         WhereExpr::Or(vec![
-            Condition::eq(UserQuery::COL_ROLE, "admin").into(),
-            Condition::eq(UserQuery::COL_ROLE, "owner").into(),
+            Condition::eq(UserQuery::COL_ROLE, "admin")?.into(),
+            Condition::eq(UserQuery::COL_ROLE, "owner")?.into(),
         ])
     )
-    .order_by(OrderBy::new().desc(UserQuery::COL_CREATED_AT))
+    .order_by(OrderBy::new().desc(UserQuery::COL_CREATED_AT)?)
     .limit(50);
 ```
 
@@ -323,18 +321,17 @@ pub struct OrderBy {
     items: Vec<OrderItem>,
 }
 
-pub struct OrderItem {
-    pub column: String,
-    pub dir: SortDir,
-    pub nulls: Option<NullsOrder>,
+pub enum OrderItem {
+    Column { column: Ident, dir: SortDir, nulls: Option<NullsOrder> },
+    Raw(String), // escape hatch（危险）
 }
 ```
 
 并提供：
 
-- `OrderBy::asc("col")` / `desc("col")`
-- 可选：`OrderBy::raw("...")`（明确为 escape hatch）
-- 对 `column` 做 `Sql::push_ident` 同等校验（`[A-Za-z_][A-Za-z0-9_]*`，支持 dotted ident）
+- `OrderBy::asc/desc/with_nulls(impl IntoIdent) -> OrmResult<OrderBy>`（在添加时校验）
+- `OrderItem::raw("...")`（明确为 escape hatch）
+- 对 `column` 统一走 `Ident::parse` 校验（支持 dotted + quoted + `$`）
 
 ### Pagination builder
 
@@ -400,14 +397,10 @@ pub struct Pagination {
 
 ## 兼容性与迁移
 
-- `Sql` 的新增方法（scalar/exists/pagination/streaming）均为向后兼容。
-- WHERE 表达式树：
-  - 保留 `Condition` 原子 API
-  - derive query builder 从 `Vec<Condition>` 内部实现迁移为 `WhereExpr`
-  - 旧 `.order_by(String)` 可保留为 `raw_order_by`，同时新增结构化 `OrderBy`
-- SQL 校验增强：
-  - 保持默认行为不“更严格到误杀”，对不确定场景可先降级为 warning
-  - 逐步提高覆盖（先 alias/JOIN，后续再补 CTE 输出列推导等高级能力）
+> `pgorm` 尚未发布：本设计默认 **不考虑兼容**，优先“一致性 + 安全默认值”。
+
+- `Sql/Query/Condition/WhereExpr/OrderBy/Pagination/Ident` 以新 API 为准，不保留旧的“raw string order_by / Vec<Condition> + 手工 param_idx”等实现形态。
+- SQL 校验增强可分阶段落地，但 parse cache/analysis 结构一旦确定，尽量保持稳定，避免反复迁移成本。
 
 ## 分阶段实施计划（建议）
 
@@ -415,7 +408,7 @@ pub struct Pagination {
    - `fetch_scalar(_one/_opt/_all)`、`exists`、`limit/offset/page`
    - 已实现：`crates/pgorm/src/sql.rs`
 2. **Phase 2：WhereExpr + OrderBy/Pagination builder** ✅
-   - 已实现：`crates/pgorm/src/builder.rs`
+   - 已实现：`crates/pgorm/src/builder.rs` + `crates/pgorm/src/ident.rs`
    - 包含：`Ident`、`WhereExpr`、`OrderBy`、`Pagination`
 3. **Phase 3：SQL 校验增强 + parse cache**
    - 先实现 analysis+cache，再替换 `SchemaRegistry::check_sql`
@@ -575,17 +568,13 @@ pub struct StatementCacheConfig {
 
 #### 决策：引入 `Ident` 结构类型，替换"到处传 String"
 
-> **与现有 `Sql::push_ident` 的关系和迁移策略**
+> **最终方案：统一用 `Ident` 做校验与输出（不考虑兼容）**
 >
-> 现有 `Sql::push_ident(&str)` 只允许未引用标识符（`[A-Za-z_][A-Za-z0-9_]*`，不含 `$`），
-> 而新的 `Ident` 支持 quoted 标识符和 `$`。两者规则不一致。
->
-> 最终以 `Ident` 为准。迁移策略：
-> 1. 新增 `Sql::push_safe_ident(&Ident)` 方法，接受 `Ident` 类型。
-> 2. 旧 `Sql::push_ident(&str)` 标记为 `#[deprecated]`，内部改为调用 `Ident::parse()` + `push_safe_ident()`。
-> 3. `OrderBy`、`WhereExpr` 等 builder 内部统一使用 `Ident`（当前 `OrderBy` 的 column 字段为 `String`，通过 `Ident::parse` 校验）。
+> - `Ident` 是唯一的“标识符载体”（支持 dotted + quoted + `$`）。
+> - `Sql::push_ident(...)` / `Condition::eq(...)` / `OrderBy::asc(...)` 等 API 全部基于 `Ident` 校验，杜绝把“未校验的 String”直接拼到 SQL 里。
+> - 引入 `IntoIdent` trait：`&str` / `String` / `Ident` 都可以作为输入，统一走 `Ident::parse()` 规则。
 
-建议在 `pgorm` 内新增（已实现于 `crates/pgorm/src/builder.rs`）：
+建议在 `pgorm` 内新增（已实现于 `crates/pgorm/src/ident.rs`）：
 
 ```rust
 pub struct Ident {
@@ -601,8 +590,11 @@ pub enum IdentPart {
 并提供：
 
 - `Ident::parse(r#"public.users"#)` / `Ident::parse(r#""CamelCase"."User""#)`（解析 dotted + quoted）
-- `Sql::push_ident(&Ident)`（统一输出）
-- `OrderBy::asc(Ident)` / `Condition::eq(Ident, v)`（WHERE/ORDER 不再直接接收 `&str column`）
+- `Ident::quoted("...")`（构造 quoted ident part）
+- `Sql::push_ident(impl IntoIdent) -> OrmResult<&mut Sql>`（统一输出）
+- `OrderBy::asc/desc(impl IntoIdent) -> OrmResult<OrderBy>`（在添加时校验）
+- `Condition::eq/ne/... (impl IntoIdent, v) -> OrmResult<Condition>`（WHERE 原子条件在构造时校验）
+- `OrderItem::raw(...)` / `WhereExpr::Raw(...)` 作为明确的 escape hatch（危险 API）
 
 #### 解析/校验规则（建议最小可用）
 
