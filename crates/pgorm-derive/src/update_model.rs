@@ -1,14 +1,105 @@
 //! UpdateModel derive macro implementation
 
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields, Result};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Graph Declarations for UpdateModel (child table strategies)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Strategy for updating has_many children.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum UpdateStrategy {
+    /// Delete all old children, insert new ones.
+    #[default]
+    Replace,
+    /// Only insert new children (don't delete old ones).
+    Append,
+    /// Upsert children (ON CONFLICT DO UPDATE).
+    Upsert,
+    /// Upsert + delete children not in the new list (sync to exact list).
+    Diff,
+}
+
+/// has_many_update declaration.
+#[derive(Clone)]
+struct HasManyUpdate {
+    /// The child InsertModel type.
+    child_type: syn::Path,
+    /// The Rust field name on this struct.
+    field: String,
+    /// The SQL column name for the foreign key.
+    fk_column: String,
+    /// The child's foreign key field name.
+    fk_field: String,
+    /// How to wrap the fk value: "value" or "some".
+    fk_wrap: FkWrap,
+    /// Update strategy.
+    strategy: UpdateStrategy,
+    /// For diff strategy: the key field in the child (Rust field name).
+    key_field: Option<String>,
+    /// For diff strategy: the key column in the child table.
+    key_column: Option<String>,
+}
+
+/// has_one_update declaration.
+#[derive(Clone)]
+struct HasOneUpdate {
+    /// The child InsertModel type.
+    child_type: syn::Path,
+    /// The Rust field name on this struct.
+    field: String,
+    /// The SQL column name for the foreign key.
+    fk_column: String,
+    /// The child's foreign key field name.
+    fk_field: String,
+    /// How to wrap the fk value: "value" or "some".
+    fk_wrap: FkWrap,
+    /// Strategy: replace or upsert.
+    strategy: UpdateStrategy,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum FkWrap {
+    #[default]
+    Value,
+    Some,
+}
+
+/// All graph declarations for an UpdateModel.
+#[derive(Clone, Default)]
+struct UpdateGraphDeclarations {
+    /// has_many_update relations.
+    has_many: Vec<HasManyUpdate>,
+    /// has_one_update relations.
+    has_one: Vec<HasOneUpdate>,
+}
+
+impl UpdateGraphDeclarations {
+    fn has_any(&self) -> bool {
+        !self.has_many.is_empty() || !self.has_one.is_empty()
+    }
+
+    /// Get all field names that are used by graph declarations.
+    fn graph_field_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for rel in &self.has_many {
+            names.push(rel.field.clone());
+        }
+        for rel in &self.has_one {
+            names.push(rel.field.clone());
+        }
+        names
+    }
+}
 
 struct StructAttrs {
     table: String,
     id_column: Option<String>,
     model: Option<syn::Path>,
     returning: Option<syn::Path>,
+    graph: UpdateGraphDeclarations,
 }
 
 struct StructAttrList {
@@ -160,10 +251,18 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let mut destructure_idents: Vec<syn::Ident> = Vec::new();
     let mut set_stmts: Vec<TokenStream> = Vec::new();
 
+    // Get field names used by graph declarations
+    let graph_field_names = attrs.graph.graph_field_names();
+
     for field in fields.iter() {
         let field_ident = field.ident.clone().unwrap();
         let field_name = field_ident.to_string();
         let field_ty = &field.ty;
+
+        // Skip fields used by graph declarations
+        if graph_field_names.contains(&field_name) {
+            continue;
+        }
 
         let field_attrs = get_field_attrs(field)?;
 
@@ -441,6 +540,9 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         quote! {}
     };
 
+    // Generate update_by_id_graph methods
+    let update_graph_methods = generate_update_graph_methods(&attrs, &id_col_expr)?;
+
     Ok(quote! {
         impl #impl_generics #name #ty_generics #where_clause {
             pub const TABLE: &'static str = #table_name;
@@ -450,6 +552,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #update_by_ids_method
 
             #update_by_id_returning_method
+
+            #update_graph_methods
         }
     })
 }
@@ -459,25 +563,32 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
     let mut id_column: Option<String> = None;
     let mut model: Option<syn::Path> = None;
     let mut returning: Option<syn::Path> = None;
+    let mut graph = UpdateGraphDeclarations::default();
 
     for attr in &input.attrs {
         if !attr.path().is_ident("orm") {
             continue;
         }
         if let syn::Meta::List(meta_list) = &attr.meta {
-            let parsed = syn::parse2::<StructAttrList>(meta_list.tokens.clone())?;
-            if parsed.table.is_some() {
-                table = parsed.table;
+            // Try to parse as simple key=value attributes first
+            if let Ok(parsed) = syn::parse2::<StructAttrList>(meta_list.tokens.clone()) {
+                if parsed.table.is_some() {
+                    table = parsed.table;
+                }
+                if parsed.id_column.is_some() {
+                    id_column = parsed.id_column;
+                }
+                if parsed.model.is_some() {
+                    model = parsed.model;
+                }
+                if parsed.returning.is_some() {
+                    returning = parsed.returning;
+                }
+                continue;
             }
-            if parsed.id_column.is_some() {
-                id_column = parsed.id_column;
-            }
-            if parsed.model.is_some() {
-                model = parsed.model;
-            }
-            if parsed.returning.is_some() {
-                returning = parsed.returning;
-            }
+
+            // Try to parse as graph declarations
+            parse_update_graph_attr(&meta_list.tokens, &mut graph)?;
         }
     }
 
@@ -493,7 +604,269 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
         id_column,
         model,
         returning,
+        graph,
     })
+}
+
+/// Parse graph-style attributes for UpdateModel.
+fn parse_update_graph_attr(tokens: &TokenStream, graph: &mut UpdateGraphDeclarations) -> Result<()> {
+    let tokens_str = tokens.to_string();
+
+    // Handle has_many_update(...)
+    if tokens_str.starts_with("has_many_update") {
+        if let Some(rel) = parse_has_many_update(tokens)? {
+            graph.has_many.push(rel);
+        }
+        return Ok(());
+    }
+
+    // Handle has_one_update(...)
+    if tokens_str.starts_with("has_one_update") {
+        if let Some(rel) = parse_has_one_update(tokens)? {
+            graph.has_one.push(rel);
+        }
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+/// Parse has_many_update attribute content.
+fn parse_has_many_update(tokens: &TokenStream) -> Result<Option<HasManyUpdate>> {
+    let parsed: HasManyUpdateAttr = syn::parse2(tokens.clone())?;
+    Ok(Some(HasManyUpdate {
+        child_type: parsed.child_type,
+        field: parsed.field,
+        fk_column: parsed.fk_column,
+        fk_field: parsed.fk_field,
+        fk_wrap: parsed.fk_wrap,
+        strategy: parsed.strategy,
+        key_field: parsed.key_field,
+        key_column: parsed.key_column,
+    }))
+}
+
+/// Parsed has_many_update attribute.
+struct HasManyUpdateAttr {
+    child_type: syn::Path,
+    field: String,
+    fk_column: String,
+    fk_field: String,
+    fk_wrap: FkWrap,
+    strategy: UpdateStrategy,
+    key_field: Option<String>,
+    key_column: Option<String>,
+}
+
+impl syn::parse::Parse for HasManyUpdateAttr {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        // Skip the function name
+        let _name: syn::Ident = input.parse()?;
+
+        // Parse the parenthesized content
+        let content;
+        syn::parenthesized!(content in input);
+
+        // First argument: the child type
+        let child_type: syn::Path = content.parse()?;
+
+        let mut field: Option<String> = None;
+        let mut fk_column: Option<String> = None;
+        let mut fk_field: Option<String> = None;
+        let mut fk_wrap = FkWrap::Value;
+        let mut strategy = UpdateStrategy::Replace;
+        let mut key_field: Option<String> = None;
+        let mut key_column: Option<String> = None;
+
+        // Parse remaining key = "value" pairs
+        while !content.is_empty() {
+            let _: syn::Token![,] = content.parse()?;
+            if content.is_empty() {
+                break;
+            }
+
+            let key: syn::Ident = content.parse()?;
+            let _: syn::Token![=] = content.parse()?;
+            let value: syn::LitStr = content.parse()?;
+
+            match key.to_string().as_str() {
+                "field" => field = Some(value.value()),
+                "fk_column" => fk_column = Some(value.value()),
+                "fk_field" => fk_field = Some(value.value()),
+                "fk_wrap" => {
+                    fk_wrap = match value.value().as_str() {
+                        "value" => FkWrap::Value,
+                        "some" => FkWrap::Some,
+                        _ => {
+                            return Err(syn::Error::new(
+                                value.span(),
+                                "fk_wrap must be \"value\" or \"some\"",
+                            ));
+                        }
+                    };
+                }
+                "strategy" => {
+                    strategy = match value.value().as_str() {
+                        "replace" => UpdateStrategy::Replace,
+                        "append" => UpdateStrategy::Append,
+                        "upsert" => UpdateStrategy::Upsert,
+                        "diff" => UpdateStrategy::Diff,
+                        _ => {
+                            return Err(syn::Error::new(
+                                value.span(),
+                                "strategy must be \"replace\", \"append\", \"upsert\", or \"diff\"",
+                            ));
+                        }
+                    };
+                }
+                "key_field" => key_field = Some(value.value()),
+                "key_column" => key_column = Some(value.value()),
+                _ => {}
+            }
+        }
+
+        let field = field.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "has_many_update requires field = \"...\"")
+        })?;
+        let fk_column = fk_column.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "has_many_update requires fk_column = \"...\"")
+        })?;
+        let fk_field = fk_field.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "has_many_update requires fk_field = \"...\"")
+        })?;
+
+        // Validate diff strategy requires key_field and key_column
+        if strategy == UpdateStrategy::Diff {
+            if key_field.is_none() {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "has_many_update with strategy=\"diff\" requires key_field = \"...\"",
+                ));
+            }
+            if key_column.is_none() {
+                return Err(syn::Error::new(
+                    Span::call_site(),
+                    "has_many_update with strategy=\"diff\" requires key_column = \"...\"",
+                ));
+            }
+        }
+
+        Ok(Self {
+            child_type,
+            field,
+            fk_column,
+            fk_field,
+            fk_wrap,
+            strategy,
+            key_field,
+            key_column,
+        })
+    }
+}
+
+/// Parse has_one_update attribute content.
+fn parse_has_one_update(tokens: &TokenStream) -> Result<Option<HasOneUpdate>> {
+    let parsed: HasOneUpdateAttr = syn::parse2(tokens.clone())?;
+    Ok(Some(HasOneUpdate {
+        child_type: parsed.child_type,
+        field: parsed.field,
+        fk_column: parsed.fk_column,
+        fk_field: parsed.fk_field,
+        fk_wrap: parsed.fk_wrap,
+        strategy: parsed.strategy,
+    }))
+}
+
+/// Parsed has_one_update attribute.
+struct HasOneUpdateAttr {
+    child_type: syn::Path,
+    field: String,
+    fk_column: String,
+    fk_field: String,
+    fk_wrap: FkWrap,
+    strategy: UpdateStrategy,
+}
+
+impl syn::parse::Parse for HasOneUpdateAttr {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        // Skip the function name
+        let _name: syn::Ident = input.parse()?;
+
+        // Parse the parenthesized content
+        let content;
+        syn::parenthesized!(content in input);
+
+        // First argument: the child type
+        let child_type: syn::Path = content.parse()?;
+
+        let mut field: Option<String> = None;
+        let mut fk_column: Option<String> = None;
+        let mut fk_field: Option<String> = None;
+        let mut fk_wrap = FkWrap::Value;
+        let mut strategy = UpdateStrategy::Replace;
+
+        // Parse remaining key = "value" pairs
+        while !content.is_empty() {
+            let _: syn::Token![,] = content.parse()?;
+            if content.is_empty() {
+                break;
+            }
+
+            let key: syn::Ident = content.parse()?;
+            let _: syn::Token![=] = content.parse()?;
+            let value: syn::LitStr = content.parse()?;
+
+            match key.to_string().as_str() {
+                "field" => field = Some(value.value()),
+                "fk_column" => fk_column = Some(value.value()),
+                "fk_field" => fk_field = Some(value.value()),
+                "fk_wrap" => {
+                    fk_wrap = match value.value().as_str() {
+                        "value" => FkWrap::Value,
+                        "some" => FkWrap::Some,
+                        _ => {
+                            return Err(syn::Error::new(
+                                value.span(),
+                                "fk_wrap must be \"value\" or \"some\"",
+                            ));
+                        }
+                    };
+                }
+                "strategy" => {
+                    strategy = match value.value().as_str() {
+                        "replace" => UpdateStrategy::Replace,
+                        "upsert" => UpdateStrategy::Upsert,
+                        _ => {
+                            return Err(syn::Error::new(
+                                value.span(),
+                                "has_one_update strategy must be \"replace\" or \"upsert\"",
+                            ));
+                        }
+                    };
+                }
+                _ => {}
+            }
+        }
+
+        let field = field.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "has_one_update requires field = \"...\"")
+        })?;
+        let fk_column = fk_column.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "has_one_update requires fk_column = \"...\"")
+        })?;
+        let fk_field = fk_field.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "has_one_update requires fk_field = \"...\"")
+        })?;
+
+        Ok(Self {
+            child_type,
+            field,
+            fk_column,
+            fk_field,
+            fk_wrap,
+            strategy,
+        })
+    }
 }
 
 fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
@@ -542,4 +915,323 @@ fn option_inner(ty: &syn::Type) -> Option<&syn::Type> {
         return None;
     };
     Some(inner)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// update_by_id_graph methods generation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generate update_by_id_graph and update_by_id_graph_returning methods.
+fn generate_update_graph_methods(attrs: &StructAttrs, id_col_expr: &TokenStream) -> Result<TokenStream> {
+    let graph = &attrs.graph;
+
+    // If no graph declarations, don't generate graph methods
+    if !graph.has_any() {
+        return Ok(quote! {});
+    }
+
+    let table_name = &attrs.table;
+
+    // Generate child table handling code
+    let has_many_code = generate_has_many_update_code(graph, table_name)?;
+    let has_one_code = generate_has_one_update_code(graph, table_name)?;
+
+    // The graph methods need to handle:
+    // 1. Update main table (if there are fields to update)
+    // 2. Process child tables according to strategy
+
+    let update_by_id_graph_method = quote! {
+        /// Update this struct and all related child tables by primary key.
+        ///
+        /// Child fields with `None` are not touched. `Some(vec)` triggers the configured strategy.
+        pub async fn update_by_id_graph<I>(
+            mut self,
+            conn: &impl ::pgorm::GenericClient,
+            id: I,
+        ) -> ::pgorm::OrmResult<u64>
+        where
+            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
+        {
+            let mut __pgorm_total_affected: u64 = 0;
+            let __pgorm_id = id.clone();
+
+            // Try to update main table (may fail if no fields to update, which is OK for graph)
+            match self.update_by_id(conn, id).await {
+                ::std::result::Result::Ok(affected) => {
+                    __pgorm_total_affected += affected;
+                }
+                ::std::result::Result::Err(::pgorm::OrmError::Validation(msg)) if msg.contains("no fields to update") => {
+                    // No main table fields to update, but child tables may still need updating
+                }
+                ::std::result::Result::Err(e) => return ::std::result::Result::Err(e),
+            }
+
+            // Process has_many child tables
+            #has_many_code
+
+            // Process has_one child tables
+            #has_one_code
+
+            ::std::result::Result::Ok(__pgorm_total_affected)
+        }
+    };
+
+    let update_by_id_graph_returning_method = if let Some(returning_ty) = attrs.returning.as_ref() {
+        quote! {
+            /// Update this struct and all related child tables, returning the updated root row.
+            ///
+            /// Child fields with `None` are not touched. `Some(vec)` triggers the configured strategy.
+            pub async fn update_by_id_graph_returning<I>(
+                mut self,
+                conn: &impl ::pgorm::GenericClient,
+                id: I,
+            ) -> ::pgorm::OrmResult<#returning_ty>
+            where
+                I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
+                #returning_ty: ::pgorm::FromRow,
+            {
+                let mut __pgorm_total_affected: u64 = 0;
+                let __pgorm_id = id.clone();
+                let __pgorm_root_result: ::std::option::Option<#returning_ty>;
+
+                // Try to update main table
+                match self.update_by_id_returning(conn, id).await {
+                    ::std::result::Result::Ok(result) => {
+                        __pgorm_total_affected += 1;
+                        __pgorm_root_result = ::std::option::Option::Some(result);
+                    }
+                    ::std::result::Result::Err(::pgorm::OrmError::Validation(msg)) if msg.contains("no fields to update") => {
+                        // No main table fields to update, fetch current row
+                        let sql = ::std::format!(
+                            "SELECT {} FROM {} {} WHERE {}.{} = $1",
+                            #returning_ty::SELECT_LIST,
+                            #table_name,
+                            #returning_ty::JOIN_CLAUSE,
+                            #table_name,
+                            #id_col_expr
+                        );
+                        let result = ::pgorm::query(sql).bind(__pgorm_id.clone()).fetch_one_as::<#returning_ty>(conn).await?;
+                        __pgorm_root_result = ::std::option::Option::Some(result);
+                    }
+                    ::std::result::Result::Err(e) => return ::std::result::Result::Err(e),
+                }
+
+                // Process has_many child tables
+                #has_many_code
+
+                // Process has_one child tables
+                #has_one_code
+
+                __pgorm_root_result.ok_or_else(|| ::pgorm::OrmError::NotFound("row not found after update".to_string()))
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    Ok(quote! {
+        #update_by_id_graph_method
+        #update_by_id_graph_returning_method
+    })
+}
+
+/// Generate code for has_many_update child tables.
+fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &str) -> Result<TokenStream> {
+    if graph.has_many.is_empty() {
+        return Ok(quote! {});
+    }
+
+    let mut code_blocks = Vec::new();
+
+    for rel in &graph.has_many {
+        let field_ident = format_ident!("{}", rel.field);
+        let fk_field_ident = format_ident!("{}", rel.fk_field);
+        let child_type = &rel.child_type;
+        let fk_column = &rel.fk_column;
+
+        let fk_assign = match rel.fk_wrap {
+            FkWrap::Value => quote! { child.#fk_field_ident = __pgorm_id.clone(); },
+            FkWrap::Some => quote! { child.#fk_field_ident = ::std::option::Option::Some(__pgorm_id.clone()); },
+        };
+
+        let strategy_code = match rel.strategy {
+            UpdateStrategy::Replace => {
+                // Delete all old children, insert new ones
+                quote! {
+                    // Delete old children
+                    let delete_sql = ::std::format!(
+                        "DELETE FROM {} WHERE {} = $1",
+                        #child_type::TABLE,
+                        #fk_column
+                    );
+                    let deleted = ::pgorm::query(delete_sql).bind(__pgorm_id.clone()).execute(conn).await?;
+                    __pgorm_total_affected += deleted;
+
+                    // Insert new children
+                    if !children.is_empty() {
+                        for child in children.iter_mut() {
+                            #fk_assign
+                        }
+                        let inserted = #child_type::insert_many(conn, children).await?;
+                        __pgorm_total_affected += inserted;
+                    }
+                }
+            }
+            UpdateStrategy::Append => {
+                // Only insert new children
+                quote! {
+                    if !children.is_empty() {
+                        for child in children.iter_mut() {
+                            #fk_assign
+                        }
+                        let inserted = #child_type::insert_many(conn, children).await?;
+                        __pgorm_total_affected += inserted;
+                    }
+                }
+            }
+            UpdateStrategy::Upsert => {
+                // Upsert children
+                quote! {
+                    if !children.is_empty() {
+                        for child in children.iter_mut() {
+                            #fk_assign
+                        }
+                        let upserted = #child_type::upsert_many(conn, children).await?;
+                        __pgorm_total_affected += upserted;
+                    }
+                }
+            }
+            UpdateStrategy::Diff => {
+                // Upsert + delete missing
+                let key_field = rel.key_field.as_ref().unwrap();
+                let key_column = rel.key_column.as_ref().unwrap();
+                let key_field_ident = format_ident!("{}", key_field);
+
+                quote! {
+                    if !children.is_empty() {
+                        // Collect keys from new children
+                        let keys: ::std::vec::Vec<_> = children.iter().map(|c| c.#key_field_ident.clone()).collect();
+
+                        // Inject fk into children
+                        for child in children.iter_mut() {
+                            #fk_assign
+                        }
+
+                        // Upsert children
+                        let upserted = #child_type::upsert_many(conn, children).await?;
+                        __pgorm_total_affected += upserted;
+
+                        // Delete children not in the new list
+                        let delete_sql = ::std::format!(
+                            "DELETE FROM {} WHERE {} = $1 AND {} != ALL($2)",
+                            #child_type::TABLE,
+                            #fk_column,
+                            #key_column
+                        );
+                        let deleted = ::pgorm::query(delete_sql)
+                            .bind(__pgorm_id.clone())
+                            .bind(keys)
+                            .execute(conn)
+                            .await?;
+                        __pgorm_total_affected += deleted;
+                    } else {
+                        // Empty list means delete all children
+                        let delete_sql = ::std::format!(
+                            "DELETE FROM {} WHERE {} = $1",
+                            #child_type::TABLE,
+                            #fk_column
+                        );
+                        let deleted = ::pgorm::query(delete_sql).bind(__pgorm_id.clone()).execute(conn).await?;
+                        __pgorm_total_affected += deleted;
+                    }
+                }
+            }
+        };
+
+        let code = quote! {
+            // has_many_update: #field_ident
+            if let ::std::option::Option::Some(mut children) = self.#field_ident {
+                #strategy_code
+            }
+        };
+
+        code_blocks.push(code);
+    }
+
+    Ok(quote! {
+        #(#code_blocks)*
+    })
+}
+
+/// Generate code for has_one_update child tables.
+fn generate_has_one_update_code(graph: &UpdateGraphDeclarations, _table_name: &str) -> Result<TokenStream> {
+    if graph.has_one.is_empty() {
+        return Ok(quote! {});
+    }
+
+    let mut code_blocks = Vec::new();
+
+    for rel in &graph.has_one {
+        let field_ident = format_ident!("{}", rel.field);
+        let fk_field_ident = format_ident!("{}", rel.fk_field);
+        let child_type = &rel.child_type;
+        let fk_column = &rel.fk_column;
+
+        let fk_assign = match rel.fk_wrap {
+            FkWrap::Value => quote! { child.#fk_field_ident = __pgorm_id.clone(); },
+            FkWrap::Some => quote! { child.#fk_field_ident = ::std::option::Option::Some(__pgorm_id.clone()); },
+        };
+
+        let strategy_code = match rel.strategy {
+            UpdateStrategy::Replace => {
+                quote! {
+                    // Delete old child
+                    let delete_sql = ::std::format!(
+                        "DELETE FROM {} WHERE {} = $1",
+                        #child_type::TABLE,
+                        #fk_column
+                    );
+                    let deleted = ::pgorm::query(delete_sql).bind(__pgorm_id.clone()).execute(conn).await?;
+                    __pgorm_total_affected += deleted;
+
+                    // Insert new child if present
+                    if let ::std::option::Option::Some(mut child) = inner_value {
+                        #fk_assign
+                        let inserted = child.insert(conn).await?;
+                        __pgorm_total_affected += inserted;
+                    }
+                }
+            }
+            UpdateStrategy::Upsert => {
+                quote! {
+                    if let ::std::option::Option::Some(mut child) = inner_value {
+                        #fk_assign
+                        let upserted = child.upsert(conn).await?;
+                        __pgorm_total_affected += upserted;
+                    }
+                }
+            }
+            _ => {
+                // Other strategies not applicable for has_one
+                quote! {}
+            }
+        };
+
+        // has_one_update uses Option<Option<Child>>:
+        // - None: don't touch
+        // - Some(None): delete child
+        // - Some(Some(child)): replace/upsert
+        let code = quote! {
+            // has_one_update: #field_ident
+            if let ::std::option::Option::Some(inner_value) = self.#field_ident {
+                #strategy_code
+            }
+        };
+
+        code_blocks.push(code);
+    }
+
+    Ok(quote! {
+        #(#code_blocks)*
+    })
 }

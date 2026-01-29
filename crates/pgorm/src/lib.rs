@@ -110,3 +110,30 @@ pub use check::{
     // Schema introspection
     load_schema_from_db,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write Graph Types (for multi-table writes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Report returned by `insert_graph_report` / `update_by_id_graph_report`.
+///
+/// Contains detailed information about each step in the write graph execution.
+#[derive(Debug, Clone)]
+pub struct WriteReport<R> {
+    /// Sum of affected rows across all steps.
+    pub affected: u64,
+    /// Per-step statistics (in execution order).
+    pub steps: ::std::vec::Vec<WriteStepReport>,
+    /// The root table's returning value (if the `_returning` or `_report` variant was called).
+    pub root: ::std::option::Option<R>,
+}
+
+/// Statistics for a single step in a write graph.
+#[derive(Debug, Clone)]
+pub struct WriteStepReport {
+    /// A tag identifying this step, e.g. `"graph:belongs_to:categories"`,
+    /// `"graph:root:orders"`, `"graph:has_many:order_items"`.
+    pub tag: &'static str,
+    /// Number of rows affected by this step.
+    pub affected: u64,
+}
