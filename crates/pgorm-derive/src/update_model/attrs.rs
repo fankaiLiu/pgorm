@@ -78,6 +78,7 @@ impl syn::parse::Parse for StructAttrList {
 pub(super) struct FieldAttrs {
     pub(super) skip_update: bool,
     pub(super) default: bool,
+    pub(super) auto_now: bool,
     pub(super) table: Option<String>,
     pub(super) column: Option<String>,
 }
@@ -87,6 +88,7 @@ impl syn::parse::Parse for FieldAttrs {
         let mut attrs = FieldAttrs {
             skip_update: false,
             default: false,
+            auto_now: false,
             table: None,
             column: None,
         };
@@ -102,6 +104,7 @@ impl syn::parse::Parse for FieldAttrs {
             match key.as_str() {
                 "skip_update" => attrs.skip_update = true,
                 "default" => attrs.default = true,
+                "auto_now" => attrs.auto_now = true,
                 _ => {
                     let _: syn::Token![=] = input.parse()?;
                     let value: syn::LitStr = input.parse()?;
@@ -128,6 +131,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
     let mut merged = FieldAttrs {
         skip_update: false,
         default: false,
+        auto_now: false,
         table: None,
         column: None,
     };
@@ -140,6 +144,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
             let parsed = syn::parse2::<FieldAttrs>(meta_list.tokens.clone())?;
             merged.skip_update |= parsed.skip_update;
             merged.default |= parsed.default;
+            merged.auto_now |= parsed.auto_now;
             if parsed.table.is_some() {
                 merged.table = parsed.table;
             }
@@ -147,6 +152,20 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
                 merged.column = parsed.column;
             }
         }
+    }
+
+    // Validate conflicts
+    if merged.auto_now && merged.skip_update {
+        return Err(syn::Error::new_spanned(
+            field,
+            "auto_now and skip_update are mutually exclusive",
+        ));
+    }
+    if merged.auto_now && merged.default {
+        return Err(syn::Error::new_spanned(
+            field,
+            "auto_now and default are mutually exclusive",
+        ));
     }
 
     Ok(merged)

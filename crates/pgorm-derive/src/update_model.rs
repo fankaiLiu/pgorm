@@ -24,7 +24,7 @@ mod types;
 use attrs::{get_field_attrs, get_struct_attrs};
 use gen_base::{generate_update_by_id_methods, generate_update_returning_methods};
 use gen_graph::generate_update_graph_methods;
-use types::option_inner;
+use types::{detect_auto_timestamp_type, option_inner, AutoTimestampKind};
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -70,6 +70,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
     let mut destructure_idents: Vec<syn::Ident> = Vec::new();
     let mut set_stmts: Vec<TokenStream> = Vec::new();
+    let mut has_auto_now = false;
 
     // Get field names used by graph declarations
     let graph_field_names = attrs.graph.graph_field_names();
@@ -110,6 +111,42 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 }
                 q.push(#column_name);
                 q.push(" = DEFAULT");
+            });
+            continue;
+        }
+
+        // Handle auto_now fields
+        if field_attrs.auto_now {
+            // Validate type is Option<DateTime<Utc>> or Option<NaiveDateTime>
+            let ts_kind = detect_auto_timestamp_type(field_ty).ok_or_else(|| {
+                syn::Error::new_spanned(
+                    field,
+                    "auto_now requires Option<DateTime<Utc>> or Option<NaiveDateTime>",
+                )
+            })?;
+
+            has_auto_now = true;
+            destructure_idents.push(field_ident.clone());
+
+            // auto_now fields always participate in SET
+            let bind_expr = match ts_kind {
+                AutoTimestampKind::DateTimeUtc => {
+                    quote! { #field_ident.unwrap_or(__pgorm_now) }
+                }
+                AutoTimestampKind::NaiveDateTime => {
+                    quote! { #field_ident.unwrap_or_else(|| __pgorm_now.naive_utc()) }
+                }
+            };
+
+            set_stmts.push(quote! {
+                if !first {
+                    q.push(", ");
+                } else {
+                    first = false;
+                }
+                q.push(#column_name);
+                q.push(" = ");
+                q.push_bind(#bind_expr);
             });
             continue;
         }
@@ -179,10 +216,16 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
     // Generate methods using submodules
     let update_by_id_methods =
-        generate_update_by_id_methods(table_name, &id_col_expr, &destructure, &set_stmts);
+        generate_update_by_id_methods(table_name, &id_col_expr, &destructure, &set_stmts, has_auto_now);
 
-    let update_returning_methods =
-        generate_update_returning_methods(&attrs, table_name, &id_col_expr, &destructure, &set_stmts);
+    let update_returning_methods = generate_update_returning_methods(
+        &attrs,
+        table_name,
+        &id_col_expr,
+        &destructure,
+        &set_stmts,
+        has_auto_now,
+    );
 
     let update_graph_methods = generate_update_graph_methods(&attrs, &id_col_expr)?;
 

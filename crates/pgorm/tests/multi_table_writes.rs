@@ -508,3 +508,140 @@ fn test_diff_helper_method_exists() {
     // This test just verifies the struct compiles and has the method signature
     assert_eq!(NewOrderItemForUpdate::TABLE, "order_items");
 }
+
+// ============================================
+// Test: auto_now_add attribute for InsertModel
+// ============================================
+
+use chrono::{DateTime, Utc};
+
+#[derive(InsertModel)]
+#[orm(table = "posts", returning = "Post")]
+struct NewPostWithTimestamps {
+    title: String,
+    content: String,
+
+    #[orm(auto_now_add)]
+    created_at: Option<DateTime<Utc>>,
+
+    #[orm(auto_now_add)]
+    updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, FromRow, Model)]
+#[orm(table = "posts")]
+struct Post {
+    #[orm(id)]
+    id: i64,
+    title: String,
+    content: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[test]
+fn test_insert_model_with_auto_now_add_compiles() {
+    // Test with None - should auto-fill
+    let _post1 = NewPostWithTimestamps {
+        title: "Hello".into(),
+        content: "World".into(),
+        created_at: None,
+        updated_at: None,
+    };
+
+    // Test with fixed time - should use provided value
+    let fixed_time = Utc::now();
+    let _post2 = NewPostWithTimestamps {
+        title: "Fixed".into(),
+        content: "Time".into(),
+        created_at: Some(fixed_time),
+        updated_at: Some(fixed_time),
+    };
+
+    assert_eq!(NewPostWithTimestamps::TABLE, "posts");
+}
+
+// ============================================
+// Test: auto_now_add with NaiveDateTime
+// ============================================
+
+use chrono::NaiveDateTime;
+
+#[derive(InsertModel)]
+#[orm(table = "events")]
+struct NewEvent {
+    name: String,
+
+    #[orm(auto_now_add)]
+    created_at: Option<NaiveDateTime>,
+}
+
+#[test]
+fn test_insert_model_with_auto_now_add_naive_compiles() {
+    let _event = NewEvent {
+        name: "Launch".into(),
+        created_at: None,
+    };
+
+    assert_eq!(NewEvent::TABLE, "events");
+}
+
+// ============================================
+// Test: auto_now attribute for UpdateModel
+// ============================================
+
+#[derive(UpdateModel)]
+#[orm(table = "posts", model = "Post", returning = "Post")]
+struct PostPatchWithAutoNow {
+    title: Option<String>,
+
+    #[orm(auto_now)]
+    updated_at: Option<DateTime<Utc>>,
+}
+
+#[test]
+fn test_update_model_with_auto_now_compiles() {
+    // Regular update - updated_at will be auto-set
+    let _patch1 = PostPatchWithAutoNow {
+        title: Some("New title".into()),
+        updated_at: None,
+    };
+
+    // Touch - only updated_at will be set (won't trigger "no fields to update")
+    let _patch2 = PostPatchWithAutoNow {
+        title: None,
+        updated_at: None,
+    };
+
+    // Explicit time - should use provided value
+    let fixed_time = Utc::now();
+    let _patch3 = PostPatchWithAutoNow {
+        title: Some("Another".into()),
+        updated_at: Some(fixed_time),
+    };
+
+    assert_eq!(PostPatchWithAutoNow::TABLE, "posts");
+}
+
+// ============================================
+// Test: auto_now with NaiveDateTime for UpdateModel
+// ============================================
+
+#[derive(UpdateModel)]
+#[orm(table = "events", id_column = "id")]
+struct EventPatch {
+    name: Option<String>,
+
+    #[orm(auto_now)]
+    modified_at: Option<NaiveDateTime>,
+}
+
+#[test]
+fn test_update_model_with_auto_now_naive_compiles() {
+    let _patch = EventPatch {
+        name: Some("Updated".into()),
+        modified_at: None,
+    };
+
+    assert_eq!(EventPatch::TABLE, "events");
+}

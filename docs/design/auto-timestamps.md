@@ -147,12 +147,12 @@ pgorm 倾向保持 SQL 显式，因此不额外引入 `auto_now_db` 之类的变
 
 ## 实现检查清单
 
-- [ ] 解析 `#[orm(auto_now_add)]`（InsertModel 字段属性）
-- [ ] 解析 `#[orm(auto_now)]`（UpdateModel 字段属性）
-- [ ] 编译期校验字段类型为 `Option<DateTime<Utc>>` / `Option<NaiveDateTime>`
-- [ ] 编译期冲突检测（`skip_*` / `default`）
-- [ ] insert：单次调用取一次 `now`
-- [ ] insert_many / insert_many_returning：批量同一次调用复用 `now`
-- [ ] update_by_id / update_by_ids：单次调用取一次 `now`，并保证 `auto_now` 字段总参与 SET
+- [x] 解析 `#[orm(auto_now_add)]`（InsertModel 字段属性）
+- [x] 解析 `#[orm(auto_now)]`（UpdateModel 字段属性）
+- [x] 编译期校验字段类型为 `Option<DateTime<Utc>>` / `Option<NaiveDateTime>`
+- [x] 编译期冲突检测（`skip_*` / `default`）
+- [x] insert：单次调用取一次 `now`
+- [x] insert_many / insert_many_returning：批量同一次调用复用 `now`
+- [x] update_by_id / update_by_ids：单次调用取一次 `now`，并保证 `auto_now` 字段总参与 SET
 - [ ] write graph：按每个步骤的 insert/update 规则处理
 - [ ] 文档/示例更新

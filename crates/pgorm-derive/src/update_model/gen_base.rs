@@ -15,7 +15,14 @@ pub(super) fn generate_update_by_id_methods(
     id_col_expr: &TokenStream,
     destructure: &TokenStream,
     set_stmts: &[TokenStream],
+    has_auto_now: bool,
 ) -> TokenStream {
+    let now_init = if has_auto_now {
+        quote! { let __pgorm_now = ::chrono::Utc::now(); }
+    } else {
+        quote! {}
+    };
+
     quote! {
         /// Update columns by primary key (patch-style).
         pub async fn update_by_id<I>(
@@ -27,6 +34,7 @@ pub(super) fn generate_update_by_id_methods(
             I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             #destructure
+            #now_init
 
             let mut q = pgorm::sql("UPDATE ");
             q.push(#table_name);
@@ -67,6 +75,7 @@ pub(super) fn generate_update_by_id_methods(
             }
 
             #destructure
+            #now_init
 
             let mut q = pgorm::sql("UPDATE ");
             q.push(#table_name);
@@ -101,10 +110,17 @@ pub(super) fn generate_update_returning_methods(
     id_col_expr: &TokenStream,
     destructure: &TokenStream,
     set_stmts: &[TokenStream],
+    has_auto_now: bool,
 ) -> TokenStream {
     let returning_ty = match attrs.returning.as_ref() {
         Some(ty) => ty,
         None => return quote! {},
+    };
+
+    let now_init = if has_auto_now {
+        quote! { let __pgorm_now = ::chrono::Utc::now(); }
+    } else {
+        quote! {}
     };
 
     quote! {
@@ -119,6 +135,7 @@ pub(super) fn generate_update_returning_methods(
             #returning_ty: pgorm::FromRow,
         {
             #destructure
+            #now_init
 
             let mut q = pgorm::Sql::empty();
             q.push("WITH ");
@@ -171,6 +188,7 @@ pub(super) fn generate_update_returning_methods(
             }
 
             #destructure
+            #now_init
 
             let mut q = pgorm::Sql::empty();
             q.push("WITH ");

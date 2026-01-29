@@ -97,6 +97,7 @@ pub(super) struct FieldAttrs {
     pub(super) is_id: bool,
     pub(super) skip_insert: bool,
     pub(super) default: bool,
+    pub(super) auto_now_add: bool,
     pub(super) table: Option<String>,
     pub(super) column: Option<String>,
 }
@@ -107,6 +108,7 @@ impl syn::parse::Parse for FieldAttrs {
             is_id: false,
             skip_insert: false,
             default: false,
+            auto_now_add: false,
             table: None,
             column: None,
         };
@@ -123,6 +125,7 @@ impl syn::parse::Parse for FieldAttrs {
                 "id" => attrs.is_id = true,
                 "skip_insert" => attrs.skip_insert = true,
                 "default" => attrs.default = true,
+                "auto_now_add" => attrs.auto_now_add = true,
                 _ => {
                     let _: syn::Token![=] = input.parse()?;
                     let value: syn::LitStr = input.parse()?;
@@ -150,6 +153,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
         is_id: false,
         skip_insert: false,
         default: false,
+        auto_now_add: false,
         table: None,
         column: None,
     };
@@ -164,6 +168,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
             merged.is_id |= parsed.is_id;
             merged.skip_insert |= parsed.skip_insert;
             merged.default |= parsed.default;
+            merged.auto_now_add |= parsed.auto_now_add;
             if parsed.table.is_some() {
                 merged.table = parsed.table;
             }
@@ -171,6 +176,20 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
                 merged.column = parsed.column;
             }
         }
+    }
+
+    // Validate conflicts
+    if merged.auto_now_add && merged.skip_insert {
+        return Err(syn::Error::new_spanned(
+            field,
+            "auto_now_add and skip_insert are mutually exclusive",
+        ));
+    }
+    if merged.auto_now_add && merged.default {
+        return Err(syn::Error::new_spanned(
+            field,
+            "auto_now_add and default are mutually exclusive",
+        ));
     }
 
     Ok(merged)

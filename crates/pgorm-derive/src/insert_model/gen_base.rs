@@ -10,6 +10,8 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
+use crate::common::syn_types::{option_inner, AutoTimestampKind};
+
 use super::attrs::StructAttrs;
 
 /// Information about a field that needs to be bound in SQL.
@@ -17,10 +19,29 @@ pub(super) struct BindField {
     pub(super) ident: syn::Ident,
     pub(super) ty: syn::Type,
     pub(super) column: String,
+    /// If this field has auto_now_add, store the timestamp kind.
+    pub(super) auto_now_add: Option<AutoTimestampKind>,
+}
+
+impl BindField {
+    /// Get the effective type for batch operations.
+    /// For auto_now_add fields, this is the inner type (DateTime<Utc> instead of Option<DateTime<Utc>>).
+    pub(super) fn batch_ty(&self) -> &syn::Type {
+        if self.auto_now_add.is_some() {
+            // For auto_now_add fields, extract the inner type from Option<T>
+            option_inner(&self.ty).unwrap_or(&self.ty)
+        } else {
+            &self.ty
+        }
+    }
 }
 
 /// Generate the INSERT SQL string.
-pub(super) fn generate_insert_sql(table_name: &str, columns: &[String], values: &[String]) -> String {
+pub(super) fn generate_insert_sql(
+    table_name: &str,
+    columns: &[String],
+    values: &[String],
+) -> String {
     if columns.is_empty() {
         format!("INSERT INTO {} DEFAULT VALUES", table_name)
     } else {
@@ -36,23 +57,54 @@ pub(super) fn generate_insert_sql(table_name: &str, columns: &[String], values: 
 /// Generate the `insert` method.
 pub(super) fn generate_insert_method(
     insert_sql: &str,
-    bind_field_idents: &[syn::Ident],
+    batch_bind_fields: &[BindField],
 ) -> TokenStream {
+    let bind_field_idents: Vec<_> = batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
+
     let destructure = if bind_field_idents.is_empty() {
         quote! { let _ = self; }
     } else {
         quote! { let Self { #(#bind_field_idents),*, .. } = self; }
     };
 
-    let insert_query_expr = bind_field_idents.iter().fold(
+    // Check if any field has auto_now_add
+    let has_auto_now_add = batch_bind_fields.iter().any(|f| f.auto_now_add.is_some());
+
+    let now_init = if has_auto_now_add {
+        quote! { let __pgorm_now = ::chrono::Utc::now(); }
+    } else {
+        quote! {}
+    };
+
+    // Generate bind expressions, handling auto_now_add fields
+    let bind_exprs: Vec<TokenStream> = batch_bind_fields
+        .iter()
+        .map(|f| {
+            let ident = &f.ident;
+            match f.auto_now_add {
+                Some(AutoTimestampKind::DateTimeUtc) => {
+                    quote! { #ident.unwrap_or(__pgorm_now) }
+                }
+                Some(AutoTimestampKind::NaiveDateTime) => {
+                    quote! { #ident.unwrap_or_else(|| __pgorm_now.naive_utc()) }
+                }
+                None => {
+                    quote! { #ident }
+                }
+            }
+        })
+        .collect();
+
+    let insert_query_expr = bind_exprs.iter().fold(
         quote! { pgorm::query(#insert_sql) },
-        |acc, ident| quote! { #acc.bind(#ident) },
+        |acc, expr| quote! { #acc.bind(#expr) },
     );
 
     quote! {
         /// Insert a new row into the target table.
         pub async fn insert(self, conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<u64> {
             #destructure
+            #now_init
             #insert_query_expr.execute(conn).await
         }
     }
@@ -93,24 +145,50 @@ pub(super) fn generate_insert_many_method(
             .collect();
         let field_idents: Vec<syn::Ident> =
             batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
-        let field_tys: Vec<syn::Type> = batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
+
+        // For batch inserts, use the batch_ty which extracts inner type for auto_now_add fields
+        let batch_tys: Vec<&syn::Type> = batch_bind_fields.iter().map(|f| f.batch_ty()).collect();
+
+        // Check if any field has auto_now_add
+        let has_auto_now_add = batch_bind_fields.iter().any(|f| f.auto_now_add.is_some());
+
+        let now_init = if has_auto_now_add {
+            quote! { let __pgorm_now = ::chrono::Utc::now(); }
+        } else {
+            quote! {}
+        };
 
         let init_lists: Vec<TokenStream> = list_idents
             .iter()
-            .zip(field_tys.iter())
+            .zip(batch_tys.iter())
             .map(|(list_ident, ty)| {
                 quote! { let mut #list_ident: ::std::vec::Vec<#ty> = ::std::vec::Vec::with_capacity(rows.len()); }
             })
             .collect();
 
+        // Generate push expressions, handling auto_now_add fields
         let push_lists: Vec<TokenStream> = list_idents
             .iter()
-            .zip(field_idents.iter())
-            .map(|(list_ident, field_ident)| quote! { #list_ident.push(#field_ident); })
+            .zip(batch_bind_fields.iter())
+            .map(|(list_ident, f)| {
+                let field_ident = &f.ident;
+                let value_expr = match f.auto_now_add {
+                    Some(AutoTimestampKind::DateTimeUtc) => {
+                        quote! { #field_ident.unwrap_or(__pgorm_now) }
+                    }
+                    Some(AutoTimestampKind::NaiveDateTime) => {
+                        quote! { #field_ident.unwrap_or_else(|| __pgorm_now.naive_utc()) }
+                    }
+                    None => {
+                        quote! { #field_ident }
+                    }
+                };
+                quote! { #list_ident.push(#value_expr); }
+            })
             .collect();
 
-        // Generate type casts using PgType trait at runtime
-        let type_cast_exprs: Vec<TokenStream> = field_tys
+        // Generate type casts using PgType trait at runtime (use batch_ty for correct array type)
+        let type_cast_exprs: Vec<TokenStream> = batch_tys
             .iter()
             .enumerate()
             .map(|(i, ty)| {
@@ -134,6 +212,7 @@ pub(super) fn generate_insert_many_method(
                     return ::std::result::Result::Ok(0);
                 }
 
+                #now_init
                 #(#init_lists)*
 
                 for row in rows {
@@ -589,7 +668,6 @@ pub(super) fn generate_returning_methods(
     table_name: &str,
     struct_attrs: &StructAttrs,
     insert_sql: &str,
-    bind_field_idents: &[syn::Ident],
     batch_bind_fields: &[BindField],
 ) -> TokenStream {
     let returning_ty = match struct_attrs.returning.as_ref() {
@@ -597,18 +675,47 @@ pub(super) fn generate_returning_methods(
         None => return quote! {},
     };
 
+    let bind_field_idents: Vec<_> = batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
+
     let destructure = if bind_field_idents.is_empty() {
         quote! { let _ = self; }
     } else {
         quote! { let Self { #(#bind_field_idents),*, .. } = self; }
     };
 
-    let returning_query_expr =
-        bind_field_idents
-            .iter()
-            .fold(quote! { pgorm::query(sql) }, |acc, ident| {
-                quote! { #acc.bind(#ident) }
-            });
+    // Check if any field has auto_now_add
+    let has_auto_now_add = batch_bind_fields.iter().any(|f| f.auto_now_add.is_some());
+
+    let now_init = if has_auto_now_add {
+        quote! { let __pgorm_now = ::chrono::Utc::now(); }
+    } else {
+        quote! {}
+    };
+
+    // Generate bind expressions, handling auto_now_add fields
+    let bind_exprs: Vec<TokenStream> = batch_bind_fields
+        .iter()
+        .map(|f| {
+            let ident = &f.ident;
+            match f.auto_now_add {
+                Some(AutoTimestampKind::DateTimeUtc) => {
+                    quote! { #ident.unwrap_or(__pgorm_now) }
+                }
+                Some(AutoTimestampKind::NaiveDateTime) => {
+                    quote! { #ident.unwrap_or_else(|| __pgorm_now.naive_utc()) }
+                }
+                None => {
+                    quote! { #ident }
+                }
+            }
+        })
+        .collect();
+
+    let returning_query_expr = bind_exprs
+        .iter()
+        .fold(quote! { pgorm::query(sql) }, |acc, expr| {
+            quote! { #acc.bind(#expr) }
+        });
 
     let insert_many_returning_method = if batch_bind_fields.is_empty() {
         quote! {
@@ -643,21 +750,43 @@ pub(super) fn generate_returning_methods(
             .collect();
         let field_idents: Vec<syn::Ident> =
             batch_bind_fields.iter().map(|f| f.ident.clone()).collect();
-        let field_tys: Vec<syn::Type> =
-            batch_bind_fields.iter().map(|f| f.ty.clone()).collect();
+
+        // For batch inserts, use the batch_ty which extracts inner type for auto_now_add fields
+        let batch_tys: Vec<&syn::Type> = batch_bind_fields.iter().map(|f| f.batch_ty()).collect();
+
+        let batch_now_init = if has_auto_now_add {
+            quote! { let __pgorm_now = ::chrono::Utc::now(); }
+        } else {
+            quote! {}
+        };
 
         let init_lists: Vec<TokenStream> = list_idents
             .iter()
-            .zip(field_tys.iter())
+            .zip(batch_tys.iter())
             .map(|(list_ident, ty)| {
                 quote! { let mut #list_ident: ::std::vec::Vec<#ty> = ::std::vec::Vec::with_capacity(rows.len()); }
             })
             .collect();
 
+        // Generate push expressions, handling auto_now_add fields
         let push_lists: Vec<TokenStream> = list_idents
             .iter()
-            .zip(field_idents.iter())
-            .map(|(list_ident, field_ident)| quote! { #list_ident.push(#field_ident); })
+            .zip(batch_bind_fields.iter())
+            .map(|(list_ident, f)| {
+                let field_ident = &f.ident;
+                let value_expr = match f.auto_now_add {
+                    Some(AutoTimestampKind::DateTimeUtc) => {
+                        quote! { #field_ident.unwrap_or(__pgorm_now) }
+                    }
+                    Some(AutoTimestampKind::NaiveDateTime) => {
+                        quote! { #field_ident.unwrap_or_else(|| __pgorm_now.naive_utc()) }
+                    }
+                    None => {
+                        quote! { #field_ident }
+                    }
+                };
+                quote! { #list_ident.push(#value_expr); }
+            })
             .collect();
 
         let batch_returning_query_expr = list_idents.iter().fold(
@@ -665,8 +794,8 @@ pub(super) fn generate_returning_methods(
             |acc, list_ident| quote! { #acc.bind(#list_ident) },
         );
 
-        // Generate type casts for batch insert returning using PgType trait
-        let batch_type_cast_exprs: Vec<TokenStream> = field_tys
+        // Generate type casts for batch insert returning using PgType trait (use batch_ty)
+        let batch_type_cast_exprs: Vec<TokenStream> = batch_tys
             .iter()
             .enumerate()
             .map(|(i, ty)| {
@@ -690,6 +819,7 @@ pub(super) fn generate_returning_methods(
                     return ::std::result::Result::Ok(::std::vec::Vec::new());
                 }
 
+                #batch_now_init
                 #(#init_lists)*
 
                 for row in rows {
@@ -728,6 +858,7 @@ pub(super) fn generate_returning_methods(
             #returning_ty: pgorm::FromRow,
         {
             #destructure
+            #now_init
             let sql = ::std::format!(
                 "WITH {table} AS ({insert} RETURNING *) SELECT {} FROM {table} {}",
                 #returning_ty::SELECT_LIST,

@@ -21,11 +21,13 @@ mod setters;
 
 use attrs::{get_field_attrs, get_struct_attrs};
 use gen_base::{
-    determine_conflict_spec, generate_insert_many_method, generate_insert_method,
-    generate_insert_sql, generate_returning_methods, generate_upsert_methods, BindField,
+    BindField, determine_conflict_spec, generate_insert_many_method, generate_insert_method,
+    generate_insert_sql, generate_returning_methods, generate_upsert_methods,
 };
-use gen_graph::{generate_insert_graph_methods, InsertSqlInfo};
+use gen_graph::{InsertSqlInfo, generate_insert_graph_methods};
 use setters::generate_with_setters;
+
+use crate::common::syn_types::detect_auto_timestamp_type;
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -104,6 +106,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 ident: field_ident.clone(),
                 ty: field_ty.clone(),
                 column: column_name.clone(),
+                auto_now_add: None,
             });
         }
 
@@ -116,6 +119,19 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         if field_attrs.default {
             insert_value_exprs.push("DEFAULT".to_string());
         } else {
+            // Validate auto_now_add type if specified
+            let auto_now_add = if field_attrs.auto_now_add {
+                let ts_kind = detect_auto_timestamp_type(&field_ty).ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        field,
+                        "auto_now_add requires Option<DateTime<Utc>> or Option<NaiveDateTime>",
+                    )
+                })?;
+                Some(ts_kind)
+            } else {
+                None
+            };
+
             param_idx += 1;
             insert_value_exprs.push(format!("${}", param_idx));
             bind_field_idents.push(field_ident.clone());
@@ -123,6 +139,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 ident: field_ident,
                 ty: field_ty,
                 column: column_name,
+                auto_now_add,
             });
         }
     }
@@ -131,30 +148,28 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let insert_sql = generate_insert_sql(table_name, &insert_columns, &insert_value_exprs);
 
     // Generate methods
-    let insert_method = generate_insert_method(&insert_sql, &bind_field_idents);
+    let insert_method = generate_insert_method(&insert_sql, &batch_bind_fields);
     let insert_many_method = generate_insert_many_method(table_name, &batch_bind_fields);
 
     // Generate upsert methods if conflict spec is available
-    let upsert_methods = if let Some(conflict_spec) =
-        determine_conflict_spec(&struct_attrs, id_field.as_ref())
-    {
-        generate_upsert_methods(
-            table_name,
-            &struct_attrs,
-            &conflict_spec,
-            &batch_bind_fields,
-            id_field.as_ref(),
-        )
-    } else {
-        quote! {}
-    };
+    let upsert_methods =
+        if let Some(conflict_spec) = determine_conflict_spec(&struct_attrs, id_field.as_ref()) {
+            generate_upsert_methods(
+                table_name,
+                &struct_attrs,
+                &conflict_spec,
+                &batch_bind_fields,
+                id_field.as_ref(),
+            )
+        } else {
+            quote! {}
+        };
 
     // Generate returning methods
     let returning_method = generate_returning_methods(
         table_name,
         &struct_attrs,
         &insert_sql,
-        &bind_field_idents,
         &batch_bind_fields,
     );
 
