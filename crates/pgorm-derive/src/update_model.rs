@@ -958,7 +958,7 @@ fn generate_update_graph_methods(attrs: &StructAttrs, id_col_expr: &TokenStream)
                     );
                     let exists_result = ::pgorm::query(exists_sql)
                         .bind(__pgorm_id.clone())
-                        .fetch_optional(conn)
+                        .fetch_opt(conn)
                         .await?;
                     if exists_result.is_none() {
                         return ::std::result::Result::Err(::pgorm::OrmError::NotFound(
@@ -1138,7 +1138,13 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
             }
             UpdateStrategy::Diff => {
                 // Upsert + delete missing (uses __pgorm_diff_many_by_fk helper)
-                let key_columns = rel.key_columns.as_ref().unwrap();
+                let key_columns_str = rel.key_columns.as_ref().unwrap();
+                // Split by comma and trim whitespace to support multi-column keys
+                let key_columns_vec: Vec<_> = key_columns_str
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect();
 
                 quote! {
                     // Use diff helper to upsert and delete missing children
@@ -1146,7 +1152,7 @@ fn generate_has_many_update_code(graph: &UpdateGraphDeclarations, _table_name: &
                         conn,
                         #fk_column,
                         __pgorm_id.clone(),
-                        &[#key_columns],
+                        &[#(#key_columns_vec),*],
                         children
                             .into_iter()
                             .map(|child| child.#setter_name(__pgorm_id.clone()))

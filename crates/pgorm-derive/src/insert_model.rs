@@ -132,6 +132,7 @@ struct StructAttrList {
     conflict_target: Option<Vec<String>>,
     conflict_constraint: Option<String>,
     conflict_update: Option<Vec<String>>,
+    graph_root_id_field: Option<String>,
 }
 
 impl syn::parse::Parse for StructAttrList {
@@ -141,6 +142,7 @@ impl syn::parse::Parse for StructAttrList {
         let mut conflict_target: Option<Vec<String>> = None;
         let mut conflict_constraint: Option<String> = None;
         let mut conflict_update: Option<Vec<String>> = None;
+        let mut graph_root_id_field: Option<String> = None;
 
         loop {
             if input.is_empty() {
@@ -195,6 +197,13 @@ impl syn::parse::Parse for StructAttrList {
                         .collect();
                     conflict_update = Some(cols);
                 }
+                "graph_root_id_field" | "graph_root_key" => {
+                    // graph_root_key is deprecated, maps to graph_root_id_field
+                    graph_root_id_field = Some(value.value());
+                }
+                "graph_root_key_source" => {
+                    // Deprecated and ignored - the new behavior uses graph_root_id_field directly
+                }
                 _ => {}
             }
 
@@ -205,7 +214,7 @@ impl syn::parse::Parse for StructAttrList {
             }
         }
 
-        Ok(Self { table, returning, conflict_target, conflict_constraint, conflict_update })
+        Ok(Self { table, returning, conflict_target, conflict_constraint, conflict_update, graph_root_id_field })
     }
 }
 
@@ -1088,6 +1097,9 @@ fn get_struct_attrs(input: &DeriveInput) -> Result<StructAttrs> {
                 if parsed.conflict_update.is_some() {
                     conflict_update = parsed.conflict_update;
                 }
+                if parsed.graph_root_id_field.is_some() {
+                    graph.graph_root_id_field = parsed.graph_root_id_field;
+                }
                 continue;
             }
 
@@ -1570,20 +1582,18 @@ fn generate_insert_graph_methods(
     };
 
     // Generate code to get root_id based on the source mode
+    // For graph_root_id_field, we handle both T and Option<T> field types
     let (get_root_id_code, needs_model_pk_bound) = if let Some(ref root_id_field) = graph.graph_root_id_field {
         // Input mode: get root_id from self.<field> before insert
         // Field can be T or Option<T>. For Option<T>, we need to handle None case.
         let root_id_field_ident = format_ident!("{}", root_id_field);
         let root_id_field_name = root_id_field.clone();
 
-        // We clone the ID before insert since self will be consumed
+        // We use a helper trait to handle both Option<T> and T uniformly
+        // The trait is defined in extract_helper below
         let code = quote! {
             // Get root_id from input field (graph_root_id_field mode)
-            let __pgorm_root_id = {
-                let id_ref = &self.#root_id_field_ident;
-                // Handle both T and Option<T> cases via trait
-                __pgorm_extract_root_id(id_ref, #root_id_field_name)?
-            };
+            let __pgorm_root_id = __pgorm_extract_root_id(&self.#root_id_field_ident, #root_id_field_name)?;
         };
         (code, false)
     } else if needs_root_id {
@@ -1596,13 +1606,30 @@ fn generate_insert_graph_methods(
     };
 
     // Helper function for extracting root_id from Option<T> or T
+    // Per doc §5.2: Option<Id> with None should return Validation error
     let extract_helper = if has_graph_root_id_field {
         quote! {
-            fn __pgorm_extract_root_id<T: ::core::clone::Clone>(
-                value: &T,
-                _field_name: &str,
-            ) -> ::pgorm::OrmResult<T> {
-                ::std::result::Result::Ok(value.clone())
+            // Helper trait to extract root_id from both T and Option<T>
+            trait __PgormExtractRootId {
+                type Output: ::core::clone::Clone;
+                fn __extract(&self, field_name: &str) -> ::pgorm::OrmResult<Self::Output>;
+            }
+
+            // Implementation for Option<T>: return Validation error if None
+            impl<T: ::core::clone::Clone> __PgormExtractRootId for ::std::option::Option<T> {
+                type Output = T;
+                fn __extract(&self, field_name: &str) -> ::pgorm::OrmResult<T> {
+                    self.clone().ok_or_else(|| ::pgorm::OrmError::Validation(
+                        ::std::format!("graph_root_id_field '{}' is None but required for has_* relations", field_name)
+                    ))
+                }
+            }
+
+            fn __pgorm_extract_root_id<F: __PgormExtractRootId>(
+                value: &F,
+                field_name: &str,
+            ) -> ::pgorm::OrmResult<F::Output> {
+                value.__extract(field_name)
             }
         }
     } else {
@@ -1986,13 +2013,21 @@ fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<Token
         }
     }
 
-    if extract_stmts.is_empty() {
+    // Check if we need the helper (for extract_stmts OR for before_insert)
+    let has_before_insert = graph.insert_steps.iter().any(|s| s.is_before);
+    let needs_helper = !extract_stmts.is_empty() || has_before_insert;
+
+    if !needs_helper {
         return Ok(quote! {});
     }
 
     // Generate the helper trait and implementations
+    // Supports: Option<T>, Vec<T>, Option<Vec<T>>
+    // For has_many: Vec<T> or Option<Vec<T>>
+    // For has_one: T or Option<T>
+    // For before/after_insert: T, Option<T>, Vec<T>, Option<Vec<T>>
     let helper_code = quote! {
-        // Helper trait to extract graph fields uniformly for both Option<T> and T types
+        // Helper trait to extract graph fields uniformly for various types
         trait __PgormTakeGraphField<T> {
             fn __pgorm_take(&mut self) -> ::std::option::Option<T>;
         }
@@ -2001,6 +2036,13 @@ fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<Token
         impl<T> __PgormTakeGraphField<T> for ::std::option::Option<T> {
             fn __pgorm_take(&mut self) -> ::std::option::Option<T> {
                 self.take()
+            }
+        }
+
+        // Implementation for Vec<T>: take ownership by replacing with empty vec, wrap in Some
+        impl<T> __PgormTakeGraphField<::std::vec::Vec<T>> for ::std::vec::Vec<T> {
+            fn __pgorm_take(&mut self) -> ::std::option::Option<::std::vec::Vec<T>> {
+                ::std::option::Option::Some(::std::mem::take(self))
             }
         }
 
@@ -2019,6 +2061,7 @@ fn generate_extract_graph_fields_code(graph: &GraphDeclarations) -> Result<Token
 /// Uses ModelPk::pk() to get parent ID (avoiding direct field access for cross-module compatibility).
 ///
 /// Semantics (per doc §6.1.2):
+/// - set_fk_field and field are mutually exclusive (both set => Validation error)
 /// - If set_fk_field already has a value (Some), skip belongs_to write
 /// - If required=true but both set_fk_field is None and field is None, return Validation error
 fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Ident) -> Result<TokenStream> {
@@ -2042,11 +2085,23 @@ fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Id
         };
 
         let code = if bt.required {
-            // Required: must have either fk field set or parent field set
-            // If set_fk_field already has value, skip. Otherwise parent field must be Some.
+            // Required: must have either fk field set or parent field set (but not both)
             quote! {
                 // belongs_to: #field_ident (required)
-                if self.#set_fk_field_ident.is_some() {
+                // Check mutual exclusion: set_fk_field and field cannot both have values
+                let __fk_has_value = self.#set_fk_field_ident.is_some();
+                let __field_has_value = self.#field_ident.is_some();
+
+                if __fk_has_value && __field_has_value {
+                    return ::std::result::Result::Err(::pgorm::OrmError::Validation(
+                        ::std::format!(
+                            "belongs_to '{}': '{}' and '{}' are mutually exclusive but both are set",
+                            #field_name,
+                            #set_fk_field_name,
+                            #field_name
+                        )
+                    ));
+                } else if __fk_has_value {
                     // FK already set, skip belongs_to write
                 } else if let ::std::option::Option::Some(parent_data) = self.#field_ident.take() {
                     let parent_result = parent_data.#insert_call;
@@ -2070,9 +2125,23 @@ fn generate_belongs_to_code(graph: &GraphDeclarations, _root_key_ident: &syn::Id
             }
         } else {
             // Optional: if set_fk_field already has value, skip. Otherwise process parent if present.
+            // Still check mutual exclusion
             quote! {
                 // belongs_to: #field_ident (optional)
-                if self.#set_fk_field_ident.is_none() {
+                // Check mutual exclusion: set_fk_field and field cannot both have values
+                let __fk_has_value = self.#set_fk_field_ident.is_some();
+                let __field_has_value = self.#field_ident.is_some();
+
+                if __fk_has_value && __field_has_value {
+                    return ::std::result::Result::Err(::pgorm::OrmError::Validation(
+                        ::std::format!(
+                            "belongs_to '{}': '{}' and '{}' are mutually exclusive but both are set",
+                            #field_name,
+                            #set_fk_field_name,
+                            #field_name
+                        )
+                    ));
+                } else if !__fk_has_value {
                     if let ::std::option::Option::Some(parent_data) = self.#field_ident.take() {
                         let parent_result = parent_data.#insert_call;
                         let parent_id = ::pgorm::ModelPk::pk(&parent_result).clone();
@@ -2137,12 +2206,12 @@ fn generate_insert_step_code(graph: &GraphDeclarations, is_before: bool) -> Resu
             },
         };
 
-        // For before_insert, use self.field.take() directly
+        // For before_insert, use helper to extract (supports Option<T>, Vec<T>, etc.)
         // For after_insert, use the pre-extracted variable
         let code = if is_before {
             quote! {
                 // before_insert step: #field_ident
-                if let ::std::option::Option::Some(step_data) = self.#field_ident.take() {
+                if let ::std::option::Option::Some(step_data) = __pgorm_take_graph_field(&mut self.#field_ident) {
                     #insert_call
                 }
             }
