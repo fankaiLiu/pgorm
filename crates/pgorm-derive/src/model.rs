@@ -1,5 +1,10 @@
 //! Model derive macro implementation
 
+mod attrs;
+mod join;
+mod query;
+mod relations;
+
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::HashMap;

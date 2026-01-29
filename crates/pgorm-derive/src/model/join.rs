@@ -1,0 +1,1 @@
+//! Join clause handling.
