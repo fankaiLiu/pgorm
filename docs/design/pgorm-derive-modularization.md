@@ -195,13 +195,13 @@ crates/pgorm-derive/src/
 
 #### 1.6 搬生成逻辑（base → graph）
 
-- [ ] `insert_model/gen_base.rs`：与 graph 无关的 insert/upsert/returning 生成
-- [ ] `insert_model/gen_graph.rs`：`generate_insert_graph_methods` + `generate_*` helpers
-- [ ] `insert_model.rs` 只做 orchestrate：parse → 组装 → quote 输出
+- [x] `insert_model/gen_base.rs`：与 graph 无关的 insert/upsert/returning 生成
+- [x] `insert_model/gen_graph.rs`：`generate_insert_graph_methods` + `generate_*` helpers
+- [x] `insert_model.rs` 只做 orchestrate：parse → 组装 → quote 输出
 
 **检查点（必须过）**
 
-- [ ] `cargo test --workspace --no-run`
+- [x] `cargo test --workspace --no-run`
 - [ ] （可选）`cargo fmt --all --check`
 
 ---
@@ -231,13 +231,13 @@ crates/pgorm-derive/src/
 #### 2.3 搬生成（base → graph → children）
 
 - [x] `update_model/types.rs`：`option_inner`（以及其它小型类型工具，如果有）
-- [ ] `update_model/gen_base.rs`：`update_by_id/update_by_ids/*_returning`
-- [ ] `update_model/gen_children.rs`：has_many/has_one 子表生成
-- [ ] `update_model/gen_graph.rs`：`generate_update_graph_methods`（组合 children 生成）
+- [x] `update_model/gen_base.rs`：`update_by_id/update_by_ids/*_returning`
+- [x] `update_model/gen_children.rs`：has_many/has_one 子表生成
+- [x] `update_model/gen_graph.rs`：`generate_update_graph_methods`（组合 children 生成）
 
 **检查点（必须过）**
 
-- [ ] `cargo test --workspace --no-run`
+- [x] `cargo test --workspace --no-run`
 - [ ] （可选）`cargo fmt --all --check`
 
 ---
@@ -256,17 +256,17 @@ crates/pgorm-derive/src/
 
 #### 3.2 先拆 Query（风险可控、收益最高）
 
-- [ ] 把 `generate_query_struct` 迁到 `model/query.rs`
-- [ ] 在 `model/query.rs` 内再细分为小函数（只拆函数，不改行为）：
-  - [ ] `gen_column_consts`
-  - [ ] `gen_filtering_methods`
-  - [ ] `gen_ordering_methods`
-  - [ ] `gen_pagination_methods`
-  - [ ] `gen_execution_methods`
+- [x] 把 `generate_query_struct` 迁到 `model/query.rs`
+- [x] 在 `model/query.rs` 内再细分为小函数（只拆函数，不改行为）：
+  - [x] `gen_column_consts`
+  - [x] `gen_filtering_methods`
+  - [x] `gen_ordering_methods`
+  - [x] `gen_pagination_methods`
+  - [x] `gen_execution_methods`
 
 **检查点**
 
-- [ ] `cargo test --workspace --no-run`
+- [x] `cargo test --workspace --no-run`
 
 #### 3.3 拆 attrs / join / relations
 
