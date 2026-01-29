@@ -28,6 +28,11 @@
 
 > 为了避免“先填一个 Default 再被覆盖”的反直觉用法，并保持 UpdateModel 的 patch 语义，`auto_now*` 只允许用在 `Option<T>` 字段上。
 
+时间来源：
+
+- `DateTime<Utc>`：`chrono::Utc::now()`
+- `NaiveDateTime`：`chrono::Utc::now().naive_utc()`
+
 ## 示例
 
 ### InsertModel：`created_at` / `updated_at`
@@ -69,7 +74,7 @@ let _affected = NewPost {
     title: "Backfill".into(),
     content: "…".into(),
     created_at: Some(fixed_time),
-    updated_at: Some(fixed_time),
+    updated_at: Some(fixed_time.clone()),
 }
 .insert(&client)
 .await?;
@@ -117,8 +122,8 @@ let affected = PostPatch {
 
 如果你希望以数据库时间为准（避免应用机时钟漂移），推荐直接使用 Postgres 的显式机制：
 
-- INSERT：列上设置 `DEFAULT NOW()`，并在 InsertModel 上用 `#[orm(default)]` 省略该列
-- UPDATE：使用 trigger 维护 `updated_at`（或在手写 SQL 中显式 `updated_at = NOW()`）
+- INSERT：列上设置 `DEFAULT NOW()`，并在 InsertModel 上用 `#[orm(default)]` 生成 `... = DEFAULT`（由数据库填充）
+- UPDATE：使用 trigger 维护 `updated_at`；或把列默认值也设为 `NOW()` 并在 UpdateModel 上用 `#[orm(default)]` 生成 `updated_at = DEFAULT`
 
 pgorm 倾向保持 SQL 显式，因此不额外引入 `auto_now_db` 之类的变体。
 

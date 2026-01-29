@@ -276,6 +276,7 @@ fn parse_constraint_name(s: &str) -> Option<&str> {
 ### InsertModel：创建用户
 
 ```rust
+use pgorm::changeset::{Changeset, ConstraintMapping, ValidationCode, ValidationErrors};
 use pgorm::{InsertModel, OrmError, OrmResult};
 
 #[derive(InsertModel)]
@@ -333,6 +334,7 @@ pub async fn create_user(conn: &impl pgorm::GenericClient, input: NewUser) -> Or
 ### UpdateModel：只校验被更新的字段
 
 ```rust
+use pgorm::changeset::Changeset;
 use pgorm::UpdateModel;
 
 #[derive(UpdateModel)]
@@ -356,7 +358,7 @@ fn update_user_changeset(patch: UpdateUser) -> Changeset<UpdateUser> {
 ## 与现有设计的关系
 
 - **和 `UpdateModel` 的 Option patch 互补**：`UpdateModel` 负责“哪些字段写入 SQL”，changeset 负责“写入前校验并收集错误”。
-- **和 hooks 的关系**：如果后续实现 `BeforeInsert` / `BeforeUpdate` hooks，changeset 可以作为 hooks 内部的校验工具（但仍保持“显式调用”的原则）。
+- **和 hook 系统（QueryHook）的关系**：QueryHook 面向 SQL 执行（只看 SQL/QueryContext），适合做 guard/观测；字段级校验仍建议在应用层/仓储层显式调用 changeset，再调用 insert/update。
 
 ## 实现检查清单
 
