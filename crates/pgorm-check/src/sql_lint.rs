@@ -353,7 +353,10 @@ pub fn lint_sql(sql: &str) -> LintResult {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
             code: "E001",
-            message: format!("SQL syntax error: {}", parse_result.error.unwrap_or_default()),
+            message: format!(
+                "SQL syntax error: {}",
+                parse_result.error.unwrap_or_default()
+            ),
         });
         return result;
     }
@@ -432,7 +435,10 @@ pub fn lint_select_many(sql: &str) -> LintResult {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
             code: "E001",
-            message: format!("SQL syntax error: {}", parse_result.error.unwrap_or_default()),
+            message: format!(
+                "SQL syntax error: {}",
+                parse_result.error.unwrap_or_default()
+            ),
         });
         return result;
     }
@@ -546,7 +552,10 @@ fn extract_error_location(error: &str) -> Option<usize> {
     // Format: "... at position N" or similar
     if let Some(pos) = error.rfind("position ") {
         let after_pos = &error[pos + 9..];
-        let num_str: String = after_pos.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let num_str: String = after_pos
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
         return num_str.parse().ok();
     }
     None

@@ -31,9 +31,8 @@ pub struct SqlCheckIssue {
 }
 
 pub fn check_sql(schema: &DbSchema, sql: &str) -> CheckResult<Vec<SqlCheckIssue>> {
-    let parsed = pg_query::parse(sql).map_err(|e| {
-        CheckError::Validation(format!("pg_query parse failed: {e}"))
-    })?;
+    let parsed = pg_query::parse(sql)
+        .map_err(|e| CheckError::Validation(format!("pg_query parse failed: {e}")))?;
 
     let mut issues = Vec::<SqlCheckIssue>::new();
 
@@ -108,11 +107,10 @@ pub fn check_sql(schema: &DbSchema, sql: &str) -> CheckResult<Vec<SqlCheckIssue>
     }
 
     // System columns exist on every table but are not exposed via our introspection query.
-    let system_columns: std::collections::HashSet<&'static str> = [
-        "ctid", "xmin", "xmax", "cmin", "cmax", "tableoid",
-    ]
-    .into_iter()
-    .collect();
+    let system_columns: std::collections::HashSet<&'static str> =
+        ["ctid", "xmin", "xmax", "cmin", "cmax", "tableoid"]
+            .into_iter()
+            .collect();
 
     for (node, _depth, _context, _has_filter_columns) in parsed.protobuf.nodes() {
         if let pg_query::NodeRef::ColumnRef(c) = node {
@@ -222,9 +220,7 @@ pub fn check_sql(schema: &DbSchema, sql: &str) -> CheckResult<Vec<SqlCheckIssue>
                     issues.push(SqlCheckIssue {
                         level: SqlCheckLevel::Error,
                         kind: SqlCheckIssueKind::MissingColumn,
-                        message: format!(
-                            "Column not found: {schema_part}.{table_part}.{col_part}"
-                        ),
+                        message: format!("Column not found: {schema_part}.{table_part}.{col_part}"),
                         location: Some(c.location),
                     });
                 }

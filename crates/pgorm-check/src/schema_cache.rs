@@ -1,6 +1,6 @@
 use crate::client::CheckClient;
 use crate::error::{CheckError, CheckResult};
-use crate::schema_introspect::{load_schema_from_db, schema_fingerprint, DbSchema};
+use crate::schema_introspect::{DbSchema, load_schema_from_db, schema_fingerprint};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -84,7 +84,7 @@ fn read_cache_file(path: &Path) -> CheckResult<SchemaCache> {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(CheckError::Other(e.to_string()))
+            return Err(CheckError::Other(e.to_string()));
         }
         Err(e) => return Err(CheckError::Other(e.to_string())),
     };
@@ -106,4 +106,3 @@ fn write_cache_file(path: &Path, cache: &SchemaCache) -> CheckResult<()> {
     std::fs::rename(&tmp_path, path).map_err(|e| CheckError::Other(e.to_string()))?;
     Ok(())
 }
-

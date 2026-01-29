@@ -9,8 +9,8 @@
 use colored::Colorize;
 use deadpool_postgres::{Config, Runtime};
 use pgorm_check::{
-    check_sql_cached, CheckClient, CheckError, SchemaCache, SchemaCacheConfig, SchemaCacheLoad,
-    SqlCheckIssueKind, SqlCheckLevel,
+    CheckClient, CheckError, SchemaCache, SchemaCacheConfig, SchemaCacheLoad, SqlCheckIssueKind,
+    SqlCheckLevel, check_sql_cached,
 };
 use std::{env, path::PathBuf};
 use tokio_postgres::NoTls;
@@ -33,7 +33,10 @@ impl CheckClient for PoolClient {
         sql: &str,
         params: &[&(dyn tokio_postgres::types::ToSql + Sync)],
     ) -> pgorm_check::CheckResult<tokio_postgres::Row> {
-        self.0.query_one(sql, params).await.map_err(CheckError::from)
+        self.0
+            .query_one(sql, params)
+            .await
+            .map_err(CheckError::from)
     }
 
     async fn execute(

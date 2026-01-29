@@ -49,13 +49,11 @@ pub use schema_cache::{SchemaCache, SchemaCacheConfig, SchemaCacheLoad};
 pub use schema_introspect::{ColumnInfo, DbSchema, RelationKind, TableInfo};
 
 #[cfg(feature = "sql")]
-pub use sql_check::{
-    SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel, check_sql, check_sql_cached,
-};
+pub use sql_check::{SqlCheckIssue, SqlCheckIssueKind, SqlCheckLevel, check_sql, check_sql_cached};
 
 #[cfg(feature = "sql")]
 pub use sql_lint::{
-    ColumnRef, LintIssue, LintLevel, LintResult, ParseResult, StatementKind,
-    delete_has_where, detect_statement_kind, get_column_refs, get_table_names, is_valid_sql,
-    lint_select_many, lint_sql, select_has_limit, select_has_star, update_has_where,
+    ColumnRef, LintIssue, LintLevel, LintResult, ParseResult, StatementKind, delete_has_where,
+    detect_statement_kind, get_column_refs, get_table_names, is_valid_sql, lint_select_many,
+    lint_sql, select_has_limit, select_has_star, update_has_where,
 };

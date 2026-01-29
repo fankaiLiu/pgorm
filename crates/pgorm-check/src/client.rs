@@ -4,8 +4,8 @@
 //! allowing pgorm-check to work independently of pgorm.
 
 use crate::error::{CheckError, CheckResult};
-use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
+use tokio_postgres::types::ToSql;
 
 /// A trait for types that can execute PostgreSQL queries.
 ///
