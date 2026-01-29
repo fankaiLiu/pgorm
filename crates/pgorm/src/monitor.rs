@@ -4,7 +4,7 @@
 //! - Monitoring SQL execution time
 //! - Hooking into SQL execution lifecycle (before/after execution)
 //! - Logging and metrics collection
-//! - Query timeout with automatic cancellation
+//! - Query timeout with best-effort cancellation
 //!
 //! # Example
 //!
@@ -645,22 +645,37 @@ impl<C: GenericClient> InstrumentedClient<C> {
 
     async fn execute_with_timeout<T, F>(&self, future: F) -> OrmResult<T>
     where
-        F: std::future::Future<Output = OrmResult<T>>,
+        F: std::future::Future<Output = OrmResult<T>> + Send,
     {
         match self.config.query_timeout {
             Some(timeout) => {
-                tokio::time::timeout(timeout, future)
-                    .await
-                    .map_err(|_| OrmError::Timeout(timeout))?
+                tokio::pin!(future);
+                tokio::select! {
+                    result = &mut future => result,
+                    _ = tokio::time::sleep(timeout) => {
+                        if let Some(cancel_token) = self.client.cancel_token() {
+                            tokio::spawn(async move {
+                                let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+                            });
+                        }
+                        Err(OrmError::Timeout(timeout))
+                    }
+                }
             }
             None => future.await,
         }
     }
-}
 
-impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
-    async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
-        let ctx = QueryContext::new(sql, params.len());
+    async fn query_inner(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+        tag: Option<&str>,
+    ) -> OrmResult<Vec<Row>> {
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
 
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
@@ -685,8 +700,16 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
         result
     }
 
-    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
-        let ctx = QueryContext::new(sql, params.len());
+    async fn query_one_inner(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+        tag: Option<&str>,
+    ) -> OrmResult<Row> {
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
 
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
@@ -712,8 +735,16 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
         result
     }
 
-    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
-        let ctx = QueryContext::new(sql, params.len());
+    async fn query_opt_inner(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+        tag: Option<&str>,
+    ) -> OrmResult<Option<Row>> {
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
 
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
@@ -739,8 +770,16 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
         result
     }
 
-    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
-        let ctx = QueryContext::new(sql, params.len());
+    async fn execute_inner(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+        tag: Option<&str>,
+    ) -> OrmResult<u64> {
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
 
         if self.config.monitoring_enabled {
             self.monitor.on_query_start(&ctx);
@@ -763,6 +802,64 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
 
         self.report_result(&ctx, duration, &query_result);
         result
+    }
+}
+
+impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
+    async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+        self.query_inner(sql, params, None).await
+    }
+
+    async fn query_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Vec<Row>> {
+        self.query_inner(sql, params, Some(tag)).await
+    }
+
+    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+        self.query_one_inner(sql, params, None).await
+    }
+
+    async fn query_one_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Row> {
+        self.query_one_inner(sql, params, Some(tag)).await
+    }
+
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        self.query_opt_inner(sql, params, None).await
+    }
+
+    async fn query_opt_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Option<Row>> {
+        self.query_opt_inner(sql, params, Some(tag)).await
+    }
+
+    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+        self.execute_inner(sql, params, None).await
+    }
+
+    async fn execute_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<u64> {
+        self.execute_inner(sql, params, Some(tag)).await
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        self.client.cancel_token()
     }
 }
 
@@ -858,5 +955,85 @@ mod tests {
             HookAction::Abort(reason) => assert_eq!(reason, "DELETE not allowed"),
             _ => panic!("Expected Abort"),
         }
+    }
+
+    #[tokio::test]
+    async fn tagged_queries_propagate_to_monitor() {
+        #[derive(Default)]
+        struct TagCapture(std::sync::Mutex<Option<String>>);
+
+        impl QueryMonitor for TagCapture {
+            fn on_query_complete(&self, ctx: &QueryContext, _: Duration, _: &QueryResult) {
+                *self.0.lock().unwrap() = ctx.tag.clone();
+            }
+        }
+
+        struct DummyClient;
+        impl GenericClient for DummyClient {
+            async fn query(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+                Ok(vec![])
+            }
+            async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+                Err(OrmError::not_found("no rows"))
+            }
+            async fn query_opt(
+                &self,
+                _: &str,
+                _: &[&(dyn ToSql + Sync)],
+            ) -> OrmResult<Option<Row>> {
+                Ok(None)
+            }
+            async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+                Ok(0)
+            }
+        }
+
+        let capture = Arc::new(TagCapture::default());
+        let client = InstrumentedClient::new(DummyClient)
+            .with_config(MonitorConfig::new().enable_monitoring())
+            .with_monitor_arc(capture.clone());
+
+        client
+            .query_tagged("test-tag", "SELECT 1", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            capture.0.lock().unwrap().as_deref(),
+            Some("test-tag")
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_returns_error_and_attempts_cancellation() {
+        struct HangingClient;
+        impl GenericClient for HangingClient {
+            async fn query(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(vec![])
+            }
+            async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+                Err(OrmError::not_found("unused"))
+            }
+            async fn query_opt(
+                &self,
+                _: &str,
+                _: &[&(dyn ToSql + Sync)],
+            ) -> OrmResult<Option<Row>> {
+                Ok(None)
+            }
+            async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+                Ok(0)
+            }
+        }
+
+        let client = InstrumentedClient::new(HangingClient).with_config(
+            MonitorConfig::new()
+                .with_query_timeout(Duration::from_millis(10))
+                .enable_monitoring(),
+        );
+
+        let err = client.query("SELECT pg_sleep(60)", &[]).await.unwrap_err();
+        assert!(matches!(err, OrmError::Timeout(_)));
     }
 }

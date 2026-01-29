@@ -66,35 +66,30 @@ impl PgType for Vec<u8> {
     }
 }
 
-#[cfg(feature = "uuid")]
 impl PgType for uuid::Uuid {
     fn pg_array_type() -> &'static str {
         "uuid[]"
     }
 }
 
-#[cfg(feature = "chrono")]
 impl PgType for chrono::NaiveDate {
     fn pg_array_type() -> &'static str {
         "date[]"
     }
 }
 
-#[cfg(feature = "chrono")]
 impl PgType for chrono::NaiveTime {
     fn pg_array_type() -> &'static str {
         "time[]"
     }
 }
 
-#[cfg(feature = "chrono")]
 impl PgType for chrono::NaiveDateTime {
     fn pg_array_type() -> &'static str {
         "timestamp[]"
     }
 }
 
-#[cfg(feature = "chrono")]
 impl<Tz: chrono::TimeZone> PgType for chrono::DateTime<Tz> {
     fn pg_array_type() -> &'static str {
         "timestamptz[]"

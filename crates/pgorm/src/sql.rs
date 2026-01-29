@@ -20,8 +20,10 @@
 //! ```
 
 use crate::client::GenericClient;
+use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
 use crate::row::FromRow;
+use std::sync::Arc;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Row;
 
@@ -37,7 +39,7 @@ enum SqlPart {
 /// placeholders automatically in the final SQL string.
 pub struct Sql {
     parts: Vec<SqlPart>,
-    params: Vec<Box<dyn ToSql + Sync + Send>>,
+    params: Vec<Arc<dyn ToSql + Sync + Send>>,
 }
 
 /// Start building a SQL statement.
@@ -81,7 +83,13 @@ impl Sql {
         T: ToSql + Sync + Send + 'static,
     {
         self.parts.push(SqlPart::Param);
-        self.params.push(Box::new(value));
+        self.params.push(Arc::new(value));
+        self
+    }
+
+    pub(crate) fn push_bind_value(&mut self, value: Arc<dyn ToSql + Sync + Send>) -> &mut Self {
+        self.parts.push(SqlPart::Param);
+        self.params.push(value);
         self
     }
 
@@ -102,7 +110,7 @@ impl Sql {
         T: ToSql + Sync + Send + 'static,
     {
         // Only add the parameter, don't add a placeholder (the SQL already has $1, $2, ...)
-        self.params.push(Box::new(value));
+        self.params.push(Arc::new(value));
         self
     }
 
@@ -276,11 +284,78 @@ impl Sql {
         let params = self.params_ref();
         conn.execute(&sql, &params).await
     }
+
+    /// Append a [`Condition`] to this SQL builder.
+    ///
+    /// This uses `Sql`'s placeholder generation to keep parameter indices correct.
+    pub fn push_condition(&mut self, condition: &Condition) -> &mut Self {
+        condition.append_to_sql(self);
+        self
+    }
+
+    /// Append multiple [`Condition`]s joined by `AND`.
+    ///
+    /// If `conditions` is empty, this is a no-op.
+    pub fn push_conditions_and(&mut self, conditions: &[Condition]) -> &mut Self {
+        for (i, cond) in conditions.iter().enumerate() {
+            if i > 0 {
+                self.push(" AND ");
+            }
+            self.push_condition(cond);
+        }
+        self
+    }
+
+    /// Append a `WHERE ...` clause composed of [`Condition`]s joined by `AND`.
+    ///
+    /// If `conditions` is empty, this is a no-op.
+    pub fn push_where_and(&mut self, conditions: &[Condition]) -> &mut Self {
+        if conditions.is_empty() {
+            return self;
+        }
+        self.push(" WHERE ");
+        self.push_conditions_and(conditions)
+    }
+
+    /// Execute the built SQL tagged (if the underlying client supports it) and return all rows.
+    pub async fn fetch_all_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Vec<Row>> {
+        self.validate()?;
+        let sql = self.to_sql();
+        let params = self.params_ref();
+        conn.query_tagged(tag, &sql, &params).await
+    }
+
+    /// Execute the built SQL tagged (if the underlying client supports it) and return all rows mapped to `T`.
+    pub async fn fetch_all_tagged_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Vec<T>> {
+        let rows = self.fetch_all_tagged(conn, tag).await?;
+        rows.iter().map(T::from_row).collect()
+    }
+
+    /// Execute the built SQL tagged (if the underlying client supports it) and return affected row count.
+    pub async fn execute_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<u64> {
+        self.validate()?;
+        let sql = self.to_sql();
+        let params = self.params_ref();
+        conn.execute_tagged(tag, &sql, &params).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::condition::Condition;
 
     #[test]
     fn builds_placeholders_in_order() {
@@ -339,5 +414,33 @@ mod tests {
         assert!(q.push_ident("users..name").is_err());
         assert!(q.push_ident("users name").is_err());
     }
-}
 
+    #[test]
+    fn can_append_condition_as_placeholders() {
+        let mut q = sql("SELECT * FROM users WHERE ");
+        q.push_condition(&Condition::eq("id", 42_i64));
+
+        assert_eq!(q.to_sql(), "SELECT * FROM users WHERE id = $1");
+        assert_eq!(q.params_ref().len(), 1);
+    }
+
+    #[test]
+    fn condition_placeholders_compose_with_push_bind() {
+        let mut q = sql("SELECT * FROM users WHERE a = ");
+        q.push_bind(1_i64);
+        q.push(" AND ");
+        q.push_condition(&Condition::eq("b", "x"));
+
+        assert_eq!(q.to_sql(), "SELECT * FROM users WHERE a = $1 AND b = $2");
+        assert_eq!(q.params_ref().len(), 2);
+    }
+
+    #[test]
+    fn empty_in_list_condition_is_valid_sql() {
+        let mut q = sql("SELECT * FROM users WHERE ");
+        q.push_condition(&Condition::in_list::<i32>("id", vec![]));
+
+        assert_eq!(q.to_sql(), "SELECT * FROM users WHERE 1=0");
+        assert_eq!(q.params_ref().len(), 0);
+    }
+}

@@ -334,6 +334,12 @@ impl<C> PgClient<C> {
         self
     }
 
+    /// Add a custom query monitor from an `Arc`.
+    pub fn with_monitor_arc(mut self, monitor: Arc<dyn QueryMonitor>) -> Self {
+        self.custom_monitor = Some(monitor);
+        self
+    }
+
     /// Add a query hook.
     pub fn with_hook<H: QueryHook + 'static>(mut self, hook: H) -> Self {
         self.hook = Some(Arc::new(hook));
@@ -550,12 +556,19 @@ impl<C: GenericClient> PgClient<C> {
     /// Execute with timeout if configured.
     async fn execute_with_timeout<T, F>(&self, future: F) -> OrmResult<T>
     where
-        F: std::future::Future<Output = OrmResult<T>>,
+        F: std::future::Future<Output = OrmResult<T>> + Send,
     {
         match self.config.query_timeout {
             Some(timeout) => tokio::time::timeout(timeout, future)
                 .await
-                .map_err(|_| OrmError::Timeout(timeout))?,
+                .map_err(|_| {
+                    if let Some(cancel_token) = self.client.cancel_token() {
+                        tokio::spawn(async move {
+                            let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+                        });
+                    }
+                    OrmError::Timeout(timeout)
+                })?,
             None => future.await,
         }
     }
@@ -706,10 +719,76 @@ impl<C: GenericClient> PgClient<C> {
 
 impl<C: GenericClient> GenericClient for PgClient<C> {
     async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+        self.query_impl(None, sql, params).await
+    }
+
+    async fn query_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Vec<Row>> {
+        self.query_impl(Some(tag), sql, params).await
+    }
+
+    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+        self.query_one_impl(None, sql, params).await
+    }
+
+    async fn query_one_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Row> {
+        self.query_one_impl(Some(tag), sql, params).await
+    }
+
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        self.query_opt_impl(None, sql, params).await
+    }
+
+    async fn query_opt_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Option<Row>> {
+        self.query_opt_impl(Some(tag), sql, params).await
+    }
+
+    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+        self.execute_impl(None, sql, params).await
+    }
+
+    async fn execute_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<u64> {
+        self.execute_impl(Some(tag), sql, params).await
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        self.client.cancel_token()
+    }
+}
+
+impl<C: GenericClient> PgClient<C> {
+    async fn query_impl(
+        &self,
+        tag: Option<&str>,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Vec<Row>> {
         // Check SQL first
         self.check_sql(sql)?;
 
-        let ctx = QueryContext::new(sql, params.len());
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
 
         // Process hook
         let modified_sql = self.process_hook(&ctx)?;
@@ -733,10 +812,18 @@ impl<C: GenericClient> GenericClient for PgClient<C> {
         result
     }
 
-    async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+    async fn query_one_impl(
+        &self,
+        tag: Option<&str>,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Row> {
         self.check_sql(sql)?;
 
-        let ctx = QueryContext::new(sql, params.len());
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
@@ -757,10 +844,18 @@ impl<C: GenericClient> GenericClient for PgClient<C> {
         result
     }
 
-    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+    async fn query_opt_impl(
+        &self,
+        tag: Option<&str>,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Option<Row>> {
         self.check_sql(sql)?;
 
-        let ctx = QueryContext::new(sql, params.len());
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
@@ -781,10 +876,18 @@ impl<C: GenericClient> GenericClient for PgClient<C> {
         result
     }
 
-    async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+    async fn execute_impl(
+        &self,
+        tag: Option<&str>,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<u64> {
         self.check_sql(sql)?;
 
-        let ctx = QueryContext::new(sql, params.len());
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
         let modified_sql = self.process_hook(&ctx)?;
         let effective_sql = modified_sql.as_deref().unwrap_or(sql);
 
@@ -808,6 +911,8 @@ impl<C: GenericClient> GenericClient for PgClient<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_postgres::types::ToSql;
+    use tokio_postgres::Row;
 
     #[test]
     fn test_config_defaults() {
@@ -827,5 +932,50 @@ mod tests {
         assert_eq!(config.check_mode, CheckMode::Strict);
         assert_eq!(config.query_timeout, Some(Duration::from_secs(30)));
         assert!(config.logging_enabled);
+    }
+
+    #[tokio::test]
+    async fn tagged_queries_propagate_to_custom_monitor() {
+        #[derive(Default)]
+        struct TagCapture(std::sync::Mutex<Option<String>>);
+
+        impl QueryMonitor for TagCapture {
+            fn on_query_complete(&self, ctx: &QueryContext, _: Duration, _: &QueryResult) {
+                *self.0.lock().unwrap() = ctx.tag.clone();
+            }
+        }
+
+        struct DummyClient;
+        impl GenericClient for DummyClient {
+            async fn query(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+                Ok(vec![])
+            }
+            async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+                Err(OrmError::not_found("no rows"))
+            }
+            async fn query_opt(
+                &self,
+                _: &str,
+                _: &[&(dyn ToSql + Sync)],
+            ) -> OrmResult<Option<Row>> {
+                Ok(None)
+            }
+            async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+                Ok(0)
+            }
+        }
+
+        let capture = std::sync::Arc::new(TagCapture::default());
+        let pg = PgClient::with_config(DummyClient, PgClientConfig::new().no_check())
+            .with_monitor_arc(capture.clone());
+
+        pg.query_tagged("test-tag", "SELECT 1", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            capture.0.lock().unwrap().as_deref(),
+            Some("test-tag")
+        );
     }
 }

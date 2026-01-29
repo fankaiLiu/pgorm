@@ -196,9 +196,29 @@ impl<C: GenericClient> GenericClient for CheckedClient<C> {
         self.client.query(sql, params).await
     }
 
+    async fn query_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Vec<Row>> {
+        self.check_sql(sql)?;
+        self.client.query_tagged(tag, sql, params).await
+    }
+
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         self.check_sql(sql)?;
         self.client.query_one(sql, params).await
+    }
+
+    async fn query_one_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Row> {
+        self.check_sql(sql)?;
+        self.client.query_one_tagged(tag, sql, params).await
     }
 
     async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
@@ -206,9 +226,33 @@ impl<C: GenericClient> GenericClient for CheckedClient<C> {
         self.client.query_opt(sql, params).await
     }
 
+    async fn query_opt_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Option<Row>> {
+        self.check_sql(sql)?;
+        self.client.query_opt_tagged(tag, sql, params).await
+    }
+
     async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
         self.check_sql(sql)?;
         self.client.execute(sql, params).await
+    }
+
+    async fn execute_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<u64> {
+        self.check_sql(sql)?;
+        self.client.execute_tagged(tag, sql, params).await
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        self.client.cancel_token()
     }
 }
 

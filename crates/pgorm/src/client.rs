@@ -16,6 +16,19 @@ pub trait GenericClient: Send + Sync {
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Vec<Row>>> + Send;
 
+    /// Execute a query and return all rows, associating a tag for monitoring/observability.
+    ///
+    /// The default implementation ignores `tag` and calls [`GenericClient::query`].
+    fn query_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Vec<Row>>> + Send {
+        let _ = tag;
+        self.query(sql, params)
+    }
+
     /// Execute a query and return exactly one row.
     ///
     /// Returns `OrmError::NotFound` if no rows are returned.
@@ -25,6 +38,19 @@ pub trait GenericClient: Send + Sync {
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Row>> + Send;
 
+    /// Execute a query and return exactly one row, associating a tag for monitoring/observability.
+    ///
+    /// The default implementation ignores `tag` and calls [`GenericClient::query_one`].
+    fn query_one_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Row>> + Send {
+        let _ = tag;
+        self.query_one(sql, params)
+    }
+
     /// Execute a query and return at most one row.
     fn query_opt(
         &self,
@@ -32,12 +58,45 @@ pub trait GenericClient: Send + Sync {
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Option<Row>>> + Send;
 
+    /// Execute a query and return at most one row, associating a tag for monitoring/observability.
+    ///
+    /// The default implementation ignores `tag` and calls [`GenericClient::query_opt`].
+    fn query_opt_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Option<Row>>> + Send {
+        let _ = tag;
+        self.query_opt(sql, params)
+    }
+
     /// Execute a statement and return the number of affected rows.
     fn execute(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<u64>> + Send;
+
+    /// Execute a statement and return the number of affected rows, associating a tag for monitoring/observability.
+    ///
+    /// The default implementation ignores `tag` and calls [`GenericClient::execute`].
+    fn execute_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<u64>> + Send {
+        let _ = tag;
+        self.execute(sql, params)
+    }
+
+    /// Return a cancellation token for the underlying connection, if supported.
+    ///
+    /// This enables best-effort server-side query cancellation in higher-level wrappers when a timeout triggers.
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        None
+    }
 }
 
 impl GenericClient for tokio_postgres::Client {
@@ -45,6 +104,10 @@ impl GenericClient for tokio_postgres::Client {
         tokio_postgres::Client::query(self, sql, params)
             .await
             .map_err(OrmError::from_db_error)
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        Some(tokio_postgres::Client::cancel_token(self))
     }
 
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
@@ -71,6 +134,10 @@ impl GenericClient for tokio_postgres::Transaction<'_> {
         tokio_postgres::Transaction::query(self, sql, params)
             .await
             .map_err(OrmError::from_db_error)
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        Some(tokio_postgres::Transaction::cancel_token(self))
     }
 
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
@@ -101,6 +168,10 @@ impl GenericClient for deadpool_postgres::Client {
         GenericClient::query(&**self, sql, params).await
     }
 
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        GenericClient::cancel_token(&**self)
+    }
+
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         let rows = GenericClient::query(self, sql, params).await?;
         rows.into_iter()
@@ -124,6 +195,10 @@ impl GenericClient for deadpool_postgres::ClientWrapper {
         GenericClient::query(&**self, sql, params).await
     }
 
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        GenericClient::cancel_token(&**self)
+    }
+
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         let rows = GenericClient::query(self, sql, params).await?;
         rows.into_iter()
@@ -145,6 +220,10 @@ impl GenericClient for deadpool_postgres::ClientWrapper {
 impl GenericClient for deadpool_postgres::Transaction<'_> {
     async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
         GenericClient::query(&**self, sql, params).await
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        GenericClient::cancel_token(&**self)
     }
 
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
@@ -201,6 +280,10 @@ impl GenericClient for PoolClient {
         GenericClient::query(&self.0, sql, params).await
     }
 
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        self.0.cancel_token()
+    }
+
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         GenericClient::query_one(&self.0, sql, params).await
     }
@@ -222,15 +305,55 @@ impl<C: GenericClient> GenericClient for &C {
         (*self).query(sql, params).await
     }
 
+    fn query_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Vec<Row>>> + Send {
+        (*self).query_tagged(tag, sql, params)
+    }
+
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         (*self).query_one(sql, params).await
+    }
+
+    fn query_one_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Row>> + Send {
+        (*self).query_one_tagged(tag, sql, params)
     }
 
     async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
         (*self).query_opt(sql, params).await
     }
 
+    fn query_opt_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Option<Row>>> + Send {
+        (*self).query_opt_tagged(tag, sql, params)
+    }
+
     async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
         (*self).execute(sql, params).await
+    }
+
+    fn execute_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<u64>> + Send {
+        (*self).execute_tagged(tag, sql, params)
+    }
+
+    fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
+        (*self).cancel_token()
     }
 }
