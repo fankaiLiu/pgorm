@@ -381,9 +381,9 @@ pub struct Pagination {
    - `StatementCached<C>` + 错误驱逐/重试策略
    - 文档化与默认配置建议
 
-## 风险与开放问题
+## 需要解决的问题
 
 - streaming + timeout：streaming 查询的 timeout/取消语义如何定义（选择每次 poll 超时）。
-- prepared statement 的“泛化计划”风险：某些查询 prepared 后可能出现性能退化，是否需要 allowlist/denylist 或按 statement kind 控制。
-- hook ModifySql 与 statement cache/统计的相互影响：，否提供“结构化 tag”替代方案并引导使用。
+- prepared statement 的“泛化计划”风险：某些查询 prepared 后可能出现性能退化，需要 allowlist/denylist 或按 statement kind 控制。
+- hook ModifySql 与 statement cache/统计的相互影响：，提供“结构化 tag”替代方案并引导使用。
 - WHERE/ORDER ident 校验的严格度：允许 `schema.table`、`table.column`、以及引用标识符（`"CamelCase"`）等。
