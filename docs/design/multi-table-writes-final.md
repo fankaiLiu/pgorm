@@ -192,8 +192,10 @@ pub async fn update_by_id_graph<I>(
     id: I,
 ) -> pgorm::OrmResult<u64>
 where
-    I: ::tokio_postgres::types::ToSql + Sync + Send + 'static;
+    I: ::tokio_postgres::types::ToSql + Sync + Send + Clone + 'static;
 ```
+
+说明：`update_by_id_graph*` 内部会把 `id` 绑定到多条 SQL（root UPDATE / root 存在性校验 / child DELETE/UPSERT/DIFF），因此需要 `Clone`（通常 `i64/Uuid` 等都是 cheap clone）。
 
 若该 `UpdateModel` 配置了 `#[orm(returning = "R")]`（或可从 `model` 推导），额外生成：
 
@@ -204,7 +206,7 @@ pub async fn update_by_id_graph_returning<I>(
     id: I,
 ) -> pgorm::OrmResult<R>
 where
-    I: ::tokio_postgres::types::ToSql + Sync + Send + 'static,
+    I: ::tokio_postgres::types::ToSql + Sync + Send + Clone + 'static,
     R: pgorm::FromRow;
 ```
 
@@ -217,7 +219,7 @@ pub async fn update_by_id_graph_report<I>(
     id: I,
 ) -> pgorm::OrmResult<pgorm::WriteReport<()>>
 where
-    I: ::tokio_postgres::types::ToSql + Sync + Send + 'static;
+    I: ::tokio_postgres::types::ToSql + Sync + Send + Clone + 'static;
 ```
 
 ---
@@ -302,19 +304,21 @@ where
 
 语义（最终要求）：
 
-- `set_fk_field` 与 `field` **互斥**：
-  - 两者同时提供：Validation error
-  - 两者都缺失且 `required = true`：Validation error
-- 如果 `set_fk_field` 已有值：跳过 belongs_to 写入
-- 否则：
-  - 从 `field` 取得 `ParentInsert`
-  - 执行 `insert_returning` 或 `upsert_returning`
-  - 用返回的 `R: ModelPk` 得到 parent_id，并写回到 root 的 `set_fk_field`
+- `set_fk_field` 与 `field` **字段值互斥**：
+  - 若 `self.<set_fk_field>.is_some()` 且 `self.<field>.is_some()`：Validation error
+- 如果 `set_fk_field` 已有值（`Some(_)`）：跳过 belongs_to 写入
+- 否则（`set_fk_field` 为 `None`）：
+  - 若 `field` 为 `Some(parent)`：执行 `insert_returning` 或 `upsert_returning`
+    - 用返回的 `R: ModelPk` 得到 parent_id，并写回到 root 的 `set_fk_field`
+  - 若 `field` 也为 `None`：
+    - `required = true`：Validation error
+    - `required = false`：no-op
 
 约束：
 
 - ParentInsert 必须配置 returning，并且 returning 类型实现 `ModelPk`
-- `set_fk_field` 类型通常为 `Option<Id>`（也允许非 Option：表示必须由 belongs_to 提供）
+- `field` 必须为 `Option<ParentInsert>`
+- `set_fk_field` 必须为 `Option<Id>`
 
 #### 6.1.3 before_insert / after_insert（纯编排步骤）
 
@@ -361,8 +365,9 @@ where
 - `field` 推荐类型：`Option<Vec<ChildInsert>>`
   - `None`：不触碰子表
   - `Some(vec)`：按 strategy 执行（空 vec 允许，语义见下）
-- `fk_column` 是子表列名（用于 DELETE 过滤）
+- `fk_column` 是子表列名（用于 DELETE 过滤；SQL 标识符，derive 编译期校验）
 - `fk_field` 是 child 的 Rust 字段名（用于注入 fk）；child 必须有 `with_<fk_field>(Id)`
+- `key_columns`（仅 diff）是“保留集合”的列名列表（逗号分隔；SQL 标识符，derive 编译期校验）
 - strategy 要求：
   - replace：先 delete，再 insert_many/upsert_many（取决于你选的实现；默认 insert_many）
   - append：只 insert_many
@@ -389,6 +394,7 @@ where
 推荐字段类型：`Option<Option<ChildInsert>>`
 
 - `None`：不触碰
+- `fk_column` 是子表列名（用于 DELETE 过滤；SQL 标识符，derive 编译期校验）
 - `Some(None)`：删除（`DELETE FROM child WHERE fk_column = $1`）
 - `Some(Some(v))`：
   - replace：删除旧行，再插入 v
@@ -427,6 +433,7 @@ diff 的难点是“删除缺失项”需要知道 keep keys，但我们不能�
 
 - child 必须支持 upsert（`conflict_target` 或 `conflict_constraint`，或主键 id 冲突）
 - `key_columns` 必须是能唯一标识一行（至少在 fk_scope 内）的列集合（建议与唯一约束一致）
+- `rows` 必须在 `key_columns`（且同一 `fk_value` 范围内）去重：同一个 key 不能在一次 diff 调用里出现多次，否则 Postgres 的 `ON CONFLICT DO UPDATE` 会直接报错
 
 实现策略（单语句 CTE，但 **由 child 的 InsertModel 生成 helper 执行**）：
 
@@ -481,7 +488,7 @@ SELECT (SELECT COUNT(*) FROM deleted) AS deleted_count;
 
 受影响行数建议定义为：
 
-- `upsert_count = rows.len() as u64`（每个输入行必然插入或更新一次；与 `execute()` 语义一致）
+- `upsert_count = rows.len() as u64`（前提：输入已按 `key_columns` 去重；每个输入行必然插入或更新一次；与 `execute()` 语义一致）
 - `affected = upsert_count + deleted_count`
 
 好处：
@@ -507,6 +514,7 @@ SELECT (SELECT COUNT(*) FROM deleted) AS deleted_count;
 规则（最终要求）：
 
 - `conflict_target` 与 `conflict_constraint` **互斥**（同时出现直接 derive 报错）
+- `conflict_target` / `conflict_update` 的每个元素，以及 `conflict_constraint`，都要求是 SQL 标识符（不带引号、无表前缀）；derive 编译期校验
 - 未配置上述两者时：
   - 若存在 `#[orm(id)]` 字段：默认以该列为冲突列（保持现有行为）
   - 否则：不生成 upsert 系列方法（调用方编译期看不到 upsert API）
