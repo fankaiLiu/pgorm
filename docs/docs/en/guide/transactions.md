@@ -23,6 +23,10 @@ pgorm::transaction!(&mut client, tx, {
 })?;
 ```
 
+## Next
+
+- Next: [`Migrations: refinery`](/en/guide/migrations)
+
 ## Manual Transaction Management
 
 You can also manage transactions manually:

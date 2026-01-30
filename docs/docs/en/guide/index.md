@@ -8,14 +8,14 @@ Add pgorm to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pgorm = "0.1.0"
+pgorm = "0.1.1"
 ```
 
 If you only want the SQL builder (no pool / derive macros / runtime SQL checking):
 
 ```toml
 [dependencies]
-pgorm = { version = "0.1.0", default-features = false }
+pgorm = { version = "0.1.1", default-features = false }
 ```
 
 ## Rust Toolchain
@@ -74,3 +74,24 @@ let user: User = query("SELECT id, username FROM users WHERE id = $1")
     .fetch_one_as(&client)
     .await?;
 ```
+
+## Suggested Reading Order
+
+If this is your first time using pgorm, this is a good path:
+
+1) Pooling & clients: [`create_pool` / TLS / recommended clients](/en/guide/pooling)  
+2) Hand-written SQL: [`query()`](/en/guide/query)  
+3) Dynamic SQL: [`sql()`](/en/guide/sql-builder)  
+4) Dynamic filters: [`Condition/WhereExpr/OrderBy/Pagination`](/en/guide/conditions)  
+5) Fetch semantics: [`fetch_one` vs `fetch_one_strict` vs `fetch_opt`](/en/guide/fetch-semantics)  
+6) Row mapping: [`FromRow` / `RowExt` / JSONB](/en/guide/from-row)  
+7) Models & derives: [`Model / InsertModel / UpdateModel`](/en/guide/models)  
+8) Relations: [`has_many` / `belongs_to`](/en/guide/relations)  
+9) Eager loading: [`load_*` helpers (avoid N+1)](/en/guide/eager-loading)  
+10) Writes: [`InsertModel`](/en/guide/insert-model) / [`UpdateModel`](/en/guide/update-model) / [`Upsert`](/en/guide/upsert)  
+11) Advanced writes: [`Write Graph`](/en/guide/write-graph)  
+12) Transactions: [`transaction!` / savepoints](/en/guide/transactions)  
+13) Migrations: [`refinery`](/en/guide/migrations)  
+14) Monitoring & hooks: [`InstrumentedClient`](/en/guide/monitoring)  
+15) Runtime SQL checks: [`PgClient / CheckedClient`](/en/guide/runtime-sql-check)  
+16) Input validation: [`#[orm(input)]` changeset style](/en/guide/validation-and-input)  

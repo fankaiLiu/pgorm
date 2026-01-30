@@ -6,8 +6,43 @@
   },
   {
     "type": "file",
+    "name": "pooling",
+    "label": "连接池"
+  },
+  {
+    "type": "file",
+    "name": "query",
+    "label": "手写 SQL：query()"
+  },
+  {
+    "type": "file",
+    "name": "sql-builder",
+    "label": "动态 SQL：sql()"
+  },
+  {
+    "type": "file",
+    "name": "conditions",
+    "label": "动态条件与分页"
+  },
+  {
+    "type": "file",
+    "name": "fetch-semantics",
+    "label": "Fetch 语义"
+  },
+  {
+    "type": "file",
+    "name": "from-row",
+    "label": "行映射：FromRow"
+  },
+  {
+    "type": "file",
     "name": "models",
     "label": "模型与派生宏"
+  },
+  {
+    "type": "file",
+    "name": "relations",
+    "label": "关系声明"
   },
   {
     "type": "file",
@@ -16,12 +51,47 @@
   },
   {
     "type": "file",
+    "name": "insert-model",
+    "label": "写入：InsertModel"
+  },
+  {
+    "type": "file",
+    "name": "update-model",
+    "label": "写入：UpdateModel"
+  },
+  {
+    "type": "file",
+    "name": "upsert",
+    "label": "写入：Upsert"
+  },
+  {
+    "type": "file",
+    "name": "write-graph",
+    "label": "高级写入：Write Graph"
+  },
+  {
+    "type": "file",
     "name": "transactions",
     "label": "事务"
   },
   {
     "type": "file",
-    "name": "pooling",
-    "label": "连接池"
+    "name": "migrations",
+    "label": "迁移"
+  },
+  {
+    "type": "file",
+    "name": "monitoring",
+    "label": "监控与 Hook"
+  },
+  {
+    "type": "file",
+    "name": "runtime-sql-check",
+    "label": "运行时 SQL 检查"
+  },
+  {
+    "type": "file",
+    "name": "validation-and-input",
+    "label": "输入校验与 Input"
   }
 ]

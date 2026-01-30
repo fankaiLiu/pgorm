@@ -94,3 +94,7 @@ struct User {
     meta: Json<Meta>, // jsonb column
 }
 ```
+
+## Next
+
+- Next: [`Relations: has_many / belongs_to`](/en/guide/relations)

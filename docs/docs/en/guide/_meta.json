@@ -6,8 +6,43 @@
   },
   {
     "type": "file",
+    "name": "pooling",
+    "label": "Connection Pooling"
+  },
+  {
+    "type": "file",
+    "name": "query",
+    "label": "Hand-written SQL: query()"
+  },
+  {
+    "type": "file",
+    "name": "sql-builder",
+    "label": "Dynamic SQL: sql()"
+  },
+  {
+    "type": "file",
+    "name": "conditions",
+    "label": "Dynamic Filters & Pagination"
+  },
+  {
+    "type": "file",
+    "name": "fetch-semantics",
+    "label": "Fetch Semantics"
+  },
+  {
+    "type": "file",
+    "name": "from-row",
+    "label": "Row Mapping: FromRow"
+  },
+  {
+    "type": "file",
     "name": "models",
     "label": "Models & Derive"
+  },
+  {
+    "type": "file",
+    "name": "relations",
+    "label": "Relations"
   },
   {
     "type": "file",
@@ -16,12 +51,47 @@
   },
   {
     "type": "file",
+    "name": "insert-model",
+    "label": "Writes: InsertModel"
+  },
+  {
+    "type": "file",
+    "name": "update-model",
+    "label": "Writes: UpdateModel"
+  },
+  {
+    "type": "file",
+    "name": "upsert",
+    "label": "Writes: Upsert"
+  },
+  {
+    "type": "file",
+    "name": "write-graph",
+    "label": "Advanced: Write Graph"
+  },
+  {
+    "type": "file",
     "name": "transactions",
     "label": "Transactions"
   },
   {
     "type": "file",
-    "name": "pooling",
-    "label": "Connection Pooling"
+    "name": "migrations",
+    "label": "Migrations"
+  },
+  {
+    "type": "file",
+    "name": "monitoring",
+    "label": "Monitoring & Hooks"
+  },
+  {
+    "type": "file",
+    "name": "runtime-sql-check",
+    "label": "Runtime SQL Checking"
+  },
+  {
+    "type": "file",
+    "name": "validation-and-input",
+    "label": "Validation & Input"
   }
 ]

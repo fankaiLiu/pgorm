@@ -68,3 +68,7 @@ async fn list_posts(conn: &impl GenericClient) -> pgorm::OrmResult<()> {
 // 如果任何文章没有作者将会报错
 let posts_with_author = Post::load_author_strict(conn, posts).await?;
 ```
+
+## 下一步
+
+- 下一章：[`写入：InsertModel`](/zh/guide/insert-model)

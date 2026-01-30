@@ -94,3 +94,7 @@ struct User {
     meta: Json<Meta>, // jsonb 列
 }
 ```
+
+## 下一步
+
+- 下一章：[`关系声明：has_many / belongs_to`](/zh/guide/relations)

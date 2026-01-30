@@ -79,3 +79,7 @@ mod embedded {
 let pool = create_pool(&database_url)?;
 migrate::run_pool(&pool, embedded::migrations::runner()).await?;
 ```
+
+## Next
+
+- Next: [`Hand-written SQL: query()`](/en/guide/query)

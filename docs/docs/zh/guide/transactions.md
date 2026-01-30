@@ -23,6 +23,10 @@ pgorm::transaction!(&mut client, tx, {
 })?;
 ```
 
+## 下一步
+
+- 下一章：[`迁移：refinery`](/zh/guide/migrations)
+
 ## 手动事务管理
 
 你也可以手动管理事务：

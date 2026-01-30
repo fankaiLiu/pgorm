@@ -68,3 +68,7 @@ Use the strict variant to require that a relation exists for every base row:
 // Will error if any post doesn't have an author
 let posts_with_author = Post::load_author_strict(conn, posts).await?;
 ```
+
+## Next
+
+- Next: [`Writes: InsertModel`](/en/guide/insert-model)

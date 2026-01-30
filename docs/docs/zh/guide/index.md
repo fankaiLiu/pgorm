@@ -8,14 +8,14 @@ pgorm 是一个专为 PostgreSQL 设计的 Rust ORM 库，保持 SQL 显式化�
 
 ```toml
 [dependencies]
-pgorm = "0.1.0"
+pgorm = "0.1.1"
 ```
 
 如果只需要 SQL 构建器（不需要连接池/派生宏/运行时 SQL 检查）：
 
 ```toml
 [dependencies]
-pgorm = { version = "0.1.0", default-features = false }
+pgorm = { version = "0.1.1", default-features = false }
 ```
 
 ## Rust 工具链
@@ -74,3 +74,24 @@ let user: User = query("SELECT id, username FROM users WHERE id = $1")
     .fetch_one_as(&client)
     .await?;
 ```
+
+## 学习路径（建议按顺序）
+
+如果你是第一次使用 pgorm，建议按下面的顺序阅读：
+
+1) 连接池：[`create_pool` / TLS / 推荐客户端](/zh/guide/pooling)  
+2) 手写 SQL：[`query()`](/zh/guide/query)  
+3) 动态 SQL：[`sql()`](/zh/guide/sql-builder)  
+4) 动态条件：[`Condition/WhereExpr/OrderBy/Pagination`](/zh/guide/conditions)  
+5) Fetch 语义：[`fetch_one` vs `fetch_one_strict` vs `fetch_opt`](/zh/guide/fetch-semantics)  
+6) 行映射：[`FromRow` / `RowExt` / JSONB](/zh/guide/from-row)  
+7) 模型与派生宏：[`Model / InsertModel / UpdateModel`](/zh/guide/models)  
+8) 关系声明：[`has_many` / `belongs_to`](/zh/guide/relations)  
+9) 预加载：[`load_*`（避免 N+1）](/zh/guide/eager-loading)  
+10) 写入：[`InsertModel`](/zh/guide/insert-model) / [`UpdateModel`](/zh/guide/update-model) / [`Upsert`](/zh/guide/upsert)  
+11) 高级写入：[`多表写入图（Write Graph）`](/zh/guide/write-graph)  
+12) 事务：[`transaction!` / 保存点](/zh/guide/transactions)  
+13) 迁移：[`refinery` 迁移](/zh/guide/migrations)  
+14) 监控与 Hook：[`InstrumentedClient`](/zh/guide/monitoring)  
+15) 运行时 SQL 检查：[`PgClient / CheckedClient`](/zh/guide/runtime-sql-check)  
+16) 输入校验：[`#[orm(input)]` changeset 风格](/zh/guide/validation-and-input)  

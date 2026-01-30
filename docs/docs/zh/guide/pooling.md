@@ -79,3 +79,7 @@ mod embedded {
 let pool = create_pool(&database_url)?;
 migrate::run_pool(&pool, embedded::migrations::runner()).await?;
 ```
+
+## 下一步
+
+- 下一章：[`手写 SQL：query()`](/zh/guide/query)
