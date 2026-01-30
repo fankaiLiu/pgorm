@@ -8,6 +8,7 @@
 //! ```
 
 pub use crate::{FromRow, GenericClient, OrmError, OrmResult, Query, RowExt, Sql, query, sql};
+pub use crate::{BelongsToMap, HasManyMap, Loaded};
 
 #[cfg(feature = "pool")]
 pub use crate::{create_pool, create_pool_with_config};

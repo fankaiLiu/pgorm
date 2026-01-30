@@ -23,6 +23,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 refinery = { version = "0.9.0", features = ["tokio-postgres"] }
+regex = "1.12.2"
+url = "2.5.8"
 
 # Proc macro dependencies
 syn = { version = "2", features = ["full"] }

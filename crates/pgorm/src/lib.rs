@@ -28,6 +28,7 @@
 mod builder;
 mod client;
 mod condition;
+pub mod changeset;
 mod error;
 mod ident;
 mod monitor;
@@ -36,6 +37,10 @@ pub mod prelude;
 mod row;
 mod sql;
 mod transaction;
+pub mod eager;
+
+#[cfg(feature = "validate")]
+pub mod validate;
 
 // SQL migrations (via refinery)
 #[cfg(feature = "migrate")]
@@ -44,6 +49,7 @@ pub mod migrate;
 pub use builder::{NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr};
 pub use client::GenericClient;
 pub use condition::{Condition, Op};
+pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
 pub use error::{OrmError, OrmResult};
 pub use ident::{Ident, IdentPart, IntoIdent};
 pub use monitor::{
@@ -54,6 +60,7 @@ pub use monitor::{
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Query, Sql, query, sql};
 pub use tokio_postgres::types::Json;
+pub use eager::{BelongsToMap, HasManyMap, Loaded};
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
@@ -89,6 +96,10 @@ pub use check::{
 // Re-export inventory for use by derive macros
 #[doc(hidden)]
 pub use inventory;
+
+// Re-export serde for derive-generated input structs.
+#[doc(hidden)]
+pub use serde;
 
 // Re-export CheckedClient and related types (lower-level API)
 #[doc(hidden)]

@@ -992,11 +992,13 @@ dependencies = [
  "pgorm-check",
  "pgorm-derive",
  "refinery",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tokio-postgres",
+ "url",
  "uuid",
 ]
 
@@ -1014,6 +1016,23 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+]
+
+[[package]]
+name = "pgorm-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "glob",
+ "heck",
+ "pg_query",
+ "pgorm-check",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "toml",
 ]
 
 [[package]]

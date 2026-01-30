@@ -14,6 +14,8 @@ chrono.workspace = true
 uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+regex = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 pgorm-derive = { workspace = true, optional = true }
 pgorm-check = { path = "../pgorm-check", features = ["sql"], optional = true }
 inventory = "0.3"
@@ -26,13 +28,16 @@ colored.workspace = true
 comfy-table.workspace = true
 
 [features]
-default = ["pool", "derive", "check"]
+default = ["pool", "derive", "check", "validate"]
 
 pool = ["deadpool-postgres"]
 derive = ["pgorm-derive"]
 
 # SQL schema checking and linting (via pgorm-check)
 check = ["pgorm-check"]
+
+# Changeset-style validation helpers (email/url/regex/etc)
+validate = ["dep:regex", "dep:url"]
 
 # SQL migrations (via refinery)
 migrate = ["dep:refinery"]
