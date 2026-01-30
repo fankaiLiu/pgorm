@@ -69,8 +69,18 @@ struct NewAuditLog {
     mode = "insert_returning",
     required = false
 ))]
-#[orm(has_one(NewProductDetail, field = "detail", fk_field = "product_id", mode = "insert"))]
-#[orm(has_many(NewProductTag, field = "tags", fk_field = "product_id", mode = "insert"))]
+#[orm(has_one(
+    NewProductDetail,
+    field = "detail",
+    fk_field = "product_id",
+    mode = "insert"
+))]
+#[orm(has_many(
+    NewProductTag,
+    field = "tags",
+    fk_field = "product_id",
+    mode = "insert"
+))]
 #[orm(after_insert(NewAuditLog, field = "audit", mode = "insert"))]
 struct NewProductGraph {
     // UUID root id (known before insert).
@@ -92,14 +102,20 @@ fn print_report(report: &WriteReport<Product>) {
     for s in &report.steps {
         println!("- {} affected={}", s.tag, s.affected);
     }
-    println!("root: {:?}", report.root.as_ref().map(|p| (&p.id, &p.name, p.category_id)));
+    println!(
+        "root: {:?}",
+        report
+            .root
+            .as_ref()
+            .map(|p| (&p.id, &p.name, p.category_id))
+    );
 }
 
 #[tokio::main]
 async fn main() -> OrmResult<()> {
     dotenvy::dotenv().ok();
-    let database_url =
-        env::var("DATABASE_URL").map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
 
     let (mut client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
@@ -109,11 +125,21 @@ async fn main() -> OrmResult<()> {
     });
 
     // Clean slate.
-    query("DROP TABLE IF EXISTS audit_logs CASCADE").execute(&client).await?;
-    query("DROP TABLE IF EXISTS product_tags CASCADE").execute(&client).await?;
-    query("DROP TABLE IF EXISTS product_details CASCADE").execute(&client).await?;
-    query("DROP TABLE IF EXISTS products CASCADE").execute(&client).await?;
-    query("DROP TABLE IF EXISTS categories CASCADE").execute(&client).await?;
+    query("DROP TABLE IF EXISTS audit_logs CASCADE")
+        .execute(&client)
+        .await?;
+    query("DROP TABLE IF EXISTS product_tags CASCADE")
+        .execute(&client)
+        .await?;
+    query("DROP TABLE IF EXISTS product_details CASCADE")
+        .execute(&client)
+        .await?;
+    query("DROP TABLE IF EXISTS products CASCADE")
+        .execute(&client)
+        .await?;
+    query("DROP TABLE IF EXISTS categories CASCADE")
+        .execute(&client)
+        .await?;
 
     query(
         "CREATE TABLE categories (

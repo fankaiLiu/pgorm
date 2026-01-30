@@ -6,7 +6,10 @@
 //! Requires:
 //!   DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
-use pgorm::{CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig, OrmError, OrmResult, QueryContext, QueryHook, StatsMonitor, query};
+use pgorm::{
+    CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig, OrmError,
+    OrmResult, QueryContext, QueryHook, StatsMonitor, query,
+};
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,8 +45,8 @@ impl QueryHook for BlockDangerousDeleteHook {
 #[tokio::main]
 async fn main() -> OrmResult<()> {
     dotenvy::dotenv().ok();
-    let database_url =
-        env::var("DATABASE_URL").map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
 
     let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
@@ -53,7 +56,9 @@ async fn main() -> OrmResult<()> {
     });
 
     // Minimal schema for the demo.
-    query("DROP TABLE IF EXISTS items CASCADE").execute(&client).await?;
+    query("DROP TABLE IF EXISTS items CASCADE")
+        .execute(&client)
+        .await?;
     query(
         "CREATE TABLE items (
             id BIGSERIAL PRIMARY KEY,
@@ -70,7 +75,11 @@ async fn main() -> OrmResult<()> {
 
     let stats = Arc::new(StatsMonitor::new());
     let monitor = CompositeMonitor::new()
-        .add(LoggingMonitor::new().prefix("[pgorm-monitor]").min_duration(Duration::from_millis(0)))
+        .add(
+            LoggingMonitor::new()
+                .prefix("[pgorm-monitor]")
+                .min_duration(Duration::from_millis(0)),
+        )
         .add_arc(stats.clone());
 
     let config = MonitorConfig::new()

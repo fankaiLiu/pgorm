@@ -21,7 +21,12 @@ struct Tag {
 
 /// UPSERT using a conflict target (columns).
 #[derive(Debug, Clone, InsertModel)]
-#[orm(table = "tags", returning = "Tag", conflict_target = "name", conflict_update = "color")]
+#[orm(
+    table = "tags",
+    returning = "Tag",
+    conflict_target = "name",
+    conflict_update = "color"
+)]
 struct TagUpsertByTarget {
     name: String,
     color: Option<String>,
@@ -43,8 +48,8 @@ struct TagUpsertByConstraint {
 #[tokio::main]
 async fn main() -> OrmResult<()> {
     dotenvy::dotenv().ok();
-    let database_url =
-        env::var("DATABASE_URL").map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
 
     let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
@@ -53,7 +58,9 @@ async fn main() -> OrmResult<()> {
         let _ = connection.await;
     });
 
-    query("DROP TABLE IF EXISTS tags CASCADE").execute(&client).await?;
+    query("DROP TABLE IF EXISTS tags CASCADE")
+        .execute(&client)
+        .await?;
     query(
         "CREATE TABLE tags (
             id BIGSERIAL PRIMARY KEY,

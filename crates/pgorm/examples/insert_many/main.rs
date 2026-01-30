@@ -39,8 +39,8 @@ struct NewProduct {
 #[tokio::main]
 async fn main() -> OrmResult<()> {
     dotenvy::dotenv().ok();
-    let database_url =
-        env::var("DATABASE_URL").map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
 
     let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
@@ -105,4 +105,3 @@ async fn main() -> OrmResult<()> {
 
     Ok(())
 }
-

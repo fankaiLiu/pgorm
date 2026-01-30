@@ -6,7 +6,10 @@
 //! Optional (run the query against a real DB):
 //!   DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
-use pgorm::{Condition, NullsOrder, Op, OrderBy, OrmError, OrmResult, Pagination, RowExt, WhereExpr, query, sql};
+use pgorm::{
+    Condition, NullsOrder, Op, OrderBy, OrmError, OrmResult, Pagination, RowExt, WhereExpr, query,
+    sql,
+};
 use std::env;
 
 #[derive(Debug)]
@@ -24,8 +27,7 @@ fn build_list_users_sql(filters: &Filters) -> OrmResult<pgorm::Sql> {
     let mut where_expr = WhereExpr::and(Vec::new());
 
     if let Some(status) = &filters.status {
-        where_expr =
-            where_expr.and_with(WhereExpr::atom(Condition::eq("status", status.clone())?));
+        where_expr = where_expr.and_with(WhereExpr::atom(Condition::eq("status", status.clone())?));
     }
 
     if let Some(search) = &filters.search {
@@ -55,7 +57,8 @@ fn build_list_users_sql(filters: &Filters) -> OrmResult<pgorm::Sql> {
     }
 
     // Safe dynamic ORDER BY (identifiers are validated).
-    let mut order = OrderBy::new().with_nulls("created_at", pgorm::SortDir::Desc, NullsOrder::Last)?;
+    let mut order =
+        OrderBy::new().with_nulls("created_at", pgorm::SortDir::Desc, NullsOrder::Last)?;
     if let Some(sort_by) = &filters.sort_by {
         order = order.asc(sort_by.as_str())?;
     }
@@ -100,7 +103,9 @@ async fn main() -> OrmResult<()> {
     });
 
     // Setup schema + seed data (idempotent for the demo).
-    query("DROP TABLE IF EXISTS users CASCADE").execute(&client).await?;
+    query("DROP TABLE IF EXISTS users CASCADE")
+        .execute(&client)
+        .await?;
     query(
         "CREATE TABLE users (
             id BIGSERIAL PRIMARY KEY,
@@ -120,7 +125,11 @@ async fn main() -> OrmResult<()> {
         ("carol", "disabled", "admin", false),
         ("dave", "active", "member", true),
     ] {
-        let deleted_at = if deleted { Some(chrono::Utc::now()) } else { None };
+        let deleted_at = if deleted {
+            Some(chrono::Utc::now())
+        } else {
+            None
+        };
         query(
             "INSERT INTO users (name, status, role, deleted_at)
              VALUES ($1, $2, $3, $4)",

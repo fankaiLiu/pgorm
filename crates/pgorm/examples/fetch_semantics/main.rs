@@ -15,8 +15,8 @@ use std::env;
 #[tokio::main]
 async fn main() -> OrmResult<()> {
     dotenvy::dotenv().ok();
-    let database_url =
-        env::var("DATABASE_URL").map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
 
     let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
@@ -25,7 +25,9 @@ async fn main() -> OrmResult<()> {
         let _ = connection.await;
     });
 
-    query("DROP TABLE IF EXISTS items CASCADE").execute(&client).await?;
+    query("DROP TABLE IF EXISTS items CASCADE")
+        .execute(&client)
+        .await?;
     query(
         "CREATE TABLE items (
             id BIGSERIAL PRIMARY KEY,
@@ -68,7 +70,10 @@ async fn main() -> OrmResult<()> {
         .bind(9999_i64)
         .fetch_opt(&client)
         .await?;
-    println!("fetch_opt => {}", if row.is_some() { "Some(row)" } else { "None" });
+    println!(
+        "fetch_opt => {}",
+        if row.is_some() { "Some(row)" } else { "None" }
+    );
 
     // fetch_one: NotFound when no rows match.
     match query("SELECT id FROM items WHERE id = $1")
@@ -83,4 +88,3 @@ async fn main() -> OrmResult<()> {
 
     Ok(())
 }
-

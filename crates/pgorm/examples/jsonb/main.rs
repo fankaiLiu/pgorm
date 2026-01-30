@@ -19,8 +19,8 @@ struct Meta {
 #[tokio::main]
 async fn main() -> OrmResult<()> {
     dotenvy::dotenv().ok();
-    let database_url =
-        env::var("DATABASE_URL").map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
+    let database_url = env::var("DATABASE_URL")
+        .map_err(|_| OrmError::Connection("DATABASE_URL is not set".into()))?;
 
     let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
@@ -29,7 +29,9 @@ async fn main() -> OrmResult<()> {
         let _ = connection.await;
     });
 
-    query("DROP TABLE IF EXISTS users CASCADE").execute(&client).await?;
+    query("DROP TABLE IF EXISTS users CASCADE")
+        .execute(&client)
+        .await?;
     query(
         "CREATE TABLE users (
             id BIGSERIAL PRIMARY KEY,
@@ -71,4 +73,3 @@ async fn main() -> OrmResult<()> {
 
     Ok(())
 }
-
