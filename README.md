@@ -26,6 +26,8 @@
 - JSONB support out of the box
 - SQL migrations via `refinery`
 - Runtime SQL checking for AI-generated queries
+- Query monitoring with metrics, hooks, and slow query detection
+- Input validation macros with automatic Input struct generation
 
 ## Installation
 
@@ -220,6 +222,161 @@ let report = NewProductGraph {
         NewProductTag { product_id: None, tag: "sale".into() },
     ]),
 }.insert_graph_report(&client).await?;
+```
+
+### Query Monitoring
+
+Monitor query performance with built-in metrics, logging, and custom hooks:
+
+```rust
+use pgorm::{
+    CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor,
+    MonitorConfig, QueryContext, QueryHook, StatsMonitor, query,
+};
+use std::sync::Arc;
+use std::time::Duration;
+
+// Custom hook to block dangerous DELETE without WHERE
+struct BlockDangerousDeleteHook;
+
+impl QueryHook for BlockDangerousDeleteHook {
+    fn before_query(&self, ctx: &QueryContext) -> HookAction {
+        if ctx.query_type == pgorm::QueryType::Delete {
+            let s = ctx.canonical_sql.to_ascii_lowercase();
+            if !s.contains(" where ") {
+                return HookAction::Abort("blocked: DELETE without WHERE".into());
+            }
+        }
+        HookAction::Continue
+    }
+}
+
+// Create monitors
+let stats = Arc::new(StatsMonitor::new());
+let monitor = CompositeMonitor::new()
+    .add(LoggingMonitor::new()
+        .prefix("[pgorm]")
+        .min_duration(Duration::from_millis(10)))  // Log queries > 10ms
+    .add_arc(stats.clone());
+
+// Configure monitoring
+let config = MonitorConfig::new()
+    .with_query_timeout(Duration::from_secs(30))
+    .with_slow_query_threshold(Duration::from_millis(100))
+    .enable_monitoring();
+
+// Wrap client with instrumentation
+let pg = InstrumentedClient::new(client)
+    .with_config(config)
+    .with_monitor(monitor)
+    .with_hook(BlockDangerousDeleteHook);
+
+// Use normally - all queries are monitored
+let count: i64 = query("SELECT COUNT(*) FROM users")
+    .tag("users.count")  // Optional tag for metrics grouping
+    .fetch_scalar_one(&pg)
+    .await?;
+
+// Access collected metrics
+let metrics = stats.stats();
+println!("Total queries: {}", metrics.total_queries);
+println!("Failed queries: {}", metrics.failed_queries);
+println!("Max duration: {:?}", metrics.max_duration);
+```
+
+### Input Validation
+
+Generate validated Input structs with `#[orm(input)]`:
+
+```rust
+use pgorm::{FromRow, InsertModel, Model, UpdateModel};
+
+#[derive(Debug, FromRow, Model)]
+#[orm(table = "users")]
+struct User {
+    #[orm(id)]
+    id: i64,
+    name: String,
+    email: String,
+    age: Option<i32>,
+    external_id: uuid::Uuid,
+    homepage: Option<String>,
+}
+
+#[derive(Debug, InsertModel)]
+#[orm(table = "users", returning = "User")]
+#[orm(input)]  // Generates NewUserInput struct
+struct NewUser {
+    #[orm(len = "2..=100")]        // String length validation
+    name: String,
+
+    #[orm(email)]                   // Email format validation
+    email: String,
+
+    #[orm(range = "0..=150")]       // Numeric range validation
+    age: Option<i32>,
+
+    #[orm(uuid, input_as = "String")]  // Accept String, validate & parse as UUID
+    external_id: uuid::Uuid,
+
+    #[orm(url)]                     // URL format validation
+    homepage: Option<String>,
+}
+
+// Deserialize from untrusted input (e.g., JSON API request)
+let input: NewUserInput = serde_json::from_str(json_body)?;
+
+// Validate all fields at once
+let errors = input.validate();
+if !errors.is_empty() {
+    // Return validation errors as JSON
+    return Err(serde_json::to_string(&errors)?);
+}
+
+// Convert to model (validates + converts input_as types)
+let new_user: NewUser = input.try_into_model()?;
+
+// Insert into database
+let user: User = new_user.insert_returning(&client).await?;
+```
+
+**Validation attributes:**
+
+| Attribute | Description |
+|-----------|-------------|
+| `#[orm(len = "min..=max")]` | String length validation |
+| `#[orm(range = "min..=max")]` | Numeric range validation |
+| `#[orm(email)]` | Email format validation |
+| `#[orm(url)]` | URL format validation |
+| `#[orm(uuid)]` | UUID format validation |
+| `#[orm(regex = "pattern")]` | Custom regex pattern |
+| `#[orm(one_of = "a\|b\|c")]` | Value must be one of listed options |
+| `#[orm(custom = "path::to::fn")]` | Custom validator function |
+| `#[orm(input_as = "Type")]` | Accept different type in Input struct |
+
+**Update validation with tri-state semantics:**
+
+```rust
+#[derive(Debug, UpdateModel)]
+#[orm(table = "users", model = "User", returning = "User")]
+#[orm(input)]  // Generates UserPatchInput struct
+struct UserPatch {
+    #[orm(len = "2..=100")]
+    name: Option<String>,              // None = skip, Some(v) = update
+
+    #[orm(email)]
+    email: Option<String>,
+
+    #[orm(url)]
+    homepage: Option<Option<String>>,  // None = skip, Some(None) = NULL, Some(Some(v)) = value
+}
+
+// Patch from JSON (missing fields are skipped)
+let patch_input: UserPatchInput = serde_json::from_str(r#"{"email": "new@example.com"}"#)?;
+let patch = patch_input.try_into_patch()?;
+
+// Update only the email field
+let updated: User = patch.update_by_id_returning(&client, user_id).await?;
 ```
 
 ## Documentation
