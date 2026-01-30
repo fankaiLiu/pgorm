@@ -107,6 +107,121 @@ Pagination::page(1, 20)?.append_to_sql(&mut q);
 let users: Vec<User> = q.fetch_all_as(&client).await?;
 ```
 
+### Batch Insert
+
+Insert multiple rows efficiently with UNNEST:
+
+```rust
+use pgorm::InsertModel;
+
+#[derive(InsertModel)]
+#[orm(table = "products", returning = "Product")]
+struct NewProduct {
+    sku: String,
+    name: String,
+    price_cents: i64,
+}
+
+let products = vec![
+    NewProduct { sku: "SKU-001".into(), name: "Keyboard".into(), price_cents: 7999 },
+    NewProduct { sku: "SKU-002".into(), name: "Mouse".into(), price_cents: 2999 },
+    NewProduct { sku: "SKU-003".into(), name: "Monitor".into(), price_cents: 19999 },
+];
+
+// Bulk insert with RETURNING
+let inserted = NewProduct::insert_many_returning(&client, products).await?;
+```
+
+### Update Model (Patch Style)
+
+Partial updates with `Option<T>` semantics:
+
+```rust
+use pgorm::UpdateModel;
+
+#[derive(UpdateModel)]
+#[orm(table = "products", model = "Product", returning = "Product")]
+struct ProductPatch {
+    name: Option<String>,              // None = skip, Some(v) = update
+    description: Option<Option<String>>, // Some(None) = set NULL
+    price_cents: Option<i64>,
+}
+
+let patch = ProductPatch {
+    name: Some("New Name".into()),
+    description: Some(None),  // set to NULL
+    price_cents: None,        // keep existing
+};
+
+// Update single row
+patch.update_by_id(&client, 1_i64).await?;
+
+// Update multiple rows
+patch.update_by_ids(&client, vec![1, 2, 3]).await?;
+
+// Update with RETURNING
+let updated = patch.update_by_id_returning(&client, 1_i64).await?;
+```
+
+### Upsert (ON CONFLICT)
+
+```rust
+#[derive(InsertModel)]
+#[orm(
+    table = "tags",
+    returning = "Tag",
+    conflict_target = "name",
+    conflict_update = "color"
+)]
+struct TagUpsert {
+    name: String,
+    color: Option<String>,
+}
+
+// Single upsert
+let tag = TagUpsert { name: "rust".into(), color: Some("orange".into()) }
+    .upsert_returning(&client)
+    .await?;
+
+// Batch upsert
+let tags = TagUpsert::upsert_many_returning(&client, vec![...]).await?;
+```
+
+### Multi-Table Write Graph
+
+Insert related records across multiple tables in one transaction:
+
+```rust
+#[derive(InsertModel)]
+#[orm(table = "products", returning = "Product")]
+#[orm(graph_root_id_field = "id")]
+#[orm(belongs_to(NewCategory, field = "category", set_fk_field = "category_id", mode = "insert_returning"))]
+#[orm(has_one(NewProductDetail, field = "detail", fk_field = "product_id", mode = "insert"))]
+#[orm(has_many(NewProductTag, field = "tags", fk_field = "product_id", mode = "insert"))]
+struct NewProductGraph {
+    id: uuid::Uuid,
+    name: String,
+    category_id: Option<i64>,
+
+    // Graph fields (auto-inserted into related tables)
+    category: Option<NewCategory>,
+    detail: Option<NewProductDetail>,
+    tags: Option<Vec<NewProductTag>>,
+}
+
+let report = NewProductGraph {
+    id: uuid::Uuid::new_v4(),
+    name: "Product".into(),
+    category_id: None,
+    category: Some(NewCategory { name: "Electronics".into() }),
+    detail: Some(NewProductDetail { product_id: None, description: "...".into() }),
+    tags: Some(vec![
+        NewProductTag { product_id: None, tag: "new".into() },
+        NewProductTag { product_id: None, tag: "sale".into() },
+    ]),
+}.insert_graph_report(&client).await?;
+```
+
 ## Documentation
 
 See the [full documentation](https://docs.rs/pgorm) for detailed usage.
