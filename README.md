@@ -255,3 +255,12 @@ migrate::run_pool(&pool, embedded::migrations::runner()).await?;
 ## AI usage guide
 
 See `AI_USAGE.md` for copy-paste templates, feature selection, and a derive-macro attribute cheat-sheet.
+
+## Acknowledgements
+
+pgorm is built on top of these excellent crates:
+
+- [tokio-postgres](https://github.com/sfackler/rust-postgres) - Asynchronous PostgreSQL client for Rust
+- [deadpool-postgres](https://github.com/bikeshedder/deadpool) - Dead simple async pool for PostgreSQL
+- [refinery](https://github.com/rust-db/refinery) - Powerful SQL migration toolkit
+- [pg_query](https://github.com/pganalyze/pg_query) - PostgreSQL query parser based on libpg_query
