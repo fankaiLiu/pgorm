@@ -53,6 +53,27 @@ extra_uses = ["pgorm::FromRow"]
 [packages.overrides]
 # param."GetUser".1 = "i64"
 # column."SearchUsers".created_at = "chrono::DateTime<chrono::Utc>"
+
+# --- Optional: generate Rust models from schema ---
+#
+# [models]
+# out = "src/models"
+# dialect = "pgorm"
+# include_views = false
+# # If empty, generate all tables in the selected schemas.
+# # Items can be "table" or "schema.table".
+# tables = []
+#
+# # Map "table" or "schema.table" -> Rust struct name.
+# # rename."public.users" = "User"
+#
+# # Map "table" or "schema.table" -> primary key column (emits #[orm(id)]).
+# # primary_key."public.users" = "id"
+#
+# [models.types]
+# "uuid" = "uuid::Uuid"
+# "timestamptz" = "chrono::DateTime<chrono::Utc>"
+# "jsonb" = "serde_json::Value"
 "#
     .trim_start_matches('\n');
 
@@ -62,4 +83,3 @@ extra_uses = ["pgorm::FromRow"]
     println!("wrote {}", path.display());
     Ok(())
 }
-

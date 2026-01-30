@@ -42,6 +42,7 @@ enum SqlPart {
 pub struct Sql {
     parts: Vec<SqlPart>,
     params: Vec<Arc<dyn ToSql + Sync + Send>>,
+    tag: Option<String>,
 }
 
 /// A SQL string with pre-numbered placeholders (`$1, $2, ...`) plus bound parameters.
@@ -51,6 +52,7 @@ pub struct Sql {
 pub struct Query {
     sql: String,
     params: Vec<Arc<dyn ToSql + Sync + Send>>,
+    tag: Option<String>,
 }
 
 /// Build a SQL query from a pre-numbered SQL string (`$1, $2, ...`).
@@ -112,7 +114,23 @@ impl Query {
         Self {
             sql: sql.into(),
             params: Vec::new(),
+            tag: None,
         }
+    }
+
+    /// Associate a tag for monitoring/observability.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let user: User = pgorm::query("SELECT id, username FROM users WHERE id = $1")
+    ///     .tag("users.by_id")
+    ///     .bind(1_i64)
+    ///     .fetch_one_as(&pg)
+    ///     .await?;
+    /// ```
+    pub fn tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
+        self
     }
 
     /// Bind a parameter value.
@@ -145,7 +163,10 @@ impl Query {
     /// Execute the query and return all rows.
     pub async fn fetch_all(&self, conn: &impl GenericClient) -> OrmResult<Vec<Row>> {
         let params = self.params_ref();
-        conn.query(&self.sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_tagged(tag, &self.sql, &params).await,
+            None => conn.query(&self.sql, &params).await,
+        }
     }
 
     /// Execute the query and return all rows mapped to `T`.
@@ -154,22 +175,36 @@ impl Query {
         rows.iter().map(T::from_row).collect()
     }
 
-    /// Execute the query and return exactly one row.
+    /// Execute the query and return the **first** row.
+    ///
+    /// Semantics:
+    /// - 0 rows: returns [`OrmError::NotFound`]
+    /// - 1 row: returns that row
+    /// - multiple rows: returns the first row (does **not** error)
+    ///
+    /// If you need strict row-count checking (i.e. error on multiple rows), use
+    /// [`Query::fetch_one_strict`].
     pub async fn fetch_one(&self, conn: &impl GenericClient) -> OrmResult<Row> {
         let params = self.params_ref();
-        conn.query_one(&self.sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_one_tagged(tag, &self.sql, &params).await,
+            None => conn.query_one(&self.sql, &params).await,
+        }
     }
 
-    /// Execute the query and return exactly one row mapped to `T`.
+    /// Execute the query and return the **first** row mapped to `T`.
     pub async fn fetch_one_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
         let row = self.fetch_one(conn).await?;
         T::from_row(&row)
     }
 
-    /// Execute the query and return at most one row.
+    /// Execute the query and return the first row, if any.
     pub async fn fetch_opt(&self, conn: &impl GenericClient) -> OrmResult<Option<Row>> {
         let params = self.params_ref();
-        conn.query_opt(&self.sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_opt_tagged(tag, &self.sql, &params).await,
+            None => conn.query_opt(&self.sql, &params).await,
+        }
     }
 
     /// Execute the query and return at most one row mapped to `T`.
@@ -184,7 +219,10 @@ impl Query {
     /// Execute the query and return affected row count.
     pub async fn execute(&self, conn: &impl GenericClient) -> OrmResult<u64> {
         let params = self.params_ref();
-        conn.execute(&self.sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.execute_tagged(tag, &self.sql, &params).await,
+            None => conn.execute(&self.sql, &params).await,
+        }
     }
 
     // ==================== Tagged execution ====================
@@ -218,6 +256,43 @@ impl Query {
         tag: &str,
     ) -> OrmResult<T> {
         let row = self.fetch_one_tagged(conn, tag).await?;
+        T::from_row(&row)
+    }
+
+    // ==================== Strict execution ====================
+
+    /// Execute the query and require that it returns **exactly one** row.
+    pub async fn fetch_one_strict(&self, conn: &impl GenericClient) -> OrmResult<Row> {
+        let params = self.params_ref();
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_one_strict_tagged(tag, &self.sql, &params).await,
+            None => conn.query_one_strict(&self.sql, &params).await,
+        }
+    }
+
+    /// Execute the query and require that it returns **exactly one** row mapped to `T`.
+    pub async fn fetch_one_strict_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
+        let row = self.fetch_one_strict(conn).await?;
+        T::from_row(&row)
+    }
+
+    /// Execute the query and require that it returns **exactly one** row, associating a tag.
+    pub async fn fetch_one_strict_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Row> {
+        let params = self.params_ref();
+        conn.query_one_strict_tagged(tag, &self.sql, &params).await
+    }
+
+    /// Execute the query and require that it returns **exactly one** row mapped to `T`, associating a tag.
+    pub async fn fetch_one_strict_tagged_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<T> {
+        let row = self.fetch_one_strict_tagged(conn, tag).await?;
         T::from_row(&row)
     }
 
@@ -296,7 +371,10 @@ impl Query {
 
         let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
         let params = self.params_ref();
-        let row = conn.query_one(&wrapped_sql, &params).await?;
+        let row = match self.tag.as_deref() {
+            Some(tag) => conn.query_one_tagged(tag, &wrapped_sql, &params).await?,
+            None => conn.query_one(&wrapped_sql, &params).await?,
+        };
         row.try_get(0)
             .map_err(|e| OrmError::decode("0", e.to_string()))
     }
@@ -308,6 +386,7 @@ impl Sql {
         Self {
             parts: vec![SqlPart::Raw(initial_sql.into())],
             params: Vec::new(),
+            tag: None,
         }
     }
 
@@ -316,7 +395,23 @@ impl Sql {
         Self {
             parts: Vec::new(),
             params: Vec::new(),
+            tag: None,
         }
+    }
+
+    /// Associate a tag for monitoring/observability.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let users: Vec<User> = pgorm::sql("SELECT * FROM users WHERE username ILIKE ")
+    ///     .tag("users.search")
+    ///     .push_bind("%admin%")
+    ///     .fetch_all_as(&pg)
+    ///     .await?;
+    /// ```
+    pub fn tag(&mut self, tag: impl Into<String>) -> &mut Self {
+        self.tag = Some(tag.into());
+        self
     }
 
     /// Append raw SQL (no parameters).
@@ -372,6 +467,9 @@ impl Sql {
     pub fn push_sql(&mut self, mut other: Sql) -> &mut Self {
         self.parts.append(&mut other.parts);
         self.params.append(&mut other.params);
+        if self.tag.is_none() {
+            self.tag = other.tag;
+        }
         self
     }
 
@@ -436,7 +534,10 @@ impl Sql {
         self.validate()?;
         let sql = self.to_sql();
         let params = self.params_ref();
-        conn.query(&sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_tagged(tag, &sql, &params).await,
+            None => conn.query(&sql, &params).await,
+        }
     }
 
     /// Execute the built SQL and return all rows mapped to `T`.
@@ -445,26 +546,35 @@ impl Sql {
         rows.iter().map(T::from_row).collect()
     }
 
-    /// Execute the built SQL and return exactly one row.
+    /// Execute the built SQL and return the **first** row.
+    ///
+    /// Semantics match [`GenericClient::query_one`]. If you need strict row-count checking, use
+    /// [`Sql::fetch_one_strict`].
     pub async fn fetch_one(&self, conn: &impl GenericClient) -> OrmResult<Row> {
         self.validate()?;
         let sql = self.to_sql();
         let params = self.params_ref();
-        conn.query_one(&sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_one_tagged(tag, &sql, &params).await,
+            None => conn.query_one(&sql, &params).await,
+        }
     }
 
-    /// Execute the built SQL and return exactly one row mapped to `T`.
+    /// Execute the built SQL and return the **first** row mapped to `T`.
     pub async fn fetch_one_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
         let row = self.fetch_one(conn).await?;
         T::from_row(&row)
     }
 
-    /// Execute the built SQL and return at most one row.
+    /// Execute the built SQL and return the first row, if any.
     pub async fn fetch_opt(&self, conn: &impl GenericClient) -> OrmResult<Option<Row>> {
         self.validate()?;
         let sql = self.to_sql();
         let params = self.params_ref();
-        conn.query_opt(&sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_opt_tagged(tag, &sql, &params).await,
+            None => conn.query_opt(&sql, &params).await,
+        }
     }
 
     /// Execute the built SQL and return at most one row mapped to `T`.
@@ -481,7 +591,10 @@ impl Sql {
         self.validate()?;
         let sql = self.to_sql();
         let params = self.params_ref();
-        conn.execute(&sql, &params).await
+        match self.tag.as_deref() {
+            Some(tag) => conn.execute_tagged(tag, &sql, &params).await,
+            None => conn.execute(&sql, &params).await,
+        }
     }
 
     /// Append a [`Condition`] to this SQL builder.
@@ -536,6 +649,47 @@ impl Sql {
     ) -> OrmResult<Vec<T>> {
         let rows = self.fetch_all_tagged(conn, tag).await?;
         rows.iter().map(T::from_row).collect()
+    }
+
+    // ==================== Strict execution ====================
+
+    /// Execute the built SQL and require that it returns **exactly one** row.
+    pub async fn fetch_one_strict(&self, conn: &impl GenericClient) -> OrmResult<Row> {
+        self.validate()?;
+        let sql = self.to_sql();
+        let params = self.params_ref();
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_one_strict_tagged(tag, &sql, &params).await,
+            None => conn.query_one_strict(&sql, &params).await,
+        }
+    }
+
+    /// Execute the built SQL and require that it returns **exactly one** row mapped to `T`.
+    pub async fn fetch_one_strict_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
+        let row = self.fetch_one_strict(conn).await?;
+        T::from_row(&row)
+    }
+
+    /// Execute the built SQL and require that it returns **exactly one** row, associating a tag.
+    pub async fn fetch_one_strict_tagged(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<Row> {
+        self.validate()?;
+        let sql = self.to_sql();
+        let params = self.params_ref();
+        conn.query_one_strict_tagged(tag, &sql, &params).await
+    }
+
+    /// Execute the built SQL and require that it returns **exactly one** row mapped to `T`, associating a tag.
+    pub async fn fetch_one_strict_tagged_as<T: FromRow>(
+        &self,
+        conn: &impl GenericClient,
+        tag: &str,
+    ) -> OrmResult<T> {
+        let row = self.fetch_one_strict_tagged(conn, tag).await?;
+        T::from_row(&row)
     }
 
     /// Execute the built SQL tagged (if the underlying client supports it) and return affected row count.
@@ -647,7 +801,10 @@ impl Sql {
 
         let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
         let params = self.params_ref();
-        let row = conn.query_one(&wrapped_sql, &params).await?;
+        let row = match self.tag.as_deref() {
+            Some(tag) => conn.query_one_tagged(tag, &wrapped_sql, &params).await?,
+            None => conn.query_one(&wrapped_sql, &params).await?,
+        };
         row.try_get(0)
             .map_err(|e| OrmError::decode("0", e.to_string()))
     }
@@ -724,6 +881,20 @@ impl Sql {
 mod tests {
     use super::*;
     use crate::condition::Condition;
+
+    async fn try_connect() -> Option<tokio_postgres::Client> {
+        let database_url = std::env::var("DATABASE_URL").ok()?;
+        let (client, connection) =
+            tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
+                .await
+                .expect("Failed to connect to DATABASE_URL with NoTls");
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("tokio-postgres connection error: {e}");
+            }
+        });
+        Some(client)
+    }
 
     #[test]
     fn builds_placeholders_in_order() {
@@ -873,5 +1044,48 @@ mod tests {
             "SELECT * FROM users WHERE status = $1 ORDER BY id LIMIT $2 OFFSET $3"
         );
         assert_eq!(q.params_ref().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn fetch_one_multi_rows_returns_first_row() {
+        let Some(client) = try_connect().await else {
+            eprintln!("DATABASE_URL not set; skipping");
+            return;
+        };
+
+        let row = query("SELECT n FROM (VALUES (1), (2)) AS t(n) ORDER BY n")
+            .fetch_one(&client)
+            .await
+            .unwrap();
+        let n: i32 = row.get(0);
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_one_strict_zero_rows_is_not_found() {
+        let Some(client) = try_connect().await else {
+            eprintln!("DATABASE_URL not set; skipping");
+            return;
+        };
+
+        let err = query("SELECT 1 WHERE FALSE")
+            .fetch_one_strict(&client)
+            .await
+            .unwrap_err();
+        assert!(err.is_not_found());
+    }
+
+    #[tokio::test]
+    async fn fetch_one_strict_multi_rows_is_too_many_rows() {
+        let Some(client) = try_connect().await else {
+            eprintln!("DATABASE_URL not set; skipping");
+            return;
+        };
+
+        let err = query("SELECT n FROM (VALUES (1), (2)) AS t(n)")
+            .fetch_one_strict(&client)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OrmError::TooManyRows { expected: 1, got: 2 }));
     }
 }

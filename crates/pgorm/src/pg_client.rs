@@ -244,6 +244,10 @@ impl PgClientConfig {
     }
 
     /// Enable strict SQL checking.
+    ///
+    /// This only affects runtime SQL checking behavior (schema/lint/policy). It does **not**
+    /// change `fetch_one/query_one` row-count semantics; use `*_strict` APIs if you need
+    /// "exactly one row" enforcement.
     pub fn strict(mut self) -> Self {
         self.check_mode = CheckMode::Strict;
         self

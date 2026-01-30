@@ -29,7 +29,15 @@ pub trait GenericClient: Send + Sync {
         self.query(sql, params)
     }
 
-    /// Execute a query and return exactly one row.
+    /// Execute a query and return the **first** row.
+    ///
+    /// Semantics:
+    /// - 0 rows: returns [`OrmError::NotFound`]
+    /// - 1 row: returns that row
+    /// - multiple rows: returns the first row (does **not** error)
+    ///
+    /// If you need strict row-count checking (i.e. error on multiple rows), use
+    /// [`GenericClient::query_one_strict`].
     ///
     /// Returns `OrmError::NotFound` if no rows are returned.
     fn query_one(
@@ -38,9 +46,10 @@ pub trait GenericClient: Send + Sync {
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Row>> + Send;
 
-    /// Execute a query and return exactly one row, associating a tag for monitoring/observability.
+    /// Execute a query and return the **first** row, associating a tag for monitoring/observability.
     ///
-    /// The default implementation ignores `tag` and calls [`GenericClient::query_one`].
+    /// Semantics match [`GenericClient::query_one`]. The default implementation ignores `tag` and
+    /// calls [`GenericClient::query_one`].
     fn query_one_tagged(
         &self,
         tag: &str,
@@ -51,16 +60,63 @@ pub trait GenericClient: Send + Sync {
         self.query_one(sql, params)
     }
 
-    /// Execute a query and return at most one row.
+    /// Execute a query and require that it returns **exactly one** row.
+    ///
+    /// Semantics:
+    /// - 0 rows: returns [`OrmError::NotFound`]
+    /// - 1 row: returns that row
+    /// - multiple rows: returns [`OrmError::TooManyRows`]
+    fn query_one_strict(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Row>> + Send {
+        async move {
+            let rows = self.query(sql, params).await?;
+            match rows.len() {
+                0 => Err(OrmError::not_found("Expected 1 row, got 0")),
+                1 => Ok(rows.into_iter().next().expect("len == 1")),
+                got => Err(OrmError::too_many_rows(1, got)),
+            }
+        }
+    }
+
+    /// Execute a query and require that it returns **exactly one** row, associating a tag.
+    ///
+    /// The default implementation uses [`GenericClient::query_tagged`] and applies the same
+    /// row-count semantics as [`GenericClient::query_one_strict`].
+    fn query_one_strict_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> impl std::future::Future<Output = OrmResult<Row>> + Send {
+        async move {
+            let rows = self.query_tagged(tag, sql, params).await?;
+            match rows.len() {
+                0 => Err(OrmError::not_found("Expected 1 row, got 0")),
+                1 => Ok(rows.into_iter().next().expect("len == 1")),
+                got => Err(OrmError::too_many_rows(1, got)),
+            }
+        }
+    }
+
+    /// Execute a query and return the first row, if any.
+    ///
+    /// Semantics:
+    /// - 0 rows: returns `Ok(None)`
+    /// - 1 row: returns `Ok(Some(row))`
+    /// - multiple rows: returns `Ok(Some(first_row))` (does **not** error)
     fn query_opt(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> impl std::future::Future<Output = OrmResult<Option<Row>>> + Send;
 
-    /// Execute a query and return at most one row, associating a tag for monitoring/observability.
+    /// Execute a query and return the first row, if any, associating a tag for monitoring/observability.
     ///
-    /// The default implementation ignores `tag` and calls [`GenericClient::query_opt`].
+    /// Semantics match [`GenericClient::query_opt`]. The default implementation ignores `tag` and
+    /// calls [`GenericClient::query_opt`].
     fn query_opt_tagged(
         &self,
         tag: &str,

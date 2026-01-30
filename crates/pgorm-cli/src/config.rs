@@ -62,6 +62,9 @@ pub struct ConfigFile {
     pub schema_cache: SchemaCacheConfig,
 
     #[serde(default)]
+    pub models: Option<ModelsConfig>,
+
+    #[serde(default)]
     pub packages: Vec<PackageConfig>,
 }
 
@@ -167,6 +170,74 @@ pub struct OverridesConfig {
     pub column: BTreeMap<String, BTreeMap<String, String>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelsDialect {
+    Pgorm,
+}
+
+impl Default for ModelsDialect {
+    fn default() -> Self {
+        Self::Pgorm
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelsConfig {
+    pub out: String,
+
+    #[serde(default)]
+    pub dialect: ModelsDialect,
+
+    /// Include views/materialized views in generation.
+    #[serde(default)]
+    pub include_views: bool,
+
+    /// If empty, generate all tables in the selected schemas.
+    ///
+    /// Items can be `table` or `schema.table`.
+    #[serde(default)]
+    pub tables: Vec<String>,
+
+    /// Map `table` or `schema.table` -> Rust struct name.
+    #[serde(default)]
+    pub rename: BTreeMap<String, String>,
+
+    /// Map `table` or `schema.table` -> primary key column name (used to emit `#[orm(id)]`).
+    #[serde(default)]
+    pub primary_key: BTreeMap<String, String>,
+
+    /// User overrides for Postgres type -> Rust path/type.
+    #[serde(default)]
+    pub types: BTreeMap<String, String>,
+
+    #[serde(default = "default_model_derives")]
+    pub derives: Vec<String>,
+
+    #[serde(default)]
+    pub extra_uses: Vec<String>,
+}
+
+fn default_model_derives() -> Vec<String> {
+    vec![
+        "Debug".to_string(),
+        "Clone".to_string(),
+        "FromRow".to_string(),
+        "Model".to_string(),
+    ]
+}
+
+fn is_orm_accepting_derive(s: &str) -> bool {
+    matches!(
+        s,
+        "FromRow" | "Model" | "ViewModel" | "InsertModel" | "UpdateModel"
+    ) || s.ends_with("::FromRow")
+        || s.ends_with("::Model")
+        || s.ends_with("::ViewModel")
+        || s.ends_with("::InsertModel")
+        || s.ends_with("::UpdateModel")
+}
+
 impl OverridesConfig {
     pub fn param_override(&self, query_name: &str, pos: usize) -> Option<&str> {
         self.param
@@ -196,6 +267,25 @@ impl ConfigFile {
         }
         if let Some(file) = self.schema_cache.file.as_mut() {
             *file = expand_env_vars(file)?;
+        }
+
+        if let Some(models) = self.models.as_mut() {
+            models.out = expand_env_vars(&models.out)?;
+            for t in &mut models.tables {
+                *t = expand_env_vars(t)?;
+            }
+            for v in models.rename.values_mut() {
+                *v = expand_env_vars(v)?;
+            }
+            for v in models.primary_key.values_mut() {
+                *v = expand_env_vars(v)?;
+            }
+            for v in models.types.values_mut() {
+                *v = expand_env_vars(v)?;
+            }
+            for u in &mut models.extra_uses {
+                *u = expand_env_vars(u)?;
+            }
         }
 
         for p in &mut self.packages {
@@ -243,8 +333,35 @@ impl ConfigFile {
             // Keep it forgiving: default to public at runtime if empty.
         }
 
-        if self.packages.is_empty() {
-            anyhow::bail!("at least one [[packages]] entry is required");
+        if let Some(models) = self.models.as_ref() {
+            if models.out.trim().is_empty() {
+                anyhow::bail!("models.out must not be empty");
+            }
+            if models.derives.is_empty() {
+                anyhow::bail!("models.derives must not be empty");
+            }
+            if models.dialect == ModelsDialect::Pgorm
+                && !models.derives.iter().any(|d| is_orm_accepting_derive(d))
+            {
+                anyhow::bail!(
+                    "models.derives must include at least one of FromRow/Model/ViewModel/InsertModel/UpdateModel when models.dialect = \"pgorm\""
+                );
+            }
+            for t in &models.tables {
+                if t.trim().is_empty() {
+                    anyhow::bail!("models.tables must not contain empty entries");
+                }
+            }
+            for (k, v) in &models.rename {
+                if k.trim().is_empty() || v.trim().is_empty() {
+                    anyhow::bail!("models.rename must not contain empty keys/values");
+                }
+            }
+            for (k, v) in &models.primary_key {
+                if k.trim().is_empty() || v.trim().is_empty() {
+                    anyhow::bail!("models.primary_key must not contain empty keys/values");
+                }
+            }
         }
 
         let mut seen = std::collections::HashSet::<&str>::new();

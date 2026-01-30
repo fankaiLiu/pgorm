@@ -2,6 +2,7 @@
 name = "pgorm-check"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Runtime SQL vs schema checks for pgorm (with optional local schema cache)"
 

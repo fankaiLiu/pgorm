@@ -165,3 +165,33 @@ fn to_cache_config(project: &ProjectConfig, schemas: &[String]) -> SchemaCacheCo
         schemas: schemas.to_vec(),
     }
 }
+
+pub async fn load_project_schema_cache(
+    project: &ProjectConfig,
+    database_override: Option<String>,
+    schemas_override: Option<Vec<String>>,
+) -> anyhow::Result<(SchemaCache, Vec<String>)> {
+    let database_url = database_override.unwrap_or_else(|| project.file.database.url.clone());
+
+    let schemas = if let Some(schemas) = schemas_override {
+        schemas
+    } else if !project.file.database.schemas.is_empty() {
+        project.file.database.schemas.clone()
+    } else {
+        vec!["public".to_string()]
+    };
+
+    let cache_cfg = to_cache_config(project, &schemas);
+    let mode: SchemaCacheMode = project.file.schema_cache.mode;
+
+    let cache = match mode {
+        SchemaCacheMode::CacheOnly => read_schema_cache(&cache_cfg)?,
+        _ => {
+            let client = connect_db(&database_url).await?;
+            let (cache, _load) = load_schema_cache(&client, &cache_cfg, mode).await?;
+            cache
+        }
+    };
+
+    Ok((cache, schemas))
+}

@@ -335,10 +335,10 @@ impl SchemaRegistry {
         }
 
         // System columns exist on every table but are not modeled in TableMeta.
-        let system_columns: std::collections::HashSet<&'static str> =
-            ["ctid", "xmin", "xmax", "cmin", "cmax", "tableoid"]
-                .into_iter()
-                .collect();
+        // Keep this allocation-free (hot path).
+        fn is_system_column(col: &str) -> bool {
+            matches!(col, "ctid" | "xmin" | "xmax" | "cmin" | "cmax" | "tableoid")
+        }
 
         // Build a map of qualifier -> table using RangeVar + alias info.
         let mut qualifier_to_table: std::collections::HashMap<String, &TableSchema> =
@@ -396,7 +396,7 @@ impl SchemaRegistry {
 
                 if let Some(t) = table {
                     for col in &insert.columns {
-                        if system_columns.contains(col.name.as_str()) {
+                        if is_system_column(col.name.as_str()) {
                             continue;
                         }
                         if !t.has_column(&col.name) {
@@ -421,7 +421,7 @@ impl SchemaRegistry {
                         }
 
                         for col in &oc.inference_columns {
-                            if system_columns.contains(col.name.as_str()) {
+                            if is_system_column(col.name.as_str()) {
                                 continue;
                             }
                             if !t.has_column(&col.name) {
@@ -437,7 +437,7 @@ impl SchemaRegistry {
                         }
 
                         for col in &oc.update_set_columns {
-                            if system_columns.contains(col.name.as_str()) {
+                            if is_system_column(col.name.as_str()) {
                                 continue;
                             }
                             if !t.has_column(&col.name) {
@@ -476,7 +476,7 @@ impl SchemaRegistry {
 
                 if let Some(t) = table {
                     for col in &update.set_columns {
-                        if system_columns.contains(col.name.as_str()) {
+                        if is_system_column(col.name.as_str()) {
                             continue;
                         }
                         if !t.has_column(&col.name) {
@@ -513,7 +513,7 @@ impl SchemaRegistry {
             // Unqualified: col
             if c.parts.len() == 1 {
                 let col = c.parts[0].as_str();
-                if system_columns.contains(col) {
+                if is_system_column(col) {
                     continue;
                 }
 
@@ -549,7 +549,7 @@ impl SchemaRegistry {
                 let qualifier = c.parts[0].as_str();
                 let col = c.parts[1].as_str();
 
-                if system_columns.contains(col) {
+                if is_system_column(col) {
                     continue;
                 }
 
@@ -583,7 +583,7 @@ impl SchemaRegistry {
                     (&c.parts[1], &c.parts[2], &c.parts[3])
                 };
 
-                if system_columns.contains(col_part.as_str()) {
+                if is_system_column(col_part.as_str()) {
                     continue;
                 }
 
@@ -810,6 +810,23 @@ mod tests {
                     .iter()
                     .any(|i| i.kind == SchemaIssueKind::MissingColumn)
             );
+        }
+
+        #[test]
+        fn test_check_sql_allows_system_columns() {
+            let mut registry = SchemaRegistry::new();
+            registry.register::<TestUser>();
+
+            // System columns exist on every table (even if they aren't modeled).
+            let issues = registry.check_sql("SELECT ctid FROM users");
+            assert!(issues.is_empty());
+
+            // Validate INSERT/UPDATE paths also skip system columns.
+            let issues = registry.check_sql("INSERT INTO users (ctid) VALUES ('(0,0)')");
+            assert!(issues.is_empty());
+
+            let issues = registry.check_sql("UPDATE users SET ctid = ctid");
+            assert!(issues.is_empty());
         }
     }
 }

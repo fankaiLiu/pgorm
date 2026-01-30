@@ -198,7 +198,7 @@ pub(super) fn generate_insert_many_method(
             .collect();
 
         let bind_lists_expr = list_idents.iter().fold(
-            quote! { pgorm::query(&sql) },
+            quote! { pgorm::query(sql) },
             |acc, list_ident| quote! { #acc.bind(#list_ident) },
         );
 
@@ -220,13 +220,18 @@ pub(super) fn generate_insert_many_method(
                     #(#push_lists)*
                 }
 
-                let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#type_cast_exprs),*];
-                let sql = ::std::format!(
-                    "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
-                    #table_name,
-                    #batch_columns_str,
-                    type_casts.join(", ")
-                );
+                static __PGORM_INSERT_MANY_SQL: ::std::sync::OnceLock<::std::string::String> =
+                    ::std::sync::OnceLock::new();
+                let sql = __PGORM_INSERT_MANY_SQL.get_or_init(|| {
+                    let type_casts: ::std::vec::Vec<::std::string::String> =
+                        ::std::vec![#(#type_cast_exprs),*];
+                    ::std::format!(
+                        "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
+                        #table_name,
+                        #batch_columns_str,
+                        type_casts.join(", ")
+                    )
+                });
 
                 #bind_lists_expr.execute(conn).await
             }
@@ -790,7 +795,7 @@ pub(super) fn generate_returning_methods(
             .collect();
 
         let batch_returning_query_expr = list_idents.iter().fold(
-            quote! { pgorm::query(&sql) },
+            quote! { pgorm::query(sql) },
             |acc, list_ident| quote! { #acc.bind(#list_ident) },
         );
 
@@ -827,21 +832,25 @@ pub(super) fn generate_returning_methods(
                     #(#push_lists)*
                 }
 
-                let type_casts: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#batch_type_cast_exprs),*];
-                let batch_insert_sql = ::std::format!(
-                    "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
-                    #table_name,
-                    #batch_columns_str,
-                    type_casts.join(", ")
-                );
-
-                let sql = ::std::format!(
-                    "WITH {table} AS ({insert} RETURNING *) SELECT {} FROM {table} {}",
-                    #returning_ty::SELECT_LIST,
-                    #returning_ty::JOIN_CLAUSE,
-                    table = #table_name,
-                    insert = batch_insert_sql,
-                );
+                static __PGORM_INSERT_MANY_RETURNING_SQL: ::std::sync::OnceLock<::std::string::String> =
+                    ::std::sync::OnceLock::new();
+                let sql = __PGORM_INSERT_MANY_RETURNING_SQL.get_or_init(|| {
+                    let type_casts: ::std::vec::Vec<::std::string::String> =
+                        ::std::vec![#(#batch_type_cast_exprs),*];
+                    let batch_insert_sql = ::std::format!(
+                        "INSERT INTO {} ({}) SELECT * FROM UNNEST({})",
+                        #table_name,
+                        #batch_columns_str,
+                        type_casts.join(", ")
+                    );
+                    ::std::format!(
+                        "WITH {table} AS ({insert} RETURNING *) SELECT {} FROM {table} {}",
+                        #returning_ty::SELECT_LIST,
+                        #returning_ty::JOIN_CLAUSE,
+                        table = #table_name,
+                        insert = batch_insert_sql,
+                    )
+                });
 
                 #batch_returning_query_expr.fetch_all_as::<#returning_ty>(conn).await
             }

@@ -20,6 +20,10 @@ pub enum OrmError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    /// Query returned more rows than expected.
+    #[error("Too many rows: expected {expected}, got {got}")]
+    TooManyRows { expected: usize, got: usize },
+
     /// Unique constraint violation
     #[error("Unique constraint violation: {0}")]
     UniqueViolation(String),
@@ -77,6 +81,11 @@ impl OrmError {
         Self::NotFound(message.into())
     }
 
+    /// Create a too-many-rows error.
+    pub fn too_many_rows(expected: usize, got: usize) -> Self {
+        Self::TooManyRows { expected, got }
+    }
+
     /// Create a validation error
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())
@@ -90,6 +99,11 @@ impl OrmError {
     /// Check if this is a not found error
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound(_))
+    }
+
+    /// Check if this is a too-many-rows error.
+    pub fn is_too_many_rows(&self) -> bool {
+        matches!(self, Self::TooManyRows { .. })
     }
 
     /// Check if this is a timeout error

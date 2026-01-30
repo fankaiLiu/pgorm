@@ -17,6 +17,11 @@ If you only want the SQL builder (no pool / derive macros / runtime SQL checking
 pgorm = { version = "0.1.0", default-features = false }
 ```
 
+## Rust toolchain
+
+- Edition: 2024
+- MSRV: Rust 1.88+
+
 ## Feature flags
 
 Default features: `pool`, `derive`, `check`, `validate`.
@@ -53,6 +58,25 @@ let user: User = query("SELECT id, username FROM users WHERE id = $1")
 let mut q = sql("SELECT id, username FROM users WHERE 1=1");
 q.push(" AND username ILIKE ").push_bind("%admin%");
 let users: Vec<User> = q.fetch_all_as(&client).await?;
+```
+
+Note: `fetch_one*` returns the **first** row (it does not error if multiple rows match). If you need
+strict uniqueness, use `fetch_one_strict*`.
+
+You can also attach an observability tag (if the underlying client supports it):
+
+```rust
+let user: User = query("SELECT id, username FROM users WHERE id = $1")
+    .tag("users.by_id")
+    .bind(1_i64)
+    .fetch_one_as(&client)
+    .await?;
+
+let users: Vec<User> = sql("SELECT id, username FROM users WHERE username ILIKE ")
+    .tag("users.search")
+    .push_bind("%admin%")
+    .fetch_all_as(&client)
+    .await?;
 ```
 
 ## Eager loading (batch preload)
@@ -161,6 +185,32 @@ pgorm::transaction!(&mut client, tx, {
 })?;
 ```
 
+## Pooling
+
+`create_pool` is a quick-start helper that uses `NoTls` and a small set of defaults (good for local/dev).
+For production, inject TLS and pool settings from your application config:
+
+```rust,ignore
+use deadpool_postgres::{ManagerConfig, RecyclingMethod};
+use pgorm::create_pool_with_manager_config;
+use tokio_postgres::NoTls;
+
+let mgr_cfg = ManagerConfig {
+    recycling_method: RecyclingMethod::Fast,
+};
+
+let pool = create_pool_with_manager_config(&database_url, NoTls, mgr_cfg, |b| b.max_size(32))?;
+```
+
+TLS connectors are passed through as-is:
+
+```rust,ignore
+use pgorm::create_pool_with_tls;
+
+let tls = /* e.g. tokio_postgres_rustls::MakeRustlsConnect */;
+let pool = create_pool_with_tls(&database_url, tls)?;
+```
+
 ## Recommended client (monitoring + SQL checking)
 
 If you're generating SQL (especially with AI), wrap your client to get guardrails:
@@ -174,6 +224,7 @@ let pg = PgClient::with_config(client, PgClientConfig::new().strict());
 
 // Now all pgorm queries go through checking + monitoring.
 let user: User = pgorm::query("SELECT id, username FROM users WHERE id = $1")
+    .tag("users.by_id")
     .bind(1_i64)
     .fetch_one_as(&pg)
     .await?;
