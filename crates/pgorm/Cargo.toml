@@ -63,3 +63,31 @@ path = "examples/pg_client/main.rs"
 [[example]]
 name = "update_model"
 path = "examples/update_model/main.rs"
+
+[[example]]
+name = "sql_builder"
+path = "examples/sql_builder/main.rs"
+
+[[example]]
+name = "insert_many"
+path = "examples/insert_many/main.rs"
+
+[[example]]
+name = "upsert"
+path = "examples/upsert/main.rs"
+
+[[example]]
+name = "write_graph"
+path = "examples/write_graph/main.rs"
+
+[[example]]
+name = "monitoring"
+path = "examples/monitoring/main.rs"
+
+[[example]]
+name = "jsonb"
+path = "examples/jsonb/main.rs"
+
+[[example]]
+name = "fetch_semantics"
+path = "examples/fetch_semantics/main.rs"
