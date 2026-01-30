@@ -345,9 +345,17 @@ impl QueryMonitor for LoggingMonitor {
 }
 
 /// A monitor that tracks query statistics.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StatsMonitor {
-    stats: std::sync::RwLock<QueryStats>,
+    total_queries: std::sync::atomic::AtomicU64,
+    failed_queries: std::sync::atomic::AtomicU64,
+    total_duration_nanos: std::sync::atomic::AtomicU64,
+    select_count: std::sync::atomic::AtomicU64,
+    insert_count: std::sync::atomic::AtomicU64,
+    update_count: std::sync::atomic::AtomicU64,
+    delete_count: std::sync::atomic::AtomicU64,
+    max_duration_nanos: std::sync::atomic::AtomicU64,
+    slowest_query: std::sync::Mutex<Option<String>>,
 }
 
 /// Collected query statistics.
@@ -381,36 +389,103 @@ impl StatsMonitor {
 
     /// Get a snapshot of current statistics.
     pub fn stats(&self) -> QueryStats {
-        self.stats.read().unwrap().clone()
+        use std::sync::atomic::Ordering;
+
+        QueryStats {
+            total_queries: self.total_queries.load(Ordering::Relaxed),
+            failed_queries: self.failed_queries.load(Ordering::Relaxed),
+            total_duration: Duration::from_nanos(self.total_duration_nanos.load(Ordering::Relaxed)),
+            select_count: self.select_count.load(Ordering::Relaxed),
+            insert_count: self.insert_count.load(Ordering::Relaxed),
+            update_count: self.update_count.load(Ordering::Relaxed),
+            delete_count: self.delete_count.load(Ordering::Relaxed),
+            max_duration: Duration::from_nanos(self.max_duration_nanos.load(Ordering::Relaxed)),
+            slowest_query: self.slowest_query.lock().unwrap().clone(),
+        }
     }
 
     /// Reset all statistics.
     pub fn reset(&self) {
-        *self.stats.write().unwrap() = QueryStats::default();
+        use std::sync::atomic::Ordering;
+
+        self.total_queries.store(0, Ordering::Relaxed);
+        self.failed_queries.store(0, Ordering::Relaxed);
+        self.total_duration_nanos.store(0, Ordering::Relaxed);
+        self.select_count.store(0, Ordering::Relaxed);
+        self.insert_count.store(0, Ordering::Relaxed);
+        self.update_count.store(0, Ordering::Relaxed);
+        self.delete_count.store(0, Ordering::Relaxed);
+        self.max_duration_nanos.store(0, Ordering::Relaxed);
+        *self.slowest_query.lock().unwrap() = None;
+    }
+}
+
+impl Default for StatsMonitor {
+    fn default() -> Self {
+        Self {
+            total_queries: std::sync::atomic::AtomicU64::new(0),
+            failed_queries: std::sync::atomic::AtomicU64::new(0),
+            total_duration_nanos: std::sync::atomic::AtomicU64::new(0),
+            select_count: std::sync::atomic::AtomicU64::new(0),
+            insert_count: std::sync::atomic::AtomicU64::new(0),
+            update_count: std::sync::atomic::AtomicU64::new(0),
+            delete_count: std::sync::atomic::AtomicU64::new(0),
+            max_duration_nanos: std::sync::atomic::AtomicU64::new(0),
+            slowest_query: std::sync::Mutex::new(None),
+        }
     }
 }
 
 impl QueryMonitor for StatsMonitor {
     fn on_query_complete(&self, ctx: &QueryContext, duration: Duration, result: &QueryResult) {
-        let mut stats = self.stats.write().unwrap();
-        stats.total_queries += 1;
-        stats.total_duration += duration;
+        use std::sync::atomic::Ordering;
+
+        let duration_nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
+
+        self.total_queries.fetch_add(1, Ordering::Relaxed);
+        let prev_total = self
+            .total_duration_nanos
+            .fetch_add(duration_nanos, Ordering::Relaxed);
+        if prev_total.checked_add(duration_nanos).is_none() {
+            // Saturate instead of wrapping on overflow (e.g. long-running, high-QPS services).
+            self.total_duration_nanos.store(u64::MAX, Ordering::Relaxed);
+        }
 
         match ctx.query_type {
-            QueryType::Select => stats.select_count += 1,
-            QueryType::Insert => stats.insert_count += 1,
-            QueryType::Update => stats.update_count += 1,
-            QueryType::Delete => stats.delete_count += 1,
+            QueryType::Select => {
+                self.select_count.fetch_add(1, Ordering::Relaxed);
+            }
+            QueryType::Insert => {
+                self.insert_count.fetch_add(1, Ordering::Relaxed);
+            }
+            QueryType::Update => {
+                self.update_count.fetch_add(1, Ordering::Relaxed);
+            }
+            QueryType::Delete => {
+                self.delete_count.fetch_add(1, Ordering::Relaxed);
+            }
             QueryType::Other => {}
         }
 
         if matches!(result, QueryResult::Error(_)) {
-            stats.failed_queries += 1;
+            self.failed_queries.fetch_add(1, Ordering::Relaxed);
         }
 
-        if duration > stats.max_duration {
-            stats.max_duration = duration;
-            stats.slowest_query = Some(ctx.canonical_sql.clone());
+        // Update max duration + slowest query only when we actually become the new max.
+        let mut current_max = self.max_duration_nanos.load(Ordering::Relaxed);
+        while duration_nanos > current_max {
+            match self.max_duration_nanos.compare_exchange_weak(
+                current_max,
+                duration_nanos,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    *self.slowest_query.lock().unwrap() = Some(ctx.canonical_sql.clone());
+                    break;
+                }
+                Err(updated) => current_max = updated,
+            }
         }
     }
 }

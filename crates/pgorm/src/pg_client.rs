@@ -494,6 +494,16 @@ impl<C: GenericClient> PgClient<C> {
         use crate::StatementKind;
 
         let policy = &self.config.sql_policy;
+        // Fast path: default policy is "Allow" everywhere, so avoid parsing/analyzing SQL.
+        if policy.select_without_limit == SelectWithoutLimitPolicy::Allow
+            && policy.delete_without_where == DangerousDmlPolicy::Allow
+            && policy.update_without_where == DangerousDmlPolicy::Allow
+            && policy.truncate == DangerousDmlPolicy::Allow
+            && policy.drop_table == DangerousDmlPolicy::Allow
+        {
+            return Ok(());
+        }
+
         let analysis = self.registry.analyze_sql(&ctx.canonical_sql);
 
         if !analysis.parse_result.valid {
