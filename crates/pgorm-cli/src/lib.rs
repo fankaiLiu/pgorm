@@ -1,3 +1,9 @@
+//! `pgorm` command-line utilities.
+//!
+//! This crate powers the `pgorm` binary (see `crates/pgorm-cli/src/main.rs`).
+//! The public surface is intentionally small: most logic lives in internal modules and is
+//! dispatched from [`run`].
+
 mod cli;
 mod codegen;
 mod config;
@@ -14,6 +20,9 @@ mod schema;
 mod type_mapper;
 mod write;
 
+/// Runs the `pgorm` CLI with an argv-style argument list.
+///
+/// Most callers should pass `std::env::args().collect()`.
 pub async fn run(args: Vec<String>) -> anyhow::Result<()> {
     let cmd = cli::parse_args(&args)?;
     match cmd {

@@ -9,6 +9,8 @@ description = "SQL codegen CLI for pgorm"
 [[bin]]
 name = "pgorm"
 path = "src/main.rs"
+# Avoid `cargo doc --workspace` output collisions with the `pgorm` library crate.
+doc = false
 
 [dependencies]
 anyhow = "1.0.100"
