@@ -54,6 +54,61 @@ q.push(" AND username ILIKE ").push_bind("%admin%");
 let users: Vec<User> = q.fetch_all_as(&client).await?;
 ```
 
+## Eager loading (batch preload)
+
+`#[derive(Model)]` supports explicit eager-loading helpers for relations declared via:
+
+- `#[orm(has_many(Child, foreign_key = "...", as = "..."))]`
+- `#[orm(belongs_to(Parent, foreign_key = "...", as = "..."))]`
+
+It never runs extra queries unless you call `load_*`.
+
+```rust,ignore
+use pgorm::{FromRow, GenericClient, Model, ModelPk as _};
+
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "users")]
+#[orm(has_many(Post, foreign_key = "user_id", as = "posts"))]
+struct User {
+    #[orm(id)]
+    id: i64,
+    name: String,
+}
+
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "posts")]
+#[orm(belongs_to(User, foreign_key = "user_id", as = "author"))]
+struct Post {
+    #[orm(id)]
+    id: i64,
+    user_id: i64,
+    title: String,
+}
+
+async fn list(conn: &impl GenericClient) -> pgorm::OrmResult<()> {
+    let users = User::select_all(conn).await?;
+
+    // Map style (recommended default): one extra query per relation.
+    let posts_by_user = User::load_posts_map_with(conn, &users, |q| {
+        q.push(" ORDER BY id DESC");
+    })
+    .await?;
+
+    for u in &users {
+        let _posts = posts_by_user.get(u.pk()).map(Vec::as_slice).unwrap_or(&[]);
+    }
+
+    // Attach style: keep base order, attach relation payload.
+    let posts = Post::select_all(conn).await?;
+    let _posts_with_author = Post::load_author(conn, posts).await?;
+
+    // Strict variant: require relation to exist for every base row.
+    // let _posts_with_author = Post::load_author_strict(conn, posts).await?;
+
+    Ok(())
+}
+```
+
 ## JSONB
 
 `pgorm` enables `tokio-postgres`'s `with-serde_json-1` feature, so `jsonb` columns work out of the box.
