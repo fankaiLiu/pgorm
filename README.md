@@ -36,19 +36,75 @@ pgorm = "0.1.1"
 
 ## Quick Start
 
-```rust
-use pgorm::{query, FromRow};
+### Model Mode
 
-#[derive(FromRow)]
+Define models with relations and eager loading support:
+
+```rust
+use pgorm::{FromRow, Model, ModelPk as _};
+
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "users")]
+#[orm(has_many(Post, foreign_key = "user_id", as = "posts"))]
 struct User {
+    #[orm(id)]
     id: i64,
-    username: String,
+    name: String,
 }
 
-let user: User = query("SELECT id, username FROM users WHERE id = $1")
-    .bind(1_i64)
-    .fetch_one_as(&client)
-    .await?;
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "posts")]
+#[orm(belongs_to(User, foreign_key = "user_id", as = "author"))]
+struct Post {
+    #[orm(id)]
+    id: i64,
+    user_id: i64,
+    title: String,
+}
+
+// Fetch all users with their posts (batch preload)
+let users = User::select_all(&client).await?;
+let posts_map = User::load_posts_map(&client, &users).await?;
+
+for user in &users {
+    let posts = posts_map.get(user.pk()).unwrap_or(&vec![]);
+    println!("{} has {} posts", user.name, posts.len());
+}
+
+// Fetch posts with their authors
+let posts = Post::select_all(&client).await?;
+let posts_with_author = Post::load_author(&client, posts).await?;
+```
+
+### SQL Mode
+
+Build complex queries with type-safe condition helpers:
+
+```rust
+use pgorm::{sql, Condition, WhereExpr, Op, OrderBy, Pagination};
+
+// Dynamic WHERE conditions
+let mut where_expr = WhereExpr::and(vec![
+    Condition::eq("status", "active")?.into(),
+    Condition::ilike("name", "%test%")?.into(),
+    WhereExpr::or(vec![
+        Condition::eq("role", "admin")?.into(),
+        Condition::eq("role", "owner")?.into(),
+    ]),
+    Condition::new("id", Op::between(1_i64, 100_i64))?.into(),
+]);
+
+let mut q = sql("SELECT * FROM users");
+if !where_expr.is_trivially_true() {
+    q.push(" WHERE ");
+    where_expr.append_to_sql(&mut q);
+}
+
+// Safe dynamic ORDER BY + pagination
+OrderBy::new().desc("created_at")?.append_to_sql(&mut q);
+Pagination::page(1, 20)?.append_to_sql(&mut q);
+
+let users: Vec<User> = q.fetch_all_as(&client).await?;
 ```
 
 ## Documentation
