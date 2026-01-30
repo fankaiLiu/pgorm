@@ -1,6 +1,6 @@
 # Changeset Input 宏（基于 InsertModel / UpdateModel）实现计划
 
-- 状态：Plan / Draft
+- 状态：MVP 已实现（仍可迭代）
 - 目标版本：0.1.x（先实现 flat input，再扩展到 graph）
 - 最后更新：2026-01-29
 
@@ -11,13 +11,29 @@
 - 创建（insert）场景：可以接收“字段不齐全”的 payload，先做验证（required / format / range ...），再转换成真正的 InsertModel。
 - 更新（patch）场景：UpdateModel 本身往往已经是 Option patch 语义；生成 Input struct 主要用于隔离 API DTO 与 ORM patch type，并提供统一的验证入口。
 - 关键约束：**如果字段本身已经是 `Option<...>`，生成 Input 时不再额外套一层 `Option`**（避免 `Option<Option<T>>` 或更深层嵌套仅为了“可缺省”）。
-- 验证风格：尽量对齐 Rust 里常见的 derive + attribute DSL（参考 `validator` 这类库的用法），降低学习成本。
+- 验证风格：**扁平、少嵌套、默认值可预测**（更适合 AI 生成/修改）。
 
 ## 非目标（Non-goals）
 
 - 不做动态“按字符串字段名 cast + Value 容器”的通用输入层（Rust 更推荐先 `Deserialize` 到 typed struct）。
 - 不强行把验证塞进 `insert()` / `update_*()`；验证仍然是显式调用。
 - 不在 v1 做“任意深度嵌套输入/关联写入”一把梭（graph 支持分阶段）。
+
+## 放在哪里（新 crate vs 现有 crate）
+
+结论：**放在现有 `pgorm` crate 里**，不新开 crate。
+
+原因：
+
+- 派生宏（`pgorm-derive`）生成的代码需要一个稳定的运行时入口（`pgorm::changeset` / `pgorm::validate`），放在同一个 crate 路径最省心，也最 AI 友好（不用解释“再加一个依赖/feature”）。
+- `pgorm` 的定位是库而不是框架：验证功能可以通过 feature 变成“可选能力”，不影响纯 SQL-first 用户。
+
+建议模块与 feature：
+
+- `pgorm::changeset`：错误类型与收集容器（`ValidationError(s)`）
+- `pgorm::validate`：校验实现（len/range/email/regex/url/uuid/one_of 等）
+- Cargo feature：`validate`（默认开启；关闭后只能使用不依赖外部 crate 的校验项）
+  - 依赖：`regex`（regex），`url`（url），`uuid`（已存在），email 可用 `regex` 或额外 `email_address`
 
 ## 用户侧 API（草案）
 
@@ -36,20 +52,20 @@ pub struct NewUser {
 }
 ```
 
-也可以直接在源字段上声明验证（语法建议尽量贴近常见验证库）：
+也可以直接在源字段上声明验证（扁平语法，AI 友好）：
 
 ```rust
 #[derive(InsertModel)]
 #[orm(table = "users")]
 #[orm(input = "NewUserInput")]
 pub struct NewUser {
-    #[orm(validate(length(min = 2, max = 100)))]
+    #[orm(len = "2..=100")]
     pub name: String,
 
-    #[orm(validate(email))]
+    #[orm(email)]
     pub email: String,
 
-    #[orm(validate(range(min = 0, max = 150)))]
+    #[orm(range = "0..=150")]
     pub age: Option<i32>,
 }
 ```
@@ -57,7 +73,8 @@ pub struct NewUser {
 生成（示意）：
 
 ```rust
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, ::pgorm::serde::Deserialize)]
+#[serde(crate = "::pgorm::serde")]
 pub struct NewUserInput {
     pub name: Option<String>,      // String -> Option<String>
     pub email: Option<String>,     // String -> Option<String>
@@ -92,7 +109,8 @@ pub struct UserPatch {
 生成（示意）：
 
 ```rust
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, ::pgorm::serde::Deserialize)]
+#[serde(crate = "::pgorm::serde")]
 pub struct UserPatchInput {
     pub name: Option<String>,           // 已经是 Option，不再套
     pub bio: Option<Option<String>>,    // 已经是 Option<...>，不再套（避免 Option<Option<Option<_>>>）
@@ -121,49 +139,78 @@ Input struct 不改变这层语义，只提供 DTO 隔离与验证入口。
 
 > 说明：该规则只检查“最外层是否 Option”，不会对内部泛型做递归包裹。
 
-## 验证 DSL（模仿常见验证库）
+## 验证 DSL（AI 友好版）
 
-本设计建议提供一个 `pgorm::validate::Validate`（或 `pgorm::changeset::Validate`）trait，形态与常见库一致：
+本设计建议生成一个固定签名的 `Input::validate()` 方法（不需要额外 trait/import，更适合 AI 生成/修改）：
 
 ```rust
-pub trait Validate {
-    fn validate(&self) -> Result<(), pgorm::changeset::ValidationErrors>;
+impl NewUserInput {
+    pub fn validate(&self) -> pgorm::changeset::ValidationErrors {
+        /* generated */
+    }
 }
 ```
 
 ### 字段级验证 attribute
 
-推荐主语法：`#[orm(validate(...))]`（因为 `pgorm` 已经使用 `#[orm(...)]` 作为统一配置入口）。
+推荐语法：把校验规则直接声明为 `#[orm(...)]` 的 item（避免 `validate(...)` 再包一层）：
 
-可选兼容语法：同时支持 `#[validate(...)]` 作为 alias（仅为了贴近生态习惯；实现上由 `InsertModel/UpdateModel` derive 读取该 attribute 并生成校验代码）。
+- `#[orm(required)]`
+- `#[orm(len = "2..=100")]`
+- `#[orm(range = "0..=150")]`
+- `#[orm(email)]`
+- `#[orm(regex = r"^[a-z0-9_]+$")]`
+- `#[orm(url)]`
+- `#[orm(uuid)]`
+- `#[orm(one_of = "a|b|c")]`
+- `#[orm(custom = "crate::path::to::fn")]`
+- `#[orm(input_as = "String")]`（仅对 `uuid::Uuid` / `url::Url` 生效；用于让“解析失败”走 `ValidationErrors`）
+
+允许同一个字段写多个校验项：
+
+```rust
+#[orm(required, len = "2..=100")]
+pub name: String,
+```
 
 ### Option 语义（非常关键）
 
 Input struct 的字段往往是 `Option<T>`；验证行为建议与常见库保持一致：
 
 - 除 `required` 外，其它校验 **只在值存在时运行**（`None` 直接跳过）
-- `required` 仅检查 “是否为 Some”，不负责检查字符串空白等（那是 `length/min` 或 custom 的职责）
+- `required` 仅检查 “是否为 Some”，不负责检查字符串空白等（那是 `len = "..."` 或 custom 的职责）
 - `Option<Option<T>>`：当外层 `Some(v)` 时继续校验 `v`（`Some(None)` 通常代表“显式置空”，此时：
   - 对 `required`：应视为不满足（因为值为 NULL）
   - 对其它校验：默认跳过或报错取决于规则；v1 建议跳过，交给业务自定义）
 
 ### v1 内置校验集合（建议先小后大）
 
-- `required`：仅用于 Input 侧；默认会对“源字段非 Option，但在 Input 中被 Option 化”的字段自动注入 required（用户通常不需要手写）
-- `length(min = ?, max = ?)`：字符串/集合长度
-- `range(min = ?, max = ?)`：数值范围（支持 `i*`/`u*`/`f*` 先按可实现性收敛）
-- `email`：邮箱格式（v1 可用简化规则或依赖 `email_address`/`validator` 等第三方 crate，建议 feature gating）
-- `custom(fn = "path::to::fn")`：自定义校验（参数建议为 `&T` 或 `&Option<T>`，返回 `Result<(), &'static str>` / `Result<(), ValidationError>`）
+- `required`：默认会对“源字段非 Option，但在 Input 中被 Option 化”的字段自动注入（用户通常不需要手写）
+- `len = "min..=max"`：字符串/集合长度
+- `range = "min..=max"`：数值范围（支持 `i*`/`u*`/`f*` 先按可实现性收敛）
+- `email`：邮箱格式（v1 可先用简化规则；更严格可选依赖 `email_address`）
+- `regex`：正则匹配（建议使用 raw string：`regex = r"..."`，避免转义噩梦）
+- `url`：URL 解析
+- `uuid`：UUID 解析
+- `one_of = "a|b|c"`：枚举值/白名单（建议用 `|` 分隔，避免空格干扰；后续也可以支持 `,`）
+- `custom = "path::to::fn"`：自定义校验（参数建议为 `&T` 或 `&Option<T>`，返回 `Result<(), &'static str>` / `Result<(), ValidationError>`）
 
-> 备注：如果你说的“很有名的验证库”不是 Rust 的 `validator` 风格（derive + attribute），这块 DSL 我再按你要对齐的库改语法。
+### 类型要求与 emstr 集成
+
+- `len/email/regex/url/uuid/one_of`：建议作用在“可视作字符串”的类型上（`String`/`&str`/`Cow<str>` 等）。实现上应尽量用 `AsRef<str>` 作为约束，这样如果你的 `emstr` 类型实现了 `AsRef<str>`，就能直接用这些校验项。
+- `range`：作用在数值类型上（至少覆盖 `i64/i32/u64/u32/f64/f32`）。
+
+> 注意：如果字段类型本身是 `uuid::Uuid` 或 `url::Url`，无效值通常会在 `serde` 反序列化阶段就报错（而不是进入 `validate()` 产出字段错误）。如果你希望“无效 uuid/url”也走 `ValidationErrors`，需要引入一个“输入类型覆盖”机制（例如 `#[orm(input_as = "String", uuid)]`）；该能力可作为 v1.1 追加，不阻塞 v1 先落地。
+>
+> 目前 MVP 已支持 `#[orm(input_as = "String")]`（仅 `uuid::Uuid` / `url::Url`），用于把解析失败转成字段错误（而不是 serde 直接失败）。
 
 ## 字段选择规则（v1 建议）
 
 默认生成 input 时使用“源 struct 的字段集合”，但需要提供可控的排除能力，否则 UpdateModel 里出现 “T: always bind” 的内部字段会让 input 变得不合理。
 
-建议新增字段级 attribute（命名待定）：
+已实现字段级 attribute：
 
-- `#[orm(skip_input)]`：不出现在 input struct 里，也不参与 `try_into_model()` 的 required 检查
+- `#[orm(skip_input)]`：不出现在 input struct 里（限制：**只能用于 `Option<T>` 字段**）
 
 并在文档中给出推荐：
 
@@ -175,13 +222,13 @@ Input struct 的字段往往是 `Option<T>`；验证行为建议与常见库保�
 
 生成 `try_into_model()`（建议顺序：先 validate，再转换）：
 
-- 1) `self.validate()`：根据字段上的 `validate(...)` 规则（含“默认 required 推断”）产出 `ValidationErrors`
+- 1) `self.validate()`：根据字段上的校验项（含“默认 required 推断”）产出 `ValidationErrors`
 - 2) 构造 InsertModel：对每个源字段：
   - 源字段是 `Option<_>`：直接赋值（input 同型）
   - 源字段是 `T`：从 `Option<T>` 取值（理论上在 validate 后应为 `Some`；实现上仍建议做一次防御性检查，避免误用时 panic）
 - 返回 `Result<InsertModel, ValidationErrors>`
 
-> v1 目标是做到：required/length/range/email/custom 这类“字段级校验”可由宏生成；跨字段/跨对象校验仍由用户显式代码完成（后续可加 hook 点/扩展语法）。
+> v1 目标是做到：required/len/range/email/custom 这类“字段级校验”可由宏生成；跨字段/跨对象校验仍由用户显式代码完成（后续可加 hook 点/扩展语法）。
 
 ### UpdateModel：`Input -> UpdateModel`
 
@@ -200,15 +247,10 @@ Input 宏解决三件事：
 - 字段级校验代码生成（含默认 required 推断）
 - DTO 与 ORM 类型隔离（Input -> InsertModel/UpdateModel）
 
-验证模块（`pgorm::changeset`）负责提供：
+运行时入口：
 
-- `ValidationError(s)`：结构化错误容器
-- `Validate` trait（或等价的 `Input::validate()` 约定）
-- `Changeset<T>`：可选的 validate 管道（显式调用）
-
-**决策点（需要你确认）**：`pgorm::changeset` 是否做成默认可用（仅类型，无行为），还是 feature gating。
-
-- 若要让 derive 生成的 `try_into_model()` 始终可用，最简单是：`pgorm::changeset` 类型默认存在（不要求用户额外开 feature）。
+- `pgorm::changeset`：默认可用（仅类型）
+- `pgorm::validate`：feature `validate`（默认开启）；email/regex/url/uuid/input_as 依赖它
 
 ## 宏配置（建议最小集合）
 
@@ -221,27 +263,24 @@ Input 宏解决三件事：
 字段级：
 
 - `#[orm(skip_input)]`：不生成该字段到 input
-- `#[orm(validate(...))]`：字段级校验（建议 DSL 贴近常见验证库）
-- （可选）`#[validate(...)]`：与 `#[orm(validate(...))]` 等价的 alias
+- `#[orm(input_as = "...")]`：输入类型覆盖（当前仅支持 `uuid::Uuid` / `url::Url`）
+- `#[orm(required)]` / `#[orm(len = "...")]` / `#[orm(range = "...")]` / `#[orm(email)]` / `#[orm(regex = "...")]` / `#[orm(url)]` / `#[orm(uuid)]` / `#[orm(one_of = "...")]` / `#[orm(custom = "...")]`：字段级校验项（扁平化，少嵌套）
 
 ## 实现步骤（Milestones）
 
 ### M0：最小可用（InsertModel）
 
-- [ ] 在 `pgorm` crate 中落地 `pgorm::changeset::ValidationErrors` + `Validate` trait（先只需要 `Required`/`length`/`range` 这类基础即可）
-- [ ] 扩展 `pgorm-derive` 的 `InsertModel`：
-  - [ ] 解析 `#[orm(input...)]` 配置
-  - [ ] 生成 input struct（按“Option 不再套”规则）
-  - [ ] 解析字段上的 `#[orm(validate(...))]`（可选：同时读取 `#[validate(...)]`）
-  - [ ] 生成 `impl Validate for Input`（或 `Input::validate()` 方法）
-  - [ ] 生成 `try_into_model()`：先 `validate()`，再做 required 缺失检查并累积错误
-- [ ] 添加 `crates/pgorm/examples/` 示例：`NewUserInput -> validate -> NewUser -> insert`
+- [x] 在 `pgorm` crate 中落地 `pgorm::changeset::ValidationErrors`（字段错误 + code + metadata）
+- [x] 在 `pgorm` crate 中落地 `pgorm::validate`（email/regex/url/uuid）
+- [x] Cargo feature `validate`（聚合依赖：`regex`/`url`）
+- [x] 扩展 `pgorm-derive` 的 `InsertModel`（input struct + validate + try_into_model）
+- [ ] 添加 `crates/pgorm/examples/` 示例：`NewUserInput -> validate -> NewUser -> insert`（目前在 integration test 中已有覆盖）
 
 ### M1：UpdateModel 支持
 
-- [ ] 扩展 `UpdateModel` 同样支持 `#[orm(input...)]`
-- [ ] 支持 `#[orm(skip_input)]`
-- [ ] 明确策略：同型/异型（见上文“转换策略”），并给出至少 1 个示例
+- [x] 扩展 `UpdateModel` 同样支持 `#[orm(input...)]`
+- [x] 支持 `#[orm(skip_input)]`
+- [x] `try_into_patch()` + integration test 覆盖
 
 ### M2：完善验证体验（可选）
 
@@ -260,4 +299,4 @@ Input 宏解决三件事：
   - [ ] Option 不再套（`Option<T>` 不变、`Option<Option<T>>` 不变）
   - [ ] `skip_input` 生效
   - [ ] 命名/可见性配置正确
-- `pgorm`：单测 `ValidationErrors` 的 required 累积行为（输出稳定、可序列化）
+- `pgorm`：integration test 覆盖基础校验与转换（`crates/pgorm/tests/changeset_input.rs`）
