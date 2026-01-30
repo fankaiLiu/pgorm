@@ -19,11 +19,12 @@ pgorm = { version = "0.1.0", default-features = false }
 
 ## Feature flags
 
-Default features: `pool`, `derive`, `check`.
+Default features: `pool`, `derive`, `check`, `validate`.
 
 - `pool`: deadpool-postgres pool helpers (`create_pool`)
 - `derive`: proc-macros (`FromRow`, `Model`, `InsertModel`, `UpdateModel`, `ViewModel`)
 - `check`: runtime SQL checking + recommended wrappers (`CheckedClient`, `PgClient`)
+- `validate`: changeset-style validation helpers (email/url/regex/etc)
 - `migrate`: SQL migrations via `refinery`
 
 ## Quick start (SQL-first)

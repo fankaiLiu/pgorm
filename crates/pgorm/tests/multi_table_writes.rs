@@ -3,6 +3,8 @@
 //! These tests verify that the macro-generated code compiles correctly.
 //! They do not run actual database operations.
 
+#![allow(dead_code)]
+
 use pgorm::{FromRow, InsertModel, Model, ModelPk, UpdateModel, WriteReport, WriteStepReport};
 
 // ============================================

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use pgorm::{FromRow, InsertModel, Model, UpdateModel};
 
 #[derive(InsertModel)]

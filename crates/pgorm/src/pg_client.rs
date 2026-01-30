@@ -698,7 +698,7 @@ ORDER BY n.nspname, c.relname, a.attnum
             CheckMode::WarnOnly => {
                 let issues = self.registry.check_sql(sql);
                 for issue in issues {
-                    eprintln!("[pgorm warn] SQL check: {:?}", issue);
+                    eprintln!("[pgorm warn] SQL check: {issue}");
                 }
                 Ok(())
             }

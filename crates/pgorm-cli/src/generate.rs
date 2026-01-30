@@ -2,7 +2,7 @@ use crate::cli::GenRunArgs;
 use crate::codegen::generate_package;
 use crate::config::{ProjectConfig, SchemaCacheMode};
 use crate::queries::load_package_queries;
-use crate::schema::{connect_db, load_schema_cache};
+use crate::schema::{connect_db, load_schema_cache, read_schema_cache};
 use crate::write::{WriteOptions, apply_generated_files};
 use pgorm_check::{LintLevel, SqlCheckLevel};
 
@@ -33,8 +33,14 @@ pub async fn run(args: GenRunArgs) -> anyhow::Result<()> {
     };
     let mode: SchemaCacheMode = project.file.schema_cache.mode;
 
-    let client = connect_db(&database_url).await?;
-    let (cache, _load) = load_schema_cache(&client, &cache_cfg, mode).await?;
+    let cache = match mode {
+        SchemaCacheMode::CacheOnly => read_schema_cache(&cache_cfg)?,
+        _ => {
+            let client = connect_db(&database_url).await?;
+            let (cache, _load) = load_schema_cache(&client, &cache_cfg, mode).await?;
+            cache
+        }
+    };
 
     let mut had_error = false;
     let mut had_warning = false;
@@ -130,4 +136,3 @@ pub async fn run(args: GenRunArgs) -> anyhow::Result<()> {
 
     Ok(())
 }
-

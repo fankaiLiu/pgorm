@@ -9,15 +9,114 @@ pub struct SelectColumn {
 }
 
 pub fn extract_param_numbers(sql: &str) -> anyhow::Result<Vec<usize>> {
-    let parsed = pg_query::parse(sql)?;
-
     let mut params: BTreeSet<usize> = BTreeSet::new();
-    for (node, _depth, _context, _has_filter_columns) in parsed.protobuf.nodes() {
-        if let pg_query::NodeRef::ParamRef(p) = node {
-            if p.number <= 0 {
-                continue;
+
+    // NOTE: `pg_query` does not currently expose `$n` params reliably for all statement kinds
+    // (e.g. INSERT/VALUES or LIMIT/OFFSET), so we do a lightweight lexer pass instead.
+    //
+    // This intentionally ignores `$` occurrences inside:
+    // - single-quoted strings ('...')
+    // - double-quoted identifiers ("...")
+    // - line comments (-- ...)
+    // - block comments (/* ... */)
+    // - dollar-quoted strings ($tag$ ... $tag$ / $$ ... $$)
+    let bytes = sql.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => {
+                // Single-quoted string: '' escapes a single quote.
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\'' {
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
             }
-            params.insert(p.number as usize);
+            b'"' => {
+                // Double-quoted identifier: "" escapes a double quote.
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'"' {
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'"' {
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                // Line comment: consume until newline.
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                // Block comment: consume until closing */.
+                i += 2;
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'$' => {
+                // `$n` parameter.
+                if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                    let mut j = i + 1;
+                    let mut num: usize = 0;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        num = num
+                            .saturating_mul(10)
+                            .saturating_add((bytes[j] - b'0') as usize);
+                        j += 1;
+                    }
+                    if num > 0 {
+                        params.insert(num);
+                    }
+                    i = j;
+                    continue;
+                }
+
+                // Dollar-quoted string: $tag$...$tag$ or $$...$$.
+                let Some(delim_end) = bytes[i + 1..].iter().position(|&b| b == b'$') else {
+                    i += 1;
+                    continue;
+                };
+                let delim_end = i + 1 + delim_end;
+                let delim = &bytes[i..=delim_end];
+
+                // Find the next occurrence of the same delimiter.
+                let mut j = delim_end + 1;
+                let mut found = None;
+                while j + delim.len() <= bytes.len() {
+                    if &bytes[j..j + delim.len()] == delim {
+                        found = Some(j + delim.len());
+                        break;
+                    }
+                    j += 1;
+                }
+
+                if let Some(next) = found {
+                    i = next;
+                    continue;
+                }
+
+                i += 1;
+            }
+            _ => i += 1,
         }
     }
 
@@ -185,6 +284,20 @@ mod tests {
     fn extract_param_numbers_requires_contiguous() {
         let err = extract_param_numbers("SELECT $2").unwrap_err();
         assert!(err.to_string().contains("missing $1"));
+    }
+
+    #[test]
+    fn extract_param_numbers_finds_params_in_insert() {
+        let params =
+            extract_param_numbers("INSERT INTO users (id, username) VALUES ($1, $2::text)")
+                .unwrap();
+        assert_eq!(params, vec![1, 2]);
+    }
+
+    #[test]
+    fn extract_param_numbers_finds_params_in_limit_offset() {
+        let params = extract_param_numbers("SELECT id FROM users LIMIT $1 OFFSET $2").unwrap();
+        assert_eq!(params, vec![1, 2]);
     }
 
     #[test]

@@ -70,6 +70,33 @@ pub async fn connect_db(database_url: &str) -> anyhow::Result<tokio_postgres::Cl
     Ok(client)
 }
 
+pub(crate) fn read_schema_cache(cfg: &SchemaCacheConfig) -> anyhow::Result<SchemaCache> {
+    let cache_path = SchemaCache::cache_path(cfg);
+    let data = std::fs::read(&cache_path).map_err(|e| {
+        anyhow::anyhow!("failed to read schema cache {}: {e}", cache_path.display())
+    })?;
+    let cache: SchemaCache = serde_json::from_slice(&data).map_err(|e| {
+        anyhow::anyhow!("failed to parse schema cache {}: {e}", cache_path.display())
+    })?;
+
+    if cache.version != 1 {
+        anyhow::bail!(
+            "unsupported schema cache version {} in {}",
+            cache.version,
+            cache_path.display()
+        );
+    }
+    if cache.schemas != cfg.schemas {
+        anyhow::bail!(
+            "schema cache schemas mismatch (cache: {:?}, requested: {:?})",
+            cache.schemas,
+            cfg.schemas
+        );
+    }
+
+    Ok(cache)
+}
+
 pub async fn load_schema_cache(
     client: &impl pgorm_check::CheckClient,
     cfg: &SchemaCacheConfig,
@@ -94,29 +121,7 @@ pub async fn load_schema_cache(
             Ok((cache, SchemaCacheLoad::Refreshed))
         }
         SchemaCacheMode::CacheOnly => {
-            let cache_path = SchemaCache::cache_path(cfg);
-            let data = std::fs::read(&cache_path).map_err(|e| {
-                anyhow::anyhow!("failed to read schema cache {}: {e}", cache_path.display())
-            })?;
-            let cache: SchemaCache = serde_json::from_slice(&data).map_err(|e| {
-                anyhow::anyhow!("failed to parse schema cache {}: {e}", cache_path.display())
-            })?;
-
-            if cache.version != 1 {
-                anyhow::bail!(
-                    "unsupported schema cache version {} in {}",
-                    cache.version,
-                    cache_path.display()
-                );
-            }
-            if cache.schemas != cfg.schemas {
-                anyhow::bail!(
-                    "schema cache schemas mismatch (cache: {:?}, requested: {:?})",
-                    cache.schemas,
-                    cfg.schemas
-                );
-            }
-
+            let cache = read_schema_cache(cfg)?;
             Ok((cache, SchemaCacheLoad::CacheHit))
         }
     }

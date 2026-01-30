@@ -2,6 +2,8 @@
 //!
 //! These tests verify macro expansion compiles (no real database operations).
 
+#![allow(dead_code)]
+
 use pgorm::{FromRow, GenericClient, Model, OrmResult};
 
 #[derive(Debug, Clone, FromRow, Model)]
@@ -33,7 +35,6 @@ struct Comment {
     body: String,
 }
 
-#[allow(dead_code)]
 async fn _api_compiles(
     conn: &impl GenericClient,
     users: Vec<User>,
@@ -68,4 +69,3 @@ fn eager_loading_api_compiles() {
     assert_eq!(Post::TABLE, "posts");
     assert_eq!(Comment::TABLE, "comments");
 }
-
