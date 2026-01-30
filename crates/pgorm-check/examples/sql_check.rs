@@ -75,9 +75,11 @@ CREATE TABLE IF NOT EXISTS tasks (
         .await?;
 
     // Cache schema under the current working directory (configurable).
-    let mut config = SchemaCacheConfig::default();
-    config.cache_dir = PathBuf::from(".pgorm");
-    config.schemas = vec!["public".to_string()];
+    let config = SchemaCacheConfig {
+        cache_dir: PathBuf::from(".pgorm"),
+        schemas: vec!["public".to_string()],
+        ..Default::default()
+    };
 
     println!(
         "{} {}",
