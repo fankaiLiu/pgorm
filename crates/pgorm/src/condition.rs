@@ -418,7 +418,7 @@ impl Condition {
                         let p1 = *param_idx;
                         *param_idx += 1;
                         let p2 = *param_idx;
-                        let sql = format!("{} {} ${} AND ${}", col, operator, p1, p2);
+                        let sql = format!("{col} {operator} ${p1} AND ${p2}");
                         (
                             sql,
                             vec![&**a as &(dyn ToSql + Sync), &**b as &(dyn ToSql + Sync)],
@@ -443,7 +443,7 @@ impl Condition {
                         (sql, params)
                     }
                     ConditionValue::None => {
-                        let sql = format!("{} {}", col, operator);
+                        let sql = format!("{col} {operator}");
                         (sql, Vec::new())
                     }
                 }

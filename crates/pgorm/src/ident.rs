@@ -80,8 +80,7 @@ impl Ident {
                     }
                     Some(c) => {
                         return Err(OrmError::validation(format!(
-                            "Expected '.' between identifier parts, got '{}'",
-                            c
+                            "Expected '.' between identifier parts, got '{c}'"
                         )));
                     }
                     None => break,
@@ -127,8 +126,7 @@ impl Ident {
                         chars.next();
                     } else {
                         return Err(OrmError::validation(format!(
-                            "Invalid identifier start character: '{}'",
-                            c
+                            "Invalid identifier start character: '{c}'"
                         )));
                     }
                 } else {
@@ -138,8 +136,7 @@ impl Ident {
                         chars.next();
                     } else {
                         return Err(OrmError::validation(format!(
-                            "Invalid character in identifier: '{}'",
-                            c
+                            "Invalid character in identifier: '{c}'"
                         )));
                     }
                 }
@@ -183,13 +180,13 @@ impl IntoIdent for Ident {
     }
 }
 
-impl<'a> IntoIdent for &'a Ident {
+impl IntoIdent for &Ident {
     fn into_ident(self) -> OrmResult<Ident> {
         Ok(self.clone())
     }
 }
 
-impl<'a> IntoIdent for &'a str {
+impl IntoIdent for &str {
     fn into_ident(self) -> OrmResult<Ident> {
         Ident::parse(self)
     }

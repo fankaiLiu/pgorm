@@ -38,20 +38,20 @@ pub(super) fn generate_insert_graph_methods(
 
     // Compile-time check: has_one/has_many without graph_root_id_field requires returning type
     // because we need the root ID (via ModelPk::pk()) to inject into children.
-    if !graph.has_relations.is_empty() && graph.graph_root_id_field.is_none() {
-        if struct_attrs.returning.is_none() {
-            let relation_names: Vec<_> = graph.has_relations.iter().map(|r| &r.field).collect();
-            return Err(syn::Error::new_spanned(
-                input,
-                format!(
-                    "InsertModel with has_one/has_many relations ({:?}) requires either: \
+    if !graph.has_relations.is_empty()
+        && graph.graph_root_id_field.is_none()
+        && struct_attrs.returning.is_none()
+    {
+        let relation_names: Vec<_> = graph.has_relations.iter().map(|r| &r.field).collect();
+        return Err(syn::Error::new_spanned(
+            input,
+            format!(
+                "InsertModel with has_one/has_many relations ({relation_names:?}) requires either: \
                     \n  1. #[orm(returning = \"YourModel\")] where YourModel implements ModelPk, or \
                     \n  2. #[orm(graph_root_id_field = \"id\")] to get root_id from input field. \
-                    \nThe root ID is needed to set foreign keys on child records.",
-                    relation_names,
-                ),
-            ));
-        }
+                    \nThe root ID is needed to set foreign keys on child records."
+            ),
+        ));
     }
 
     let table_name = &struct_attrs.table;
@@ -113,7 +113,7 @@ pub(super) fn generate_insert_graph_methods(
     let after_insert_code = generate_insert_step_code(graph, false)?;
 
     // Build tag for root insert
-    let root_tag = format!("graph:root:{}", table_name);
+    let root_tag = format!("graph:root:{table_name}");
 
     // Check if we need returning type
     let returning_ty = struct_attrs.returning.as_ref();

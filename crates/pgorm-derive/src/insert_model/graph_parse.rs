@@ -66,7 +66,7 @@ pub(super) fn parse_graph_attr(tokens: &TokenStream, graph: &mut GraphDeclaratio
 
 /// Extract a string value from a simple "key = \"value\"" pattern.
 fn extract_string_value(s: &str, key: &str) -> Option<String> {
-    let pattern = format!("{} = ", key);
+    let pattern = format!("{key} = ");
     if let Some(idx) = s.find(&pattern) {
         let rest = &s[idx + pattern.len()..];
         // Find the quoted value

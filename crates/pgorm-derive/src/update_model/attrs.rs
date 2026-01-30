@@ -98,11 +98,8 @@ impl syn::parse::Parse for StructAttrList {
                     }
                     _ => {}
                 }
-            } else {
-                match key.as_str() {
-                    "input" => input_flag = true,
-                    _ => {}
-                }
+            } else if key.as_str() == "input" {
+                input_flag = true;
             }
 
             if input.peek(syn::Token![,]) {

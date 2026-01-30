@@ -72,7 +72,7 @@ impl PgType for serde_json::Value {
     }
 }
 
-impl<'a> PgType for &'a serde_json::Value {
+impl PgType for &serde_json::Value {
     fn pg_array_type() -> &'static str {
         "jsonb[]"
     }

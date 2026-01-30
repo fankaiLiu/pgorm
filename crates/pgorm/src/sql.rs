@@ -369,7 +369,7 @@ impl Query {
             ));
         }
 
-        let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
+        let wrapped_sql = format!("SELECT EXISTS({inner_sql})");
         let params = self.params_ref();
         let row = match self.tag.as_deref() {
             Some(tag) => conn.query_one_tagged(tag, &wrapped_sql, &params).await?,
@@ -497,7 +497,7 @@ impl Sql {
                 SqlPart::Param => {
                     idx += 1;
                     use std::fmt::Write;
-                    let _ = write!(&mut out, "${}", idx);
+                    let _ = write!(&mut out, "${idx}");
                 }
             }
         }
@@ -520,10 +520,9 @@ impl Sql {
             .count();
 
         if placeholder_count != self.params.len() {
+            let params_len = self.params.len();
             return Err(OrmError::Validation(format!(
-                "Sql: placeholders({}) != params({})",
-                placeholder_count,
-                self.params.len()
+                "Sql: placeholders({placeholder_count}) != params({params_len})"
             )));
         }
         Ok(())
@@ -799,7 +798,7 @@ impl Sql {
             ));
         }
 
-        let wrapped_sql = format!("SELECT EXISTS({})", inner_sql);
+        let wrapped_sql = format!("SELECT EXISTS({inner_sql})");
         let params = self.params_ref();
         let row = match self.tag.as_deref() {
             Some(tag) => conn.query_one_tagged(tag, &wrapped_sql, &params).await?,
@@ -867,10 +866,7 @@ impl Sql {
     /// ```
     pub fn page(&mut self, page: i64, per_page: i64) -> OrmResult<&mut Self> {
         if page < 1 {
-            return Err(OrmError::Validation(format!(
-                "page must be >= 1, got {}",
-                page
-            )));
+            return Err(OrmError::Validation(format!("page must be >= 1, got {page}")));
         }
         let offset = (page - 1) * per_page;
         Ok(self.limit_offset(per_page, offset))

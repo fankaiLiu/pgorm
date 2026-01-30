@@ -145,7 +145,7 @@ impl SchemaRegistry {
 
         let mut table = TableSchema::new(&schema_name, &table_name);
         for col in columns {
-            let is_pk = pk.map_or(false, |p| p == *col);
+            let is_pk = pk == Some(*col);
             table.add_column(*col, is_pk);
         }
 

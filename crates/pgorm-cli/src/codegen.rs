@@ -6,6 +6,8 @@ use pgorm_check::DbSchema;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+type TableResolution = (Vec<(String, String)>, HashMap<String, (String, String)>);
+
 #[derive(Debug, Clone)]
 pub struct GeneratedFile {
     pub path: PathBuf,
@@ -240,9 +242,7 @@ fn generate_query_items(
     };
 
     if pkg.codegen.emit_queries_struct {
-        out.push_str(&format!(
-            "impl<'a, C: pgorm::GenericClient> super::Queries<'a, C> {{\n"
-        ));
+        out.push_str("impl<'a, C: pgorm::GenericClient> super::Queries<'a, C> {\n");
         out.push_str(&format!(
             "    pub async fn {fn_name}(&self{args_with_leading_comma}) -> {ret_ty} {{\n"
         ));
@@ -365,7 +365,7 @@ fn build_row_struct(
 fn build_table_resolution(
     schema: &DbSchema,
     analysis: &pgorm_check::SqlAnalysis,
-) -> anyhow::Result<(Vec<(String, String)>, HashMap<String, (String, String)>)> {
+) -> anyhow::Result<TableResolution> {
     let mut visible_tables: Vec<(String, String)> = Vec::new();
     let mut qualifier_to_table: HashMap<String, (String, String)> = HashMap::new();
 

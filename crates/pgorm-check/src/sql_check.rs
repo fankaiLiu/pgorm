@@ -168,8 +168,7 @@ pub fn check_sql_analysis(
                         level: SqlCheckLevel::Error,
                         kind: SqlCheckIssueKind::MissingColumn,
                         message: format!(
-                            "Column not found: {qualifier}.{col} (table resolved to {}.{})",
-                            resolved_schema, resolved_table
+                            "Column not found: {qualifier}.{col} (table resolved to {resolved_schema}.{resolved_table})"
                         ),
                         location: c.location,
                     });

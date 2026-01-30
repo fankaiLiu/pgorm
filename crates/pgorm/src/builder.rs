@@ -63,6 +63,7 @@ impl WhereExpr {
     }
 
     /// Create a NOT expression.
+    #[allow(clippy::should_implement_trait)]
     pub fn not(expr: WhereExpr) -> Self {
         WhereExpr::Not(Box::new(expr))
     }
@@ -178,7 +179,7 @@ pub enum SortDir {
 }
 
 impl SortDir {
-    fn to_sql(&self) -> &'static str {
+    fn to_sql(self) -> &'static str {
         match self {
             SortDir::Asc => "ASC",
             SortDir::Desc => "DESC",
@@ -194,7 +195,7 @@ pub enum NullsOrder {
 }
 
 impl NullsOrder {
-    fn to_sql(&self) -> &'static str {
+    fn to_sql(self) -> &'static str {
         match self {
             NullsOrder::First => "NULLS FIRST",
             NullsOrder::Last => "NULLS LAST",
@@ -304,6 +305,7 @@ impl OrderBy {
     }
 
     /// Add a custom order item.
+    #[allow(clippy::should_implement_trait)]
     pub fn add(mut self, item: OrderItem) -> Self {
         self.items.push(item);
         self
@@ -378,10 +380,7 @@ impl Pagination {
     /// Page numbers start at 1. Returns error if page < 1.
     pub fn page(page: i64, per_page: i64) -> OrmResult<Self> {
         if page < 1 {
-            return Err(OrmError::validation(format!(
-                "page must be >= 1, got {}",
-                page
-            )));
+            return Err(OrmError::validation(format!("page must be >= 1, got {page}")));
         }
         Ok(Self {
             limit: Some(per_page),

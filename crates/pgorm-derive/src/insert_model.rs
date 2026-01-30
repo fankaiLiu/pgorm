@@ -133,7 +133,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             };
 
             param_idx += 1;
-            insert_value_exprs.push(format!("${}", param_idx));
+            insert_value_exprs.push(format!("${param_idx}"));
             bind_field_idents.push(field_ident.clone());
             batch_bind_fields.push(BindField {
                 ident: field_ident,

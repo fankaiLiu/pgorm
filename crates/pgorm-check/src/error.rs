@@ -23,13 +23,13 @@ pub enum CheckError {
 impl fmt::Display for CheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CheckError::Database(e) => write!(f, "Database error: {}", e),
-            CheckError::Validation(msg) => write!(f, "Validation error: {}", msg),
-            CheckError::Serialization(msg) => write!(f, "Serialization error: {}", msg),
+            CheckError::Database(e) => write!(f, "Database error: {e}"),
+            CheckError::Validation(msg) => write!(f, "Validation error: {msg}"),
+            CheckError::Serialization(msg) => write!(f, "Serialization error: {msg}"),
             CheckError::Decode { column, message } => {
-                write!(f, "Decode error for column '{}': {}", column, message)
+                write!(f, "Decode error for column '{column}': {message}")
             }
-            CheckError::Other(msg) => write!(f, "{}", msg),
+            CheckError::Other(msg) => write!(f, "{msg}"),
         }
     }
 }

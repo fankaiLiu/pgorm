@@ -107,9 +107,7 @@ fn select_tables(cfg: &ModelsConfig, schema: &DbSchema) -> anyhow::Result<Vec<pg
             };
             if !cfg.include_views && !is_table_like(t.kind) {
                 anyhow::bail!(
-                    "relation is not a table ({}.{}) - set models.include_views=true to include views",
-                    schema_name,
-                    table_name
+                    "relation is not a table ({schema_name}.{table_name}) - set models.include_views=true to include views"
                 );
             }
             tables.push(t.clone());

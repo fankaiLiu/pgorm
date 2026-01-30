@@ -129,7 +129,7 @@ impl ModelCheckResult {
 
                 let extra_in_db: Vec<String> = db_columns
                     .iter()
-                    .filter(|col| !model_columns.iter().any(|mc| *mc == col.as_str()))
+                    .filter(|col| !model_columns.contains(&col.as_str()))
                     .cloned()
                     .collect();
 
@@ -745,8 +745,7 @@ ORDER BY n.nspname, c.relname, a.attnum
                     Ok(())
                 }
                 HookAction::Abort(reason) => Err(OrmError::validation(format!(
-                    "Query aborted by hook: {}",
-                    reason
+                    "Query aborted by hook: {reason}"
                 ))),
             }
         } else {
@@ -1047,7 +1046,7 @@ impl<C: GenericClient> PgClient<C> {
         // Report
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
@@ -1078,7 +1077,7 @@ impl<C: GenericClient> PgClient<C> {
         let query_result = match &result {
             Ok(_) => QueryResult::OptionalRow(true),
             Err(OrmError::NotFound(_)) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
@@ -1109,7 +1108,7 @@ impl<C: GenericClient> PgClient<C> {
         let query_result = match &result {
             Ok(Some(_)) => QueryResult::OptionalRow(true),
             Ok(None) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
@@ -1139,7 +1138,7 @@ impl<C: GenericClient> PgClient<C> {
 
         let query_result = match &result {
             Ok(n) => QueryResult::Affected(*n),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);

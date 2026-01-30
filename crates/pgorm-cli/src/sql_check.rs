@@ -44,17 +44,36 @@ pub async fn run(args: SqlCheckArgs) -> anyhow::Result<()> {
             anyhow::bail!("no SQL provided (pass files or pipe SQL to stdin)");
         }
 
-        let summary = validate_sql("stdin", &buf, &cache.schema);
-        had_error |= summary.had_error;
-        had_warning |= summary.had_warning;
+        let stmts = pg_query::split_with_parser(&buf)
+            .map_err(|e| anyhow::anyhow!("failed to split SQL statements from stdin: {e}"))?;
+        if stmts.is_empty() {
+            anyhow::bail!("no SQL statements found in stdin");
+        }
+        for (idx, stmt) in stmts.into_iter().enumerate() {
+            let header = format!("stdin:stmt{}", idx + 1);
+            let summary = validate_sql(&header, stmt, &cache.schema);
+            had_error |= summary.had_error;
+            had_warning |= summary.had_warning;
+        }
     } else {
         for file in &args.files {
             let content = std::fs::read_to_string(file)
                 .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", file.display()))?;
-            let header = file.display().to_string();
-            let summary = validate_sql(&header, &content, &cache.schema);
-            had_error |= summary.had_error;
-            had_warning |= summary.had_warning;
+            let stmts = pg_query::split_with_parser(&content).map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to split SQL statements from {}: {e}",
+                    file.display()
+                )
+            })?;
+            if stmts.is_empty() {
+                anyhow::bail!("no SQL statements found in {}", file.display());
+            }
+            for (idx, stmt) in stmts.into_iter().enumerate() {
+                let header = format!("{}:stmt{}", file.display(), idx + 1);
+                let summary = validate_sql(&header, stmt, &cache.schema);
+                had_error |= summary.had_error;
+                had_warning |= summary.had_warning;
+            }
         }
     }
 
@@ -64,4 +83,3 @@ pub async fn run(args: SqlCheckArgs) -> anyhow::Result<()> {
 
     Ok(())
 }
-

@@ -431,6 +431,9 @@ Run `pgorm sql check --help` for more."
 USAGE:
   pgorm sql check [OPTIONS] [FILES...]
 
+NOTES:
+  - Supports multi-statement input; each statement is validated separately.
+
 OPTIONS:
   --config <FILE>       Config file path (default: pgorm.toml)
   --database <URL>      Database URL (overrides config)

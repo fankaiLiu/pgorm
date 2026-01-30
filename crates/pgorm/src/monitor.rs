@@ -170,12 +170,12 @@ pub enum QueryResult {
 impl fmt::Display for QueryResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QueryResult::Rows(n) => write!(f, "{} rows", n),
-            QueryResult::Affected(n) => write!(f, "{} affected", n),
+            QueryResult::Rows(n) => write!(f, "{n} rows"),
+            QueryResult::Affected(n) => write!(f, "{n} affected"),
             QueryResult::OptionalRow(found) => {
                 write!(f, "{}", if *found { "1 row" } else { "0 rows" })
             }
-            QueryResult::Error(e) => write!(f, "error: {}", e),
+            QueryResult::Error(e) => write!(f, "error: {e}"),
         }
     }
 }
@@ -504,6 +504,7 @@ impl CompositeMonitor {
     }
 
     /// Add a monitor.
+    #[allow(clippy::should_implement_trait)]
     pub fn add<M: QueryMonitor + 'static>(mut self, monitor: M) -> Self {
         self.monitors.push(Arc::new(monitor));
         self
@@ -554,6 +555,7 @@ impl CompositeHook {
     }
 
     /// Add a hook.
+    #[allow(clippy::should_implement_trait)]
     pub fn add<H: QueryHook + 'static>(mut self, hook: H) -> Self {
         self.hooks.push(Arc::new(hook));
         self
@@ -612,7 +614,7 @@ impl QueryHook for CompositeHook {
 /// Configuration for query monitoring and timeouts.
 ///
 /// By default, monitoring is disabled and must be explicitly enabled.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MonitorConfig {
     /// Query timeout duration. `None` means no timeout (default).
     pub query_timeout: Option<Duration>,
@@ -620,16 +622,6 @@ pub struct MonitorConfig {
     pub slow_query_threshold: Option<Duration>,
     /// Whether monitoring is enabled.
     pub monitoring_enabled: bool,
-}
-
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        Self {
-            query_timeout: None,
-            slow_query_threshold: None,
-            monitoring_enabled: false,
-        }
-    }
 }
 
 impl MonitorConfig {
@@ -815,8 +807,7 @@ impl<C: GenericClient> InstrumentedClient<C> {
                 Ok(())
             }
             HookAction::Abort(reason) => Err(OrmError::validation(format!(
-                "Query aborted by hook: {}",
-                reason
+                "Query aborted by hook: {reason}"
             ))),
         }
     }
@@ -887,7 +878,7 @@ impl<C: GenericClient> InstrumentedClient<C> {
 
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 
@@ -921,7 +912,7 @@ impl<C: GenericClient> InstrumentedClient<C> {
         let query_result = match &result {
             Ok(_) => QueryResult::OptionalRow(true),
             Err(OrmError::NotFound { .. }) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 
@@ -955,7 +946,7 @@ impl<C: GenericClient> InstrumentedClient<C> {
         let query_result = match &result {
             Ok(Some(_)) => QueryResult::OptionalRow(true),
             Ok(None) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 
@@ -988,7 +979,7 @@ impl<C: GenericClient> InstrumentedClient<C> {
 
         let query_result = match &result {
             Ok(n) => QueryResult::Affected(*n),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {:?}", d)),
+            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::Error(e.to_string()),
         };
 

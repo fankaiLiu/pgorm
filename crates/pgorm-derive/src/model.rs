@@ -81,16 +81,16 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         let qualified = if let Some(ref tbl) = field_info.table {
             // If field_name differs from column, use AS alias
             if field_name != column_name {
-                format!("{}.{} AS {}", tbl, column_name, field_name)
+                format!("{tbl}.{column_name} AS {field_name}")
             } else {
-                format!("{}.{}", tbl, column_name)
+                format!("{tbl}.{column_name}")
             }
         } else {
             // Main table
             if field_name != column_name {
-                format!("{}.{} AS {}", table_name, column_name, field_name)
+                format!("{table_name}.{column_name} AS {field_name}")
             } else {
-                format!("{}.{}", table_name, column_name)
+                format!("{table_name}.{column_name}")
             }
         };
         qualified_columns.push(qualified);
@@ -280,7 +280,7 @@ fn generate_select_one_method(
     has_joins: bool,
 ) -> TokenStream {
     if let (Some(id_col), Some(id_ty)) = (id_column, id_field_type) {
-        let id_col_qualified = format!("{}.{}", table_name, id_col);
+        let id_col_qualified = format!("{table_name}.{id_col}");
         if has_joins {
             quote! {
                 /// Fetch a single record by its primary key.
@@ -339,7 +339,7 @@ fn generate_delete_by_id_methods(
     id_field_type: Option<&syn::Type>,
 ) -> TokenStream {
     if let (Some(id_col), Some(id_ty)) = (id_column, id_field_type) {
-        let id_col_qualified = format!("{}.{}", table_name, id_col);
+        let id_col_qualified = format!("{table_name}.{id_col}");
 
         quote! {
             /// Delete a single record by its primary key.

@@ -43,7 +43,7 @@ pub(super) fn generate_insert_sql(
     values: &[String],
 ) -> String {
     if columns.is_empty() {
-        format!("INSERT INTO {} DEFAULT VALUES", table_name)
+        format!("INSERT INTO {table_name} DEFAULT VALUES")
     } else {
         format!(
             "INSERT INTO {} ({}) VALUES ({})",
@@ -271,7 +271,7 @@ pub(super) fn generate_upsert_methods(
     let (on_conflict_clause, conflict_cols_for_exclusion): (String, Vec<String>) =
         match conflict_spec {
             ConflictSpec::Constraint(name) => {
-                (format!("ON CONFLICT ON CONSTRAINT {}", name), vec![])
+                (format!("ON CONFLICT ON CONSTRAINT {name}"), vec![])
             }
             ConflictSpec::Columns(cols) => {
                 (format!("ON CONFLICT ({})", cols.join(", ")), cols.clone())
@@ -332,7 +332,7 @@ pub(super) fn generate_upsert_methods(
     };
 
     let placeholders: Vec<String> = (1..=upsert_bind_idents.len())
-        .map(|i| format!("${}", i))
+        .map(|i| format!("${i}"))
         .collect();
 
     // Update assignments
@@ -340,18 +340,18 @@ pub(super) fn generate_upsert_methods(
         if let Some(update_cols) = &struct_attrs.conflict_update {
             update_cols
                 .iter()
-                .map(|col| format!("{} = EXCLUDED.{}", col, col))
+                .map(|col| format!("{col} = EXCLUDED.{col}"))
                 .collect()
         } else {
             upsert_columns
                 .iter()
                 .filter(|col| !conflict_cols_for_exclusion.contains(col))
-                .map(|col| format!("{} = EXCLUDED.{}", col, col))
+                .map(|col| format!("{col} = EXCLUDED.{col}"))
                 .collect()
         };
     if update_assignments.is_empty() {
         if let Some(first_col) = upsert_columns.first() {
-            update_assignments.push(format!("{} = EXCLUDED.{}", first_col, first_col));
+            update_assignments.push(format!("{first_col} = EXCLUDED.{first_col}"));
         }
     }
 
