@@ -11,7 +11,7 @@ use std::env;
 
 mod embedded {
     use pgorm::embed_migrations;
-    embed_migrations!("./examples/migrations");
+    embed_migrations!("./examples/migrate/migrations");
 }
 
 #[tokio::main]

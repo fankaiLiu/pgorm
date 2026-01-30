@@ -5,8 +5,10 @@
 //! Set DATABASE_URL in .env file or environment variable:
 //! DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
-use colored::Colorize;
+mod common;
+
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
+use common::{print_banner, print_done, print_header, print_info, print_success, print_warning, setup_products_categories_schema};
 use pgorm::{CheckMode, FromRow, Model, OrmError, PgClient, PgClientConfig, create_pool, query};
 use std::env;
 use std::time::Duration;
@@ -29,29 +31,6 @@ struct Category {
     #[orm(id)]
     id: i64,
     name: String,
-}
-
-/// Print a section header with styling
-fn print_header(title: &str) {
-    println!();
-    println!("{}", "─".repeat(60).bright_black());
-    println!("{}", title.bold().cyan());
-    println!("{}", "─".repeat(60).bright_black());
-}
-
-/// Print success message
-fn print_success(msg: &str) {
-    println!("  {} {}", "✓".green().bold(), msg);
-}
-
-/// Print warning message
-fn print_warning(msg: &str) {
-    println!("  {} {}", "⚠".yellow().bold(), msg);
-}
-
-/// Print info message
-fn print_info(msg: &str) {
-    println!("  {} {}", "ℹ".blue(), msg);
 }
 
 /// Create a styled table for schema registry
@@ -223,8 +202,8 @@ fn create_validation_table(
     for (desc, result) in results {
         let (status, status_color, result_text) = match result {
             Ok(rows) => ("✓", Color::Green, format!("Success: {} rows", rows.len())),
-            Err(OrmError::Validation(msg)) => ("✗", Color::Red, format!("Validation: {}", msg)),
-            Err(e) => ("⚠", Color::Yellow, format!("DB Error: {}", e)),
+            Err(OrmError::Validation(msg)) => ("✗", Color::Red, format!("Validation: {msg}")),
+            Err(e) => ("⚠", Color::Yellow, format!("DB Error: {e}")),
         };
 
         table.add_row(vec![
@@ -243,21 +222,7 @@ fn create_validation_table(
 async fn main() -> Result<(), OrmError> {
     dotenvy::dotenv().ok();
 
-    println!();
-    println!(
-        "{}",
-        "╔══════════════════════════════════════════════════════════╗".cyan()
-    );
-    println!(
-        "{}",
-        "║           PgClient Demo - Schema Checking                ║"
-            .cyan()
-            .bold()
-    );
-    println!(
-        "{}",
-        "╚══════════════════════════════════════════════════════════╝".cyan()
-    );
+    print_banner("PgClient Demo - Schema Checking");
 
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env or environment");
@@ -267,40 +232,7 @@ async fn main() -> Result<(), OrmError> {
 
     // Setup: Create tables
     print_header("Setup: Creating Tables");
-
-    client
-        .execute("DROP TABLE IF EXISTS products CASCADE", &[])
-        .await
-        .map_err(OrmError::from_db_error)?;
-    client
-        .execute("DROP TABLE IF EXISTS categories CASCADE", &[])
-        .await
-        .map_err(OrmError::from_db_error)?;
-
-    client
-        .execute(
-            "CREATE TABLE categories (
-                id BIGSERIAL PRIMARY KEY,
-                name TEXT NOT NULL
-            )",
-            &[],
-        )
-        .await
-        .map_err(OrmError::from_db_error)?;
-
-    client
-        .execute(
-            "CREATE TABLE products (
-                id BIGSERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                price_cents BIGINT NOT NULL,
-                in_stock BOOLEAN NOT NULL DEFAULT true
-            )",
-            &[],
-        )
-        .await
-        .map_err(OrmError::from_db_error)?;
-
+    setup_products_categories_schema(&client).await?;
     print_success("Tables created: products, categories");
 
     // ============================================
@@ -430,7 +362,7 @@ async fn main() -> Result<(), OrmError> {
 
     match result {
         Ok(_) => print_success("Query attempted (passed validation phase)"),
-        Err(e) => print_warning(&format!("DB error (expected): {}", e)),
+        Err(e) => print_warning(&format!("DB error (expected): {e}")),
     }
 
     // ============================================
@@ -511,11 +443,7 @@ async fn main() -> Result<(), OrmError> {
     println!();
     println!("{}", summary_table);
 
-    println!();
-    println!("{}", "═".repeat(60).cyan());
-    println!("{}", "  Demo completed successfully!".green().bold());
-    println!("{}", "═".repeat(60).cyan());
-    println!();
+    print_done();
 
     Ok(())
 }

@@ -6,6 +6,9 @@
 //! Set DATABASE_URL in `.env` or environment variable:
 //!   DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
+mod common;
+
+use common::setup_users_posts_schema;
 use pgorm::{FromRow, GenericClient, Model, ModelPk as _, OrmError, create_pool, query};
 use std::env;
 
@@ -39,7 +42,7 @@ async fn main() -> Result<(), OrmError> {
     let pool = create_pool(&database_url)?;
     let client = pool.get().await?;
 
-    setup_schema(&client).await?;
+    setup_users_posts_schema(&client).await?;
     seed_data(&client).await?;
 
     // Base query (no eager loading yet)
@@ -100,38 +103,6 @@ async fn main() -> Result<(), OrmError> {
     Ok(())
 }
 
-async fn setup_schema(conn: &impl GenericClient) -> Result<(), OrmError> {
-    query("DROP TABLE IF EXISTS posts CASCADE")
-        .execute(conn)
-        .await?;
-    query("DROP TABLE IF EXISTS users CASCADE")
-        .execute(conn)
-        .await?;
-
-    query(
-        "CREATE TABLE users (
-            id BIGSERIAL PRIMARY KEY,
-            name TEXT NOT NULL
-        )",
-    )
-    .execute(conn)
-    .await?;
-
-    // Note: editor_id is nullable to demonstrate `Option<Parent>` eager loading.
-    query(
-        "CREATE TABLE posts (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id),
-            editor_id BIGINT REFERENCES users(id),
-            title TEXT NOT NULL
-        )",
-    )
-    .execute(conn)
-    .await?;
-
-    Ok(())
-}
-
 async fn seed_data(conn: &impl GenericClient) -> Result<(), OrmError> {
     let alice: User = query("INSERT INTO users (name) VALUES ($1) RETURNING id, name")
         .bind("alice")
@@ -177,4 +148,3 @@ async fn seed_data(conn: &impl GenericClient) -> Result<(), OrmError> {
 
     Ok(())
 }
-

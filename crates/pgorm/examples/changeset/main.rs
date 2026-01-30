@@ -5,6 +5,9 @@
 //! Set `DATABASE_URL` in `.env` or environment variable:
 //! `DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example`
 
+mod common;
+
+use common::{print_header, setup_users_schema};
 use pgorm::changeset::ValidationErrors;
 use pgorm::{FromRow, InsertModel, Model, OrmError, UpdateModel, create_pool};
 use std::env;
@@ -75,30 +78,13 @@ async fn main() -> Result<(), OrmError> {
     let pool = create_pool(&database_url)?;
     let client = pool.get().await?;
 
-    client
-        .execute("DROP TABLE IF EXISTS users CASCADE", &[])
-        .await
-        .map_err(OrmError::from_db_error)?;
-
-    client
-        .execute(
-            "CREATE TABLE users (
-                id BIGSERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                age INT,
-                external_id UUID NOT NULL,
-                homepage TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-            )",
-            &[],
-        )
-        .await
-        .map_err(OrmError::from_db_error)?;
+    setup_users_schema(&client).await?;
 
     // ─────────────────────────────────────────────────────────────────────────
     // 1) Insert: invalid input (collect multiple field errors)
     // ─────────────────────────────────────────────────────────────────────────
+    print_header("1. Insert: Invalid Input (Validation Errors)");
+
     let bad_json = r#"
         {
           "name": "A",
@@ -119,6 +105,8 @@ async fn main() -> Result<(), OrmError> {
     // ─────────────────────────────────────────────────────────────────────────
     // 2) Insert: valid input -> model -> insert_returning
     // ─────────────────────────────────────────────────────────────────────────
+    print_header("2. Insert: Valid Input");
+
     let ok_json = r#"
         {
           "name": "Alice",
@@ -145,6 +133,8 @@ async fn main() -> Result<(), OrmError> {
     // ─────────────────────────────────────────────────────────────────────────
     // 3) Update: patch input -> patch -> update_by_id_returning
     // ─────────────────────────────────────────────────────────────────────────
+    print_header("3. Update: Patch Input");
+
     let patch_json = r#"
         {
           "email": "bob@example.com",
@@ -167,4 +157,3 @@ async fn main() -> Result<(), OrmError> {
 
     Ok(())
 }
-

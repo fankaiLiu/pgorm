@@ -45,4 +45,21 @@ migrate = ["dep:refinery"]
 
 [[example]]
 name = "migrate"
+path = "examples/migrate/main.rs"
 required-features = ["migrate", "pool"]
+
+[[example]]
+name = "changeset"
+path = "examples/changeset/main.rs"
+
+[[example]]
+name = "eager_loading"
+path = "examples/eager_loading/main.rs"
+
+[[example]]
+name = "pg_client"
+path = "examples/pg_client/main.rs"
+
+[[example]]
+name = "update_model"
+path = "examples/update_model/main.rs"

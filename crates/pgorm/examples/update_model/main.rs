@@ -5,8 +5,11 @@
 //! Set DATABASE_URL in .env file or environment variable:
 //! DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
+mod common;
+
 use colored::Colorize;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
+use common::{print_banner, print_done, print_header, print_info, print_success, setup_products_schema};
 use pgorm::{FromRow, InsertModel, Model, OrmError, UpdateModel, create_pool};
 use std::env;
 
@@ -61,21 +64,6 @@ struct ProductPatch {
 // Helper functions
 // ============================================
 
-fn print_header(title: &str) {
-    println!();
-    println!("{}", "─".repeat(70).bright_black());
-    println!("{}", title.bold().cyan());
-    println!("{}", "─".repeat(70).bright_black());
-}
-
-fn print_success(msg: &str) {
-    println!("  {} {}", "✓".green().bold(), msg);
-}
-
-fn print_info(msg: &str) {
-    println!("  {} {}", "ℹ".blue(), msg);
-}
-
 fn create_products_table(products: &[Product]) -> Table {
     let mut table = Table::new();
     table
@@ -120,21 +108,7 @@ fn create_products_table(products: &[Product]) -> Table {
 async fn main() -> Result<(), OrmError> {
     dotenvy::dotenv().ok();
 
-    println!();
-    println!(
-        "{}",
-        "╔══════════════════════════════════════════════════════════════════════╗".cyan()
-    );
-    println!(
-        "{}",
-        "║           UpdateModel Demo - Partial Updates (Patch Style)          ║"
-            .cyan()
-            .bold()
-    );
-    println!(
-        "{}",
-        "╚══════════════════════════════════════════════════════════════════════╝".cyan()
-    );
+    print_banner("UpdateModel Demo - Partial Updates (Patch Style)");
 
     let database_url =
         env::var("DATABASE_URL").expect("DATABASE_URL must be set in .env or environment");
@@ -147,24 +121,7 @@ async fn main() -> Result<(), OrmError> {
     // ============================================
     print_header("Setup: Creating Table and Test Data");
 
-    client
-        .execute("DROP TABLE IF EXISTS products CASCADE", &[])
-        .await
-        .map_err(OrmError::from_db_error)?;
-
-    client
-        .execute(
-            "CREATE TABLE products (
-                id BIGSERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                price_cents BIGINT NOT NULL,
-                in_stock BOOLEAN NOT NULL DEFAULT true
-            )",
-            &[],
-        )
-        .await
-        .map_err(OrmError::from_db_error)?;
+    setup_products_schema(&client).await?;
 
     // Insert test products one by one using insert_returning
     let p1 = NewProduct {
@@ -422,11 +379,7 @@ async fn main() -> Result<(), OrmError> {
     println!();
     println!("{}", summary_table);
 
-    println!();
-    println!("{}", "═".repeat(70).cyan());
-    println!("{}", "  Demo completed successfully!".green().bold());
-    println!("{}", "═".repeat(70).cyan());
-    println!();
+    print_done();
 
     Ok(())
 }
