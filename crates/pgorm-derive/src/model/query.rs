@@ -202,12 +202,18 @@ fn gen_column_consts(
             let is_reserved = matches!(
                 field_name.as_str(),
                 "new"
+                    | "apply_if"
+                    | "apply_if_some"
+                    | "apply_if_ok"
                     | "eq"
+                    | "eq_opt"
                     | "ne"
                     | "gt"
                     | "gte"
+                    | "gte_opt"
                     | "lt"
                     | "lte"
+                    | "lte_opt"
                     | "like"
                     | "ilike"
                     | "not_like"
@@ -253,6 +259,50 @@ fn gen_column_consts(
 /// Generate filtering methods (eq, ne, gt, gte, lt, lte, like, ilike, etc.)
 fn gen_filtering_methods() -> TokenStream {
     quote! {
+        /// Apply a transformation to the query only when `cond` is true.
+        ///
+        /// This is a small ergonomic helper for dynamic queries.
+        #[inline]
+        pub fn apply_if(
+            self,
+            cond: bool,
+            f: impl FnOnce(Self) -> pgorm::OrmResult<Self>,
+        ) -> pgorm::OrmResult<Self> {
+            if cond {
+                f(self)
+            } else {
+                ::std::result::Result::Ok(self)
+            }
+        }
+
+        /// Apply a transformation to the query only when `v` is `Some`.
+        #[inline]
+        pub fn apply_if_some<T>(
+            self,
+            v: ::std::option::Option<T>,
+            f: impl FnOnce(Self, T) -> pgorm::OrmResult<Self>,
+        ) -> pgorm::OrmResult<Self> {
+            match v {
+                ::std::option::Option::Some(v) => f(self, v),
+                ::std::option::Option::None => ::std::result::Result::Ok(self),
+            }
+        }
+
+        /// Apply a transformation to the query only when `v` is `Ok`.
+        ///
+        /// The `Err(_)` case is treated as a no-op.
+        #[inline]
+        pub fn apply_if_ok<T, E>(
+            self,
+            v: ::std::result::Result<T, E>,
+            f: impl FnOnce(Self, T) -> pgorm::OrmResult<Self>,
+        ) -> pgorm::OrmResult<Self> {
+            match v {
+                ::std::result::Result::Ok(v) => f(self, v),
+                ::std::result::Result::Err(_) => ::std::result::Result::Ok(self),
+            }
+        }
+
         /// Combine the current WHERE expression with another using `AND`.
         pub fn and(mut self, expr: pgorm::WhereExpr) -> Self {
             let current = self.where_expr;
@@ -276,6 +326,19 @@ fn gen_filtering_methods() -> TokenStream {
             let current = self.where_expr;
             self.where_expr = current.and_with(cond.into());
             ::std::result::Result::Ok(self)
+        }
+
+        /// Filter by equality (optional): only applies when `value` is `Some`.
+        #[inline]
+        pub fn eq_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(value, |q, v| q.eq(column, v))
         }
 
         /// Filter by inequality: column != value
@@ -311,6 +374,19 @@ fn gen_filtering_methods() -> TokenStream {
             ::std::result::Result::Ok(self)
         }
 
+        /// Filter by greater than or equal (optional): only applies when `value` is `Some`.
+        #[inline]
+        pub fn gte_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(value, |q, v| q.gte(column, v))
+        }
+
         /// Filter by less than: column < value
         pub fn lt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
@@ -331,6 +407,19 @@ fn gen_filtering_methods() -> TokenStream {
             let current = self.where_expr;
             self.where_expr = current.and_with(cond.into());
             ::std::result::Result::Ok(self)
+        }
+
+        /// Filter by less than or equal (optional): only applies when `value` is `Some`.
+        #[inline]
+        pub fn lte_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(value, |q, v| q.lte(column, v))
         }
 
         /// Filter by LIKE pattern: column LIKE pattern

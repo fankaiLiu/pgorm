@@ -53,6 +53,8 @@ pub use condition::{Condition, Op};
 pub use eager::{BelongsToMap, HasManyMap, Loaded};
 pub use error::{OrmError, OrmResult};
 pub use ident::{Ident, IdentPart, IntoIdent};
+#[cfg(feature = "tracing")]
+pub use monitor::TracingSqlHook;
 pub use monitor::{
     CompositeHook, CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig,
     NoopMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType,

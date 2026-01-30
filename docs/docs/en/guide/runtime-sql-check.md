@@ -44,6 +44,24 @@ let n: i64 = query("SELECT COUNT(*) FROM products")
     .await?;
 ```
 
+### Debug: emit the actual executed SQL via `tracing`
+
+Enable the `tracing` feature:
+
+```toml
+[dependencies]
+pgorm = { version = "0.1.2", features = ["tracing"] }
+```
+
+Then:
+
+```rust
+let pg = PgClient::with_config(&client, PgClientConfig::new().strict()).with_tracing_sql();
+```
+
+This emits `tracing` events with target `pgorm.sql` containing `sql` (exec SQL), `tag`,
+`query_type`, and `param_count`.
+
 ### Strict mode: block invalid SQL before execution
 
 ```rust

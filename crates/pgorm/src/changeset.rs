@@ -15,6 +15,7 @@ pub enum ValidationCode {
     Regex,
     Url,
     Uuid,
+    Ip,
     OneOf,
     Custom(String),
 }
@@ -29,6 +30,7 @@ impl ValidationCode {
             Self::Regex => "regex",
             Self::Url => "url",
             Self::Uuid => "uuid",
+            Self::Ip => "ip",
             Self::OneOf => "one_of",
             Self::Custom(s) => s.as_str(),
         }

@@ -42,6 +42,10 @@ struct NewUser {
     #[orm(uuid, input_as = "String")]
     external_id: uuid::Uuid,
 
+    // 让 Input 接收 String，校验并解析成 std::net::IpAddr（更友好地返回 ValidationErrors）
+    #[orm(ip, input_as = "String")]
+    last_ip: Option<std::net::IpAddr>,
+
     #[orm(url)]
     homepage: Option<String>,
 }
@@ -102,6 +106,7 @@ let updated: User = patch.update_by_id_returning(&client, user_id).await?;
 | `#[orm(email)]` | 邮箱格式 |
 | `#[orm(url)]` | URL 格式 |
 | `#[orm(uuid)]` | UUID 格式 |
+| `#[orm(ip)]` | IP 地址格式 |
 | `#[orm(regex = "pattern")]` | 正则匹配 |
 | `#[orm(one_of = "a\|b\|c")]` | 必须是枚举值之一 |
 | `#[orm(custom = "path::to::fn")]` | 自定义校验函数 |
@@ -111,6 +116,7 @@ let updated: User = patch.update_by_id_returning(&client, user_id).await?;
 `input_as` 目前只对以下两类字段生效：
 
 - `uuid::Uuid`
+- `std::net::IpAddr`
 - `url::Url`（需要你在应用里显式依赖 `url` crate）
 
 用法：让 Input 用字符串接收，然后在 `try_into_model/try_into_patch` 阶段做解析并返回 `ValidationErrors`（而不是 serde 的反序列化错误）。

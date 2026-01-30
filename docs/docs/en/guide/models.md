@@ -42,6 +42,31 @@ Use `#[orm(table = "table_name")]` to specify the database table name.
 
 Mark the primary key field with `#[orm(id)]`.
 
+## Query Builder (`Model::query()`)
+
+`Model` also generates a lightweight query builder: `<Model>Query` and `Model::query()`.
+
+```rust
+// Type-safe column names:
+// - UserQuery::COL_ID (always available)
+// - UserQuery::id (only when it doesn't conflict with method names)
+let users = User::query()
+    .eq(UserQuery::COL_ID, 1_i64)?
+    .find(&client)
+    .await?;
+```
+
+### Optional filters (`*_opt` / `apply_if_*`)
+
+When your inputs are `Option<T>` / `Result<T, E>`, use these helpers to avoid a lot of `if let Some(...)` boilerplate.
+
+```rust
+let q = User::query()
+    .eq_opt(UserQuery::COL_ID, user_id)?
+    .eq_opt(UserQuery::COL_EMAIL, email)?
+    .apply_if_ok(ip_str.parse::<std::net::IpAddr>(), |q, ip| q.eq("ip_address", ip))?;
+```
+
 ## Relations
 
 ### has_many

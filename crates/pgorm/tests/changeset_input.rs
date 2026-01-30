@@ -26,6 +26,9 @@ struct NewUser {
 
     #[orm(regex = r"^[a-z0-9_]+$")]
     username: String,
+
+    #[orm(ip, input_as = "String")]
+    last_ip: Option<std::net::IpAddr>,
 }
 
 #[test]
@@ -38,6 +41,7 @@ fn validate_and_convert() {
         homepage: Some("not-a-url".into()),
         plan: Some("gold".into()),
         username: Some("bad space".into()),
+        last_ip: Some("not-an-ip".into()),
     };
 
     let errs = bad.validate();
@@ -70,6 +74,10 @@ fn validate_and_convert() {
         errs.iter()
             .any(|e| e.field == "username" && e.code.as_str() == "regex")
     );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "last_ip" && e.code.as_str() == "ip")
+    );
 
     let ok = NewUserInput {
         name: Some("Alice".into()),
@@ -79,6 +87,7 @@ fn validate_and_convert() {
         homepage: Some("https://example.com".into()),
         plan: Some("pro".into()),
         username: Some("alice_42".into()),
+        last_ip: Some("1.2.3.4".into()),
     };
 
     let user = ok.try_into_model().unwrap();
@@ -92,6 +101,7 @@ fn validate_and_convert() {
     assert_eq!(user.homepage, "https://example.com");
     assert_eq!(user.plan, "pro");
     assert_eq!(user.username, "alice_42");
+    assert_eq!(user.last_ip.unwrap().to_string(), "1.2.3.4");
 }
 
 #[derive(Debug, FromRow, Model)]
@@ -112,6 +122,9 @@ struct UserPatch {
 
     #[orm(email)]
     email: Option<String>,
+
+    #[orm(ip, input_as = "String")]
+    ip_address: Option<std::net::IpAddr>,
 }
 
 #[test]
@@ -119,6 +132,7 @@ fn validate_update_patch() {
     let bad = UserPatchInput {
         username: Some("A".into()),
         email: Some("bad".into()),
+        ip_address: Some("bad-ip".into()),
     };
 
     let errs = bad.validate();
@@ -131,13 +145,19 @@ fn validate_update_patch() {
         errs.iter()
             .any(|e| e.field == "email" && e.code.as_str() == "email")
     );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "ip_address" && e.code.as_str() == "ip")
+    );
 
     let ok = UserPatchInput {
         username: Some("alice".into()),
         email: Some("alice@example.com".into()),
+        ip_address: Some("2001:db8::1".into()),
     };
 
     let patch = ok.try_into_patch().unwrap();
     assert_eq!(patch.username.as_deref(), Some("alice"));
     assert_eq!(patch.email.as_deref(), Some("alice@example.com"));
+    assert_eq!(patch.ip_address.unwrap().to_string(), "2001:db8::1");
 }

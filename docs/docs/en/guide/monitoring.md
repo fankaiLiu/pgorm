@@ -43,6 +43,27 @@ let n: i64 = pgorm::query("SELECT COUNT(*) FROM items")
 println!("stats = {:?}", stats.stats());
 ```
 
+## 1b) Debug: emit actual executed SQL via `tracing` (feature: `tracing`)
+
+If you use `tracing` in your app, you can have pgorm emit the **actual** SQL it executes:
+
+```toml
+[dependencies]
+pgorm = { version = "0.1.2", features = ["tracing"] }
+```
+
+```rust
+use pgorm::{InstrumentedClient, MonitorConfig, TracingSqlHook};
+
+let pg = InstrumentedClient::new(client)
+    .with_config(MonitorConfig::new().enable_monitoring())
+    // If you also use other hooks that modify SQL, add this hook last.
+    .add_hook(TracingSqlHook::new());
+```
+
+This emits a `tracing` event with target `pgorm.sql`, including `sql` (exec SQL), `tag`,
+`query_type`, and `param_count`.
+
 ## 2) Hooks: intercept/modify/block
 
 Implement `QueryHook`:

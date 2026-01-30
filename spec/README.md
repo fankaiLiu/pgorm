@@ -83,6 +83,10 @@ spec/
 
 - examples 规划：
   - `spec/pgorm-examples.md`：examples 覆盖面补齐计划与 Roadmap
+- 数据库类型映射：
+  - `spec/40-core-inet-ipaddr.md`：PostgreSQL `inet` / Rust `IpAddr` 支持增强方案与里程碑
+- Query Builder 体验：
+  - `spec/41-core-query-optional-filters.md`：可选过滤（`*_opt` / `apply_if_*`）语法糖设计与计划
 - SQL builder：`query()` vs `sql()` 的定位，bind 占位符生成规则
 - 执行语义：`fetch_one*` / `fetch_one_strict*` / `fetch_all*` 的行为约定
 - `PgClient/CheckedClient`：运行时检查/观测的组合方式、性能与开关策略

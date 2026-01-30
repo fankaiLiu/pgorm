@@ -173,6 +173,8 @@ pub fn check_sql_analysis(
                         location: c.location,
                     });
                 }
+            } else if cte_names.contains(qualifier) {
+                // We don't track CTE column sets. Treat CTE qualifiers as valid and skip.
             } else {
                 issues.push(SqlCheckIssue {
                     level: SqlCheckLevel::Error,

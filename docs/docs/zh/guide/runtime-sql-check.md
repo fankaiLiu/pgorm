@@ -45,6 +45,23 @@ let n: i64 = query("SELECT COUNT(*) FROM products")
     .await?;
 ```
 
+### Debug：通过 `tracing` 输出“实际执行的 SQL”
+
+启用 `tracing` feature：
+
+```toml
+[dependencies]
+pgorm = { version = "0.1.2", features = ["tracing"] }
+```
+
+然后：
+
+```rust
+let pg = PgClient::with_config(&client, PgClientConfig::new().strict()).with_tracing_sql();
+```
+
+会输出 tracing 事件（target：`pgorm.sql`），包含 `sql`（exec SQL）、`tag`、`query_type`、`param_count` 等字段。
+
 ### 严格模式：检查失败直接阻止执行
 
 ```rust

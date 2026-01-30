@@ -52,6 +52,8 @@ use crate::GenericClient;
 use crate::check::{DbSchema, SchemaRegistry, TableMeta};
 use crate::checked_client::ModelRegistration;
 use crate::error::{OrmError, OrmResult};
+#[cfg(feature = "tracing")]
+use crate::monitor::TracingSqlHook;
 use crate::monitor::{
     CompositeHook, LoggingMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats,
     QueryType, StatsMonitor,
@@ -366,6 +368,8 @@ pub struct PgClient<C> {
     logging_monitor: Option<LoggingMonitor>,
     custom_monitor: Option<Arc<dyn QueryMonitor>>,
     hook: Option<Arc<dyn QueryHook>>,
+    #[cfg(feature = "tracing")]
+    tracing_sql_hook: Option<TracingSqlHook>,
     config: PgClientConfig,
 }
 
@@ -403,6 +407,8 @@ impl<C> PgClient<C> {
             logging_monitor,
             custom_monitor: None,
             hook: None,
+            #[cfg(feature = "tracing")]
+            tracing_sql_hook: None,
             config,
         }
     }
@@ -416,6 +422,8 @@ impl<C> PgClient<C> {
             logging_monitor: None,
             custom_monitor: None,
             hook: None,
+            #[cfg(feature = "tracing")]
+            tracing_sql_hook: None,
             config: PgClientConfig::default(),
         }
     }
@@ -491,9 +499,38 @@ impl<C> PgClient<C> {
     pub fn config(&self) -> &PgClientConfig {
         &self.config
     }
+
+    /// Emit the final SQL that will actually be executed via `tracing` (target: `pgorm.sql`).
+    ///
+    /// Requires crate feature `tracing`.
+    #[cfg(feature = "tracing")]
+    pub fn with_tracing_sql(mut self) -> Self {
+        self.tracing_sql_hook = Some(TracingSqlHook::new());
+        self
+    }
+
+    /// Same as [`PgClient::with_tracing_sql`], but allows custom hook configuration
+    /// (e.g. `TracingSqlHook::new().no_truncate()`).
+    ///
+    /// Requires crate feature `tracing`.
+    #[cfg(feature = "tracing")]
+    pub fn with_tracing_sql_hook(mut self, hook: TracingSqlHook) -> Self {
+        self.tracing_sql_hook = Some(hook);
+        self
+    }
 }
 
 impl<C: GenericClient> PgClient<C> {
+    #[cfg(not(feature = "tracing"))]
+    fn emit_tracing_sql(&self, _ctx: &QueryContext) {}
+
+    #[cfg(feature = "tracing")]
+    fn emit_tracing_sql(&self, ctx: &QueryContext) {
+        if let Some(hook) = &self.tracing_sql_hook {
+            let _ = hook.before_query(ctx);
+        }
+    }
+
     fn apply_sql_policy(&self, ctx: &mut QueryContext) -> OrmResult<()> {
         use crate::StatementKind;
 
@@ -1031,6 +1068,7 @@ impl<C: GenericClient> PgClient<C> {
         self.apply_hook(&mut ctx)?;
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
+        self.emit_tracing_sql(&ctx);
 
         // Execute
         let start = Instant::now();
@@ -1063,6 +1101,7 @@ impl<C: GenericClient> PgClient<C> {
         self.apply_hook(&mut ctx)?;
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
+        self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
         let result = self
@@ -1094,6 +1133,7 @@ impl<C: GenericClient> PgClient<C> {
         self.apply_hook(&mut ctx)?;
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
+        self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
         let result = self
@@ -1125,6 +1165,7 @@ impl<C: GenericClient> PgClient<C> {
         self.apply_hook(&mut ctx)?;
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
+        self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
         let result = self

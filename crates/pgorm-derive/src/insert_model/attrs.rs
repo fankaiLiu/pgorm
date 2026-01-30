@@ -156,6 +156,7 @@ pub(super) struct FieldAttrs {
     pub(super) regex: Option<String>,
     pub(super) url: bool,
     pub(super) uuid: bool,
+    pub(super) ip: bool,
     pub(super) one_of: Option<String>,
     pub(super) custom: Option<syn::Path>,
 }
@@ -178,6 +179,7 @@ impl syn::parse::Parse for FieldAttrs {
             regex: None,
             url: false,
             uuid: false,
+            ip: false,
             one_of: None,
             custom: None,
         };
@@ -200,6 +202,7 @@ impl syn::parse::Parse for FieldAttrs {
                 "email" => attrs.email = true,
                 "url" => attrs.url = true,
                 "uuid" => attrs.uuid = true,
+                "ip" => attrs.ip = true,
                 _ => {
                     let _: syn::Token![=] = input.parse()?;
                     let value: syn::LitStr = input.parse()?;
@@ -261,6 +264,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
         regex: None,
         url: false,
         uuid: false,
+        ip: false,
         one_of: None,
         custom: None,
     };
@@ -281,6 +285,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
             merged.email |= parsed.email;
             merged.url |= parsed.url;
             merged.uuid |= parsed.uuid;
+            merged.ip |= parsed.ip;
             if parsed.table.is_some() {
                 merged.table = parsed.table;
             }

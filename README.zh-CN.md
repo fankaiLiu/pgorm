@@ -273,6 +273,9 @@ let pg = InstrumentedClient::new(client)
     .with_monitor(monitor)
     .with_hook(BlockDangerousDeleteHook);
 
+// 如果你在项目里用 `tracing`，可以启用 feature `tracing` 并添加 `TracingSqlHook::new()`
+// 来输出每次“实际执行的 SQL”（tracing target: `pgorm.sql`）。
+
 // 正常使用，所有查询自动被监控
 let count: i64 = query("SELECT COUNT(*) FROM users")
     .tag("users.count")  // 可选标签，用于指标分组

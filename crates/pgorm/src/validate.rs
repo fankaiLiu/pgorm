@@ -55,3 +55,11 @@ pub fn is_uuid(s: &str) -> bool {
 pub fn parse_uuid(s: &str) -> Result<uuid::Uuid, uuid::Error> {
     uuid::Uuid::parse_str(s)
 }
+
+pub fn is_ip(s: &str) -> bool {
+    s.parse::<std::net::IpAddr>().is_ok()
+}
+
+pub fn parse_ip(s: &str) -> Result<std::net::IpAddr, std::net::AddrParseError> {
+    s.parse()
+}

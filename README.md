@@ -273,6 +273,9 @@ let pg = InstrumentedClient::new(client)
     .with_monitor(monitor)
     .with_hook(BlockDangerousDeleteHook);
 
+// If you use `tracing`, enable feature `tracing` and add `TracingSqlHook::new()`
+// to emit the actual executed SQL (target: `pgorm.sql`).
+
 // Use normally - all queries are monitored
 let count: i64 = query("SELECT COUNT(*) FROM users")
     .tag("users.count")  // Optional tag for metrics grouping

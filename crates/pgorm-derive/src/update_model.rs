@@ -428,6 +428,20 @@ fn generate_input_struct(
             });
         }
 
+        if field_attrs.ip {
+            validate_stmts.push(quote! {
+                if let Some(v) = #value_expr {
+                    if !::pgorm::validate::is_ip(v.as_ref()) {
+                        errors.push(::pgorm::changeset::ValidationError::new(
+                            #field_name_lit,
+                            ::pgorm::changeset::ValidationCode::Ip,
+                            "is not a valid ip address",
+                        ));
+                    }
+                }
+            });
+        }
+
         if let Some(spec) = field_attrs.one_of.as_ref() {
             let allowed = split_one_of(spec, field)?;
             validate_stmts.push(quote! {
@@ -567,6 +581,52 @@ fn build_output_expr(
                 }
             });
         }
+        if is_ipaddr_type(field_ty) {
+            if is_opt {
+                return Ok(quote! {
+                    match self.#field_ident {
+                        Some(s) => match ::pgorm::validate::parse_ip(s.as_ref()) {
+                            Ok(v) => Some(v),
+                            Err(_) => {
+                                let mut errors = ::pgorm::changeset::ValidationErrors::default();
+                                errors.push(::pgorm::changeset::ValidationError::new(
+                                    #field_name_lit,
+                                    ::pgorm::changeset::ValidationCode::Ip,
+                                    "is not a valid ip address",
+                                ));
+                                return Err(errors);
+                            }
+                        },
+                        None => None,
+                    }
+                });
+            }
+            return Ok(quote! {
+                match self.#field_ident {
+                    Some(s) => match ::pgorm::validate::parse_ip(s.as_ref()) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            let mut errors = ::pgorm::changeset::ValidationErrors::default();
+                            errors.push(::pgorm::changeset::ValidationError::new(
+                                #field_name_lit,
+                                ::pgorm::changeset::ValidationCode::Ip,
+                                "is not a valid ip address",
+                            ));
+                            return Err(errors);
+                        }
+                    },
+                    None => {
+                        let mut errors = ::pgorm::changeset::ValidationErrors::default();
+                        errors.push(::pgorm::changeset::ValidationError::new(
+                            #field_name_lit,
+                            ::pgorm::changeset::ValidationCode::Required,
+                            "is required",
+                        ));
+                        return Err(errors);
+                    }
+                }
+            });
+        }
         if is_url_type(field_ty) {
             if is_opt {
                 return Ok(quote! {
@@ -616,7 +676,7 @@ fn build_output_expr(
 
         return Err(syn::Error::new_spanned(
             field_ident,
-            "input_as currently only supports uuid::Uuid and url::Url fields",
+            "input_as currently only supports uuid::Uuid, std::net::IpAddr, and url::Url fields",
         ));
     }
 
@@ -654,4 +714,10 @@ fn is_url_type(ty: &syn::Type) -> bool {
     let ty = option_inner(ty).unwrap_or(ty);
     let syn::Type::Path(p) = ty else { return false };
     p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "Url")
+}
+
+fn is_ipaddr_type(ty: &syn::Type) -> bool {
+    let ty = option_inner(ty).unwrap_or(ty);
+    let syn::Type::Path(p) = ty else { return false };
+    p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "IpAddr")
 }

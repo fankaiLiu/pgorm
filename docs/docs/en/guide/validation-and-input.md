@@ -42,6 +42,10 @@ struct NewUser {
     #[orm(uuid, input_as = "String")]
     external_id: uuid::Uuid,
 
+    // Accept String in Input, validate+parse into std::net::IpAddr with ValidationErrors
+    #[orm(ip, input_as = "String")]
+    last_ip: Option<std::net::IpAddr>,
+
     #[orm(url)]
     homepage: Option<String>,
 }
@@ -102,6 +106,7 @@ let updated: User = patch.update_by_id_returning(&client, user_id).await?;
 | `#[orm(email)]` | email format |
 | `#[orm(url)]` | URL format |
 | `#[orm(uuid)]` | UUID format |
+| `#[orm(ip)]` | IP address format |
 | `#[orm(regex = "pattern")]` | regex match |
 | `#[orm(one_of = "a\|b\|c")]` | must be one of the values |
 | `#[orm(custom = "path::to::fn")]` | custom validator |
@@ -111,6 +116,7 @@ let updated: User = patch.update_by_id_returning(&client, user_id).await?;
 `input_as` currently only supports:
 
 - `uuid::Uuid`
+- `std::net::IpAddr`
 - `url::Url` (requires you to explicitly depend on the `url` crate)
 
 It is meant to accept a string in the generated Input, then parse into the typed field while returning `ValidationErrors` (instead of serde parse errors).

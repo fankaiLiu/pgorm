@@ -564,6 +564,8 @@ impl SchemaRegistry {
                             ),
                         });
                     }
+                } else if analysis.cte_names.contains(qualifier) {
+                    // We don't track CTE column sets. Treat CTE qualifiers as valid and skip.
                 } else {
                     issues.push(SchemaIssue {
                         level: SchemaIssueLevel::Error,
@@ -1055,6 +1057,17 @@ mod tests {
                     .iter()
                     .any(|i| i.kind == SchemaIssueKind::MissingColumn)
             );
+        }
+
+        #[test]
+        fn test_check_sql_allows_cte_qualifiers() {
+            let mut registry = SchemaRegistry::new();
+            registry.register::<TestUser>();
+
+            let issues = registry.check_sql(
+                "WITH inserted AS (SELECT * FROM users) SELECT inserted.id FROM inserted",
+            );
+            assert!(issues.is_empty());
         }
 
         #[test]

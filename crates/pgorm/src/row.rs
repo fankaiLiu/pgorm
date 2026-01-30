@@ -84,6 +84,24 @@ impl<T> PgType for tokio_postgres::types::Json<T> {
     }
 }
 
+impl PgType for std::net::IpAddr {
+    fn pg_array_type() -> &'static str {
+        "inet[]"
+    }
+}
+
+impl PgType for std::net::Ipv4Addr {
+    fn pg_array_type() -> &'static str {
+        "inet[]"
+    }
+}
+
+impl PgType for std::net::Ipv6Addr {
+    fn pg_array_type() -> &'static str {
+        "inet[]"
+    }
+}
+
 impl PgType for uuid::Uuid {
     fn pg_array_type() -> &'static str {
         "uuid[]"
@@ -181,5 +199,20 @@ mod tests {
             <tokio_postgres::types::Json<serde_json::Value> as PgType>::pg_array_type(),
             "jsonb[]"
         );
+    }
+
+    #[test]
+    fn pg_type_inet_ipaddr() {
+        assert_eq!(<std::net::IpAddr as PgType>::pg_array_type(), "inet[]");
+    }
+
+    #[test]
+    fn pg_type_inet_ipv4addr() {
+        assert_eq!(<std::net::Ipv4Addr as PgType>::pg_array_type(), "inet[]");
+    }
+
+    #[test]
+    fn pg_type_inet_ipv6addr() {
+        assert_eq!(<std::net::Ipv6Addr as PgType>::pg_array_type(), "inet[]");
     }
 }

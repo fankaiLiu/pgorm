@@ -46,6 +46,26 @@ let n: i64 = pgorm::query("SELECT COUNT(*) FROM items")
 println!("stats = {:?}", stats.stats());
 ```
 
+## 1b) Debug：通过 `tracing` 输出“实际执行的 SQL”（feature: `tracing`）
+
+如果你的项目使用 `tracing`，可以让 pgorm 在每次执行前输出 **最终会发给 Postgres 的 SQL**：
+
+```toml
+[dependencies]
+pgorm = { version = "0.1.2", features = ["tracing"] }
+```
+
+```rust
+use pgorm::{InstrumentedClient, MonitorConfig, TracingSqlHook};
+
+let pg = InstrumentedClient::new(client)
+    .with_config(MonitorConfig::new().enable_monitoring())
+    // 如果你还有其他会修改 SQL 的 hook，建议把 TracingSqlHook 放到最后。
+    .add_hook(TracingSqlHook::new());
+```
+
+该事件的 tracing target 为 `pgorm.sql`，并包含 `sql`（exec SQL）、`tag`、`query_type`、`param_count` 等字段。
+
 ## 2) Hook：在执行前拦截/修改/拒绝
 
 Hook 通过实现 `QueryHook`：
