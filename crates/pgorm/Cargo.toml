@@ -18,7 +18,7 @@ serde_json.workspace = true
 regex = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 pgorm-derive = { workspace = true, optional = true }
-pgorm-check = { path = "../pgorm-check", features = ["sql"], optional = true }
+pgorm-check = { workspace = true, features = ["sql"], optional = true }
 inventory = "0.3"
 refinery = { workspace = true, optional = true }
 
