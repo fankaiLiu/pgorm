@@ -67,6 +67,23 @@ let q = User::query()
     .apply_if_ok(ip_str.parse::<std::net::IpAddr>(), |q, ip| q.eq("ip_address", ip))?;
 ```
 
+另外也提供了一些常用的“更少样板”helper：
+
+- `eq_opt_str`：`Option<&str>` / `Option<String>` 直接用于等值过滤（自动转成 owned `String`）
+- `eq_opt_map`：`Option<T>` 先做一次转换（如 `parse()`），成功才追加过滤
+- `range_opt`：把 `gte_opt + lte_opt` 合并成一次调用（常见的时间范围）
+
+```rust
+let q = AuditLog::query()
+    .eq_opt(AuditLogQuery::COL_USER_ID, user_id)?
+    .eq_opt_str(AuditLogQuery::COL_OPERATION_TYPE, operation_type)?
+    .eq_opt_str(AuditLogQuery::COL_RESOURCE_TYPE, resource_type)?
+    .range_opt(AuditLogQuery::COL_CREATED_AT, start_date, end_date)?
+    .eq_opt_map(AuditLogQuery::COL_IP_ADDRESS, ip_address, |s| {
+        s.parse::<std::net::IpAddr>().ok()
+    })?;
+```
+
 ## 关系
 
 ### has_many
@@ -119,6 +136,35 @@ struct User {
     meta: Json<Meta>, // jsonb 列
 }
 ```
+
+## INET（IP 地址）支持
+
+如果表里用 PostgreSQL `inet` 存 IP 地址，推荐直接映射成 `std::net::IpAddr`（可空用 `Option<IpAddr>`），这样查询/写入都不需要 `::text`。
+
+```rust
+use pgorm::FromRow;
+
+#[derive(Debug, FromRow)]
+struct AuditLog {
+    id: i64,
+    ip_address: Option<std::net::IpAddr>, // PG: inet
+}
+```
+
+查询时把入参先 `parse()` 成 `IpAddr` 再 `bind()`：
+
+```rust
+use pgorm::query;
+use std::net::IpAddr;
+
+let ip: IpAddr = "1.2.3.4".parse()?;
+let rows: Vec<AuditLog> = query("SELECT id, ip_address FROM audit_logs WHERE ip_address = $1")
+    .bind(ip)
+    .fetch_all_as(&client)
+    .await?;
+```
+
+如果你的 API 输入是 `String/Option<String>`，推荐配合 `#[orm(input)]` 使用 `#[orm(ip, input_as = "String")]`，统一校验与错误返回：[`输入校验与 Input`](/zh/guide/validation-and-input)。
 
 ## 下一步
 

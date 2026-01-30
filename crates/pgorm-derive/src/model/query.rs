@@ -206,7 +206,10 @@ fn gen_column_consts(
                     | "apply_if_some"
                     | "apply_if_ok"
                     | "eq"
+                    | "eq_str"
                     | "eq_opt"
+                    | "eq_opt_str"
+                    | "eq_opt_map"
                     | "ne"
                     | "gt"
                     | "gte"
@@ -214,6 +217,7 @@ fn gen_column_consts(
                     | "lt"
                     | "lte"
                     | "lte_opt"
+                    | "range_opt"
                     | "like"
                     | "ilike"
                     | "not_like"
@@ -328,6 +332,19 @@ fn gen_filtering_methods() -> TokenStream {
             ::std::result::Result::Ok(self)
         }
 
+        /// Filter by equality: column = value
+        ///
+        /// This is a convenience method for string-like inputs (e.g. `&str`) since
+        /// the dynamic query builder requires bind values to be `'static`.
+        #[inline]
+        pub fn eq_str(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: impl ::core::convert::Into<::std::string::String>,
+        ) -> pgorm::OrmResult<Self> {
+            self.eq(column, value.into())
+        }
+
         /// Filter by equality (optional): only applies when `value` is `Some`.
         #[inline]
         pub fn eq_opt<T>(
@@ -339,6 +356,39 @@ fn gen_filtering_methods() -> TokenStream {
             T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.eq(column, v))
+        }
+
+        /// Filter by equality (optional): column = value (string-like).
+        ///
+        /// Useful when your input is `Option<&str>` and you don't want to write
+        /// `value.map(|s| s.to_string())` everywhere.
+        #[inline]
+        pub fn eq_opt_str(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<impl ::core::convert::Into<::std::string::String>>,
+        ) -> pgorm::OrmResult<Self> {
+            self.apply_if_some(value, |q, v| q.eq(column, v.into()))
+        }
+
+        /// Filter by equality (optional): column = map(value)
+        ///
+        /// This is a small helper for cases like `Option<&str>` + `parse()`, where
+        /// a failed conversion should just skip the filter.
+        #[inline]
+        pub fn eq_opt_map<S, T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<S>,
+            f: impl FnOnce(S) -> ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            match value.and_then(f) {
+                ::std::option::Option::Some(v) => self.eq(column, v),
+                ::std::option::Option::None => ::std::result::Result::Ok(self),
+            }
         }
 
         /// Filter by inequality: column != value
@@ -420,6 +470,21 @@ fn gen_filtering_methods() -> TokenStream {
             T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.lte(column, v))
+        }
+
+        /// Filter by an optional inclusive range: `column >= from AND column <= to`.
+        #[inline]
+        pub fn range_opt<I, T>(
+            self,
+            column: I,
+            from: ::std::option::Option<T>,
+            to: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            I: pgorm::IntoIdent + ::core::clone::Clone,
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.gte_opt(column.clone(), from)?.lte_opt(column, to)
         }
 
         /// Filter by LIKE pattern: column LIKE pattern

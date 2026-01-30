@@ -67,6 +67,23 @@ let q = User::query()
     .apply_if_ok(ip_str.parse::<std::net::IpAddr>(), |q, ip| q.eq("ip_address", ip))?;
 ```
 
+There are also a few frequently used helpers to reduce boilerplate:
+
+- `eq_opt_str`: use `Option<&str>` / `Option<String>` directly (auto converts to owned `String`)
+- `eq_opt_map`: map `Option<T>` (e.g. `parse()`), and only apply the filter on success
+- `range_opt`: combine `gte_opt + lte_opt` into a single call (common for time ranges)
+
+```rust
+let q = AuditLog::query()
+    .eq_opt(AuditLogQuery::COL_USER_ID, user_id)?
+    .eq_opt_str(AuditLogQuery::COL_OPERATION_TYPE, operation_type)?
+    .eq_opt_str(AuditLogQuery::COL_RESOURCE_TYPE, resource_type)?
+    .range_opt(AuditLogQuery::COL_CREATED_AT, start_date, end_date)?
+    .eq_opt_map(AuditLogQuery::COL_IP_ADDRESS, ip_address, |s| {
+        s.parse::<std::net::IpAddr>().ok()
+    })?;
+```
+
 ## Relations
 
 ### has_many
@@ -119,6 +136,35 @@ struct User {
     meta: Json<Meta>, // jsonb column
 }
 ```
+
+## INET (IP Address) Support
+
+For PostgreSQL `inet` columns, map them to `std::net::IpAddr` (nullable: `Option<IpAddr>`). This keeps reads/writes type-safe and avoids sprinkling `::text` casts in SQL.
+
+```rust
+use pgorm::FromRow;
+
+#[derive(Debug, FromRow)]
+struct AuditLog {
+    id: i64,
+    ip_address: Option<std::net::IpAddr>, // PG: inet
+}
+```
+
+When filtering, parse the input first and then `bind()`:
+
+```rust
+use pgorm::query;
+use std::net::IpAddr;
+
+let ip: IpAddr = "1.2.3.4".parse()?;
+let rows: Vec<AuditLog> = query("SELECT id, ip_address FROM audit_logs WHERE ip_address = $1")
+    .bind(ip)
+    .fetch_all_as(&client)
+    .await?;
+```
+
+If your API input is `String/Option<String>`, consider using `#[orm(input)]` + `#[orm(ip, input_as = "String")]` to validate+parse and return consistent `ValidationErrors`: [`Validation & Input`](/en/guide/validation-and-input).
 
 ## Next
 

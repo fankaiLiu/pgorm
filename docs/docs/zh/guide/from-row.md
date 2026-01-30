@@ -1,4 +1,4 @@
-# 行映射：`FromRow` / `RowExt` / JSONB
+# 行映射：`FromRow` / `RowExt` / JSONB / INET
 
 pgorm 的核心理念是“SQL-first”，因此它把“查询”与“映射”解耦：
 
@@ -92,7 +92,38 @@ println!("{v}");
 
 > 可运行示例见 `crates/pgorm/examples/jsonb`。
 
-## 4) 小建议：SQL 写法配合映射更稳
+## 4) INET：`std::net::IpAddr`
+
+PostgreSQL `inet` 可以直接映射到 Rust `std::net::IpAddr`（可空用 `Option<IpAddr>`）：
+
+```rust
+use pgorm::{FromRow, query};
+use std::net::IpAddr;
+
+#[derive(Debug, FromRow)]
+struct AuditLog {
+    id: i64,
+    ip_address: Option<IpAddr>, // PG: inet
+}
+
+let ip: IpAddr = "1.2.3.4".parse()?;
+let logs: Vec<AuditLog> = query("SELECT id, ip_address FROM audit_logs WHERE ip_address = $1")
+    .bind(ip)
+    .fetch_all_as(&client)
+    .await?;
+```
+
+如果你要用 `RowExt` 手动取值：
+
+```rust
+use pgorm::RowExt;
+
+let ip: Option<std::net::IpAddr> = row.try_get_column("ip_address")?;
+```
+
+> 注意：不要把 `inet` 映射/绑定成 `String`；应先 `parse()` 成 `IpAddr` 再 bind（如果输入层是字符串，可用 `#[orm(ip, input_as = "String")]` 统一校验与转换）。
+
+## 5) 小建议：SQL 写法配合映射更稳
 
 1) 尽量 **显式列出字段**（不要随手 `SELECT *`），避免 schema 改动导致映射不稳定。  
 2) JOIN/聚合时，给列起清晰别名（例如 `SELECT u.id AS user_id ...`），再用 `#[orm(column="user_id")]` 映射。  

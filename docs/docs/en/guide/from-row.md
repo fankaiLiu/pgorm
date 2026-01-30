@@ -1,4 +1,4 @@
-# Row Mapping: `FromRow` / `RowExt` / JSONB
+# Row Mapping: `FromRow` / `RowExt` / JSONB / INET
 
 pgorm is SQL-first, so it keeps “querying” and “mapping” loosely coupled:
 
@@ -91,7 +91,38 @@ println!("{v}");
 
 > Runnable example: `crates/pgorm/examples/jsonb`.
 
-## 4) A small style tip
+## 4) INET: `std::net::IpAddr`
+
+PostgreSQL `inet` columns map directly to Rust `std::net::IpAddr` (nullable: `Option<IpAddr>`):
+
+```rust
+use pgorm::{FromRow, query};
+use std::net::IpAddr;
+
+#[derive(Debug, FromRow)]
+struct AuditLog {
+    id: i64,
+    ip_address: Option<IpAddr>, // PG: inet
+}
+
+let ip: IpAddr = "1.2.3.4".parse()?;
+let logs: Vec<AuditLog> = query("SELECT id, ip_address FROM audit_logs WHERE ip_address = $1")
+    .bind(ip)
+    .fetch_all_as(&client)
+    .await?;
+```
+
+If you prefer manual extraction via `RowExt`:
+
+```rust
+use pgorm::RowExt;
+
+let ip: Option<std::net::IpAddr> = row.try_get_column("ip_address")?;
+```
+
+> Note: don’t map/bind `inet` as `String`; parse into `IpAddr` first. If your input layer is string-based, `#[orm(ip, input_as = "String")]` can validate+parse and return consistent `ValidationErrors`.
+
+## 5) A small style tip
 
 - Prefer explicit column lists over `SELECT *` for more stable mappings.
 - For joins/aggregations, give columns clear aliases and map with `#[orm(column = "...")]`.

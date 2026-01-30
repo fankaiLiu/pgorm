@@ -84,7 +84,7 @@ If this is your first time using pgorm, this is a good path:
 3) Dynamic SQL: [`sql()`](/en/guide/sql-builder)  
 4) Dynamic filters: [`Condition/WhereExpr/OrderBy/Pagination`](/en/guide/conditions)  
 5) Fetch semantics: [`fetch_one` vs `fetch_one_strict` vs `fetch_opt`](/en/guide/fetch-semantics)  
-6) Row mapping: [`FromRow` / `RowExt` / JSONB](/en/guide/from-row)  
+6) Row mapping: [`FromRow` / `RowExt` / JSONB / INET](/en/guide/from-row)  
 7) Models & derives: [`Model / InsertModel / UpdateModel`](/en/guide/models)  
 8) Relations: [`has_many` / `belongs_to`](/en/guide/relations)  
 9) Eager loading: [`load_*` helpers (avoid N+1)](/en/guide/eager-loading)  

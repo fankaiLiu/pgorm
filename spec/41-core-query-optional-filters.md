@@ -35,6 +35,7 @@ if let Some(sd) = start_date {
 - 保持现有 `eq/ne/gt/gte/lt/lte/...` 的语义与错误模型不变（继续返回 `OrmResult<Self>`，可 `?`）。
 - 增量、可选：无需引入宏 DSL，即可让调用端变得更干净。
 - 处理“可选参数 + 预处理”的常见模式：如 `Option<String>` 先 `parse()` 再作为过滤条件（IP、UUID、日期等）。
+- 处理“可选字符串输入（`Option<&str>`）”的常见痛点：避免反复写 `map(|s| s.to_string())`。
 
 ### 非目标
 
@@ -48,6 +49,10 @@ if let Some(sd) = start_date {
 
 1) **通用的“条件式应用”方法**：`apply_if_*`  
 2) **高频操作的 `Option<T>` 版本**：`*_opt`（作为 `apply_if_some` 的薄封装）
+
+以及一组“低侵入”的补充语法糖（不引入 DSL，也不改变现有方法签名）：
+
+3) **字符串 / 预处理 helper**：`*_str` / `*_map` / `range_opt`
 
 ### 1) 通用：`apply_if_*`
 
@@ -112,6 +117,48 @@ where
 
 > 实现建议：`*_opt` 直接调用 `apply_if_some(value, |q, v| q.eq(column, v))`，避免重复逻辑。
 
+### 3) 字符串 / 预处理 helper（解决 `Option<&str>` 和 `parse()` 的丑代码）
+
+#### `eq_str` / `eq_opt_str`
+
+由于 Query Builder 需要把 bind value 存在内部（因此要求 `'static`），当你从 Web 入参拿到 `&str` 时，直接 `.eq(..., &str)` 往往会因为生命周期而无法编译，调用端只能写：
+
+```rust
+.eq_opt(COL, opt_str.map(|s| s.to_string()))?
+```
+
+因此增加专门面向 string-like 的 helper：
+
+```rust
+pub fn eq_str(column, value: impl Into<String>) -> OrmResult<Self>;
+pub fn eq_opt_str(column, value: Option<impl Into<String>>) -> OrmResult<Self>;
+```
+
+#### `eq_opt_map`
+
+把常见的 “`Option<T>` + 转换（可能失败）+ 成功才加条件” 压缩成一行：
+
+```rust
+pub fn eq_opt_map<S, T>(
+    column,
+    value: Option<S>,
+    f: impl FnOnce(S) -> Option<T>,
+) -> OrmResult<Self>
+where
+    T: ToSql + Send + Sync + 'static;
+```
+
+#### `range_opt`
+
+把 `gte_opt + lte_opt` 合并成一次调用（常见时间范围）：
+
+```rust
+pub fn range_opt<I, T>(column: I, from: Option<T>, to: Option<T>) -> OrmResult<Self>
+where
+    I: IntoIdent + Clone,
+    T: ToSql + Send + Sync + 'static;
+```
+
 ## 使用示例（目标写法）
 
 ### A) 只用 `*_opt`（最贴近直觉）
@@ -136,6 +183,18 @@ let q = AuditLog::query()
     .eq_opt(AuditLogQuery::COL_STATUS_CODE, status_code)?;
 ```
 
+### C) 搭配 `*_str` / `*_map` / `range_opt`（更少样板）
+
+```rust
+let q = AuditLog::query()
+    .eq_opt(AuditLogQuery::COL_USER_ID, user_id)?
+    .eq_opt_str(AuditLogQuery::COL_OPERATION_TYPE, operation_type)?
+    .eq_opt_str(AuditLogQuery::COL_RESOURCE_TYPE, resource_type)?
+    .range_opt(AuditLogQuery::COL_CREATED_AT, start_date, end_date)?
+    .eq_opt_map(AuditLogQuery::COL_IP_ADDRESS, ip_address, |s| s.parse().ok())?
+    .eq_opt(AuditLogQuery::COL_STATUS_CODE, status_code)?;
+```
+
 ### B) 只用 `apply_if_some/apply_if_ok`（最通用）
 
 ```rust
@@ -156,7 +215,7 @@ Query Builder 来自 `pgorm-derive`（`crates/pgorm-derive/src/model/query.rs`�
 
 ### 命名冲突（列常量）
 
-Query Builder 还会生成“字段名列常量”（`field` 和 `COL_FIELD`）。为了避免字段名与新增方法名冲突，需要把新增方法名加入 reserved 列表（例如：`eq_opt/gte_opt/lte_opt/apply_if/apply_if_some/apply_if_ok`）。
+Query Builder 还会生成“字段名列常量”（`field` 和 `COL_FIELD`）。为了避免字段名与新增方法名冲突，需要把新增方法名加入 reserved 列表（例如：`eq_str/eq_opt/eq_opt_str/eq_opt_map/gte_opt/lte_opt/range_opt/apply_if/apply_if_some/apply_if_ok`）。
 
 ## 兼容性与迁移
 
@@ -189,4 +248,3 @@ Query Builder 还会生成“字段名列常量”（`field` 和 `COL_FIELD`）�
 1) `in_list_opt(Some(vec![]))` 的语义：跳过？还是生成恒 false？还是返回错误？（需与 `Condition::in_list` 当前行为对齐）  
 2) `between_opt` 应该只支持 `Option<(T, T)>`，还是提供 `between_opt(start, end)` 两个 `Option<T>` 的组合？  
 3) 是否要把 `apply_if_ok` 的 `Err(_)` 丢弃视为“静默跳过”？还是提供一个可选的“把 parse 错误返回给上层”的版本（例如 `try_apply_if_some`）？  
-
