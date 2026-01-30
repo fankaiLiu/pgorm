@@ -97,7 +97,7 @@ fn detect_type(sql: &str) {
         Some(StatementKind::Delete) => "DELETE".red(),
         Some(StatementKind::CreateTable) => "CREATE TABLE".blue(),
         Some(StatementKind::Truncate) => "TRUNCATE".magenta(),
-        Some(k) => format!("{:?}", k).normal(),
+        Some(k) => format!("{k:?}").normal(),
         None => "Unknown".dimmed(),
     };
     println!("  {} {}", kind_str, sql.dimmed());

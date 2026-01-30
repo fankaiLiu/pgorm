@@ -3,8 +3,8 @@
 use crate::error::{OrmError, OrmResult};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, PoolBuilder, RecyclingMethod};
 use tokio_postgres::NoTls;
-use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
 use tokio_postgres::Socket;
+use tokio_postgres::tls::{MakeTlsConnect, TlsConnect};
 
 /// Create a connection pool from a database URL.
 ///
@@ -25,12 +25,9 @@ pub fn create_pool(database_url: &str) -> OrmResult<Pool> {
 
 /// Create a connection pool with custom configuration
 pub fn create_pool_with_config(database_url: &str, max_size: usize) -> OrmResult<Pool> {
-    create_pool_with_manager_config(
-        database_url,
-        NoTls,
-        default_manager_config(),
-        |builder| builder.max_size(max_size),
-    )
+    create_pool_with_manager_config(database_url, NoTls, default_manager_config(), |builder| {
+        builder.max_size(max_size)
+    })
 }
 
 /// Create a connection pool using a custom TLS connector.
@@ -43,7 +40,9 @@ where
     T::TlsConnect: Sync + Send,
     <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
 {
-    create_pool_with_manager_config(database_url, tls, default_manager_config(), |b| b.max_size(16))
+    create_pool_with_manager_config(database_url, tls, default_manager_config(), |b| {
+        b.max_size(16)
+    })
 }
 
 /// Create a connection pool with injected `deadpool_postgres::ManagerConfig` and `PoolBuilder`.

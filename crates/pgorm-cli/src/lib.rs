@@ -4,19 +4,19 @@
 //! The public surface is intentionally small: most logic lives in internal modules and is
 //! dispatched from [`run`].
 
+mod analyze;
 mod cli;
 mod codegen;
 mod config;
-mod generate;
 mod gen_check;
+mod generate;
 mod init;
 mod model_codegen;
 mod model_generate;
-mod sql_check;
-mod sql_validate;
-mod analyze;
 mod queries;
 mod schema;
+mod sql_check;
+mod sql_validate;
 mod type_mapper;
 mod write;
 

@@ -138,7 +138,7 @@ fn print_result(sql: &str, issues: &[pgorm_check::SqlCheckIssue]) {
 
         let location = issue
             .location
-            .map(|loc| format!("@{}", loc))
+            .map(|loc| format!("@{loc}"))
             .unwrap_or_default();
 
         println!(

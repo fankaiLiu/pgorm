@@ -11,8 +11,7 @@ pub fn is_email(s: &str) -> bool {
     static EMAIL_RE: OnceLock<regex::Regex> = OnceLock::new();
     EMAIL_RE
         .get_or_init(|| {
-            regex::Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-                .expect("invalid built-in email regex")
+            regex::Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").expect("invalid built-in email regex")
         })
         .is_match(s)
 }
@@ -56,4 +55,3 @@ pub fn is_uuid(s: &str) -> bool {
 pub fn parse_uuid(s: &str) -> Result<uuid::Uuid, uuid::Error> {
     uuid::Uuid::parse_str(s)
 }
-

@@ -18,17 +18,11 @@ impl ProjectConfig {
             .to_path_buf();
 
         let raw = std::fs::read_to_string(&config_path).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to read config file {}: {e}",
-                config_path.display()
-            )
+            anyhow::anyhow!("failed to read config file {}: {e}", config_path.display())
         })?;
 
         let mut file: ConfigFile = toml::from_str(&raw).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to parse config file {}: {e}",
-                config_path.display()
-            )
+            anyhow::anyhow!("failed to parse config file {}: {e}", config_path.display())
         })?;
 
         file.expand_env()?;
@@ -146,7 +140,11 @@ fn default_true() -> bool {
 }
 
 fn default_row_derives() -> Vec<String> {
-    vec!["FromRow".to_string(), "Debug".to_string(), "Clone".to_string()]
+    vec![
+        "FromRow".to_string(),
+        "Debug".to_string(),
+        "Clone".to_string(),
+    ]
 }
 
 impl Default for CodegenConfig {

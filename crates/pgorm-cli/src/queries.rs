@@ -45,7 +45,10 @@ pub struct QueryFile {
     pub queries: Vec<QueryDef>,
 }
 
-pub fn load_package_queries(project: &ProjectConfig, pkg: &PackageConfig) -> anyhow::Result<Vec<QueryFile>> {
+pub fn load_package_queries(
+    project: &ProjectConfig,
+    pkg: &PackageConfig,
+) -> anyhow::Result<Vec<QueryFile>> {
     let files = expand_globs(project, &pkg.queries)?;
 
     let mut module_by_file: BTreeMap<PathBuf, String> = BTreeMap::new();
@@ -88,10 +91,9 @@ pub fn load_package_queries(project: &ProjectConfig, pkg: &PackageConfig) -> any
             }
         }
 
-        let module = module_by_file
-            .get(&f)
-            .cloned()
-            .unwrap_or_else(|| sanitize_module_name(f.file_stem().unwrap_or_default().to_string_lossy().as_ref()));
+        let module = module_by_file.get(&f).cloned().unwrap_or_else(|| {
+            sanitize_module_name(f.file_stem().unwrap_or_default().to_string_lossy().as_ref())
+        });
 
         out.push(QueryFile {
             file: f,
@@ -114,7 +116,9 @@ fn expand_globs(project: &ProjectConfig, patterns: &[String]) -> anyhow::Result<
             .ok_or_else(|| anyhow::anyhow!("invalid glob pattern: {}", abs.display()))?;
 
         let mut matched_any = false;
-        for entry in glob::glob(pattern).map_err(|e| anyhow::anyhow!("invalid glob {pattern}: {e}"))? {
+        for entry in
+            glob::glob(pattern).map_err(|e| anyhow::anyhow!("invalid glob {pattern}: {e}"))?
+        {
             let path = entry.map_err(|e| anyhow::anyhow!("glob error for {pattern}: {e}"))?;
             if path.is_file() {
                 matched_any = true;
@@ -150,7 +154,10 @@ pub fn parse_sqlc_file(path: &Path, content: &str) -> anyhow::Result<Vec<QueryDe
                 let kind = current_kind.take().expect("kind present with name");
                 let sql = join_sql(sql_lines.drain(..));
                 if sql.trim().is_empty() {
-                    anyhow::bail!("empty SQL body for query {name} at {}:{current_decl_line}", path.display());
+                    anyhow::bail!(
+                        "empty SQL body for query {name} at {}:{current_decl_line}",
+                        path.display()
+                    );
                 }
                 queries.push(QueryDef {
                     name,
@@ -166,7 +173,10 @@ pub fn parse_sqlc_file(path: &Path, content: &str) -> anyhow::Result<Vec<QueryDe
             let rest = rest.trim();
             let mut parts = rest.split_whitespace();
             let Some(name) = parts.next() else {
-                anyhow::bail!("missing query name after `-- name:` at {}:{line_no}", path.display());
+                anyhow::bail!(
+                    "missing query name after `-- name:` at {}:{line_no}",
+                    path.display()
+                );
             };
             let Some(kind_raw) = parts.next() else {
                 anyhow::bail!(
@@ -175,12 +185,18 @@ pub fn parse_sqlc_file(path: &Path, content: &str) -> anyhow::Result<Vec<QueryDe
                 );
             };
             if parts.next().is_some() {
-                anyhow::bail!("unexpected tokens in query header at {}:{line_no}", path.display());
+                anyhow::bail!(
+                    "unexpected tokens in query header at {}:{line_no}",
+                    path.display()
+                );
             }
 
-            let kind_raw = kind_raw
-                .strip_prefix(':')
-                .ok_or_else(|| anyhow::anyhow!("invalid query kind {kind_raw} at {}:{line_no}", path.display()))?;
+            let kind_raw = kind_raw.strip_prefix(':').ok_or_else(|| {
+                anyhow::anyhow!(
+                    "invalid query kind {kind_raw} at {}:{line_no}",
+                    path.display()
+                )
+            })?;
             let kind = QueryKind::from_sqlc_annotation(kind_raw)?;
 
             current_name = Some(name.to_string());
@@ -295,8 +311,11 @@ FROM users;
 
     #[test]
     fn parse_sqlc_file_requires_kind() {
-        let err = parse_sqlc_file(Path::new("queries/users.sql"), "-- name: GetUser\nSELECT 1;")
-            .unwrap_err();
+        let err = parse_sqlc_file(
+            Path::new("queries/users.sql"),
+            "-- name: GetUser\nSELECT 1;",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("missing query kind"));
     }
 }

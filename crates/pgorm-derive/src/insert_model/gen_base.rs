@@ -10,7 +10,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::common::syn_types::{option_inner, AutoTimestampKind};
+use crate::common::syn_types::{AutoTimestampKind, option_inner};
 
 use super::attrs::StructAttrs;
 
@@ -270,9 +270,7 @@ pub(super) fn generate_upsert_methods(
     // Build the ON CONFLICT clause
     let (on_conflict_clause, conflict_cols_for_exclusion): (String, Vec<String>) =
         match conflict_spec {
-            ConflictSpec::Constraint(name) => {
-                (format!("ON CONFLICT ON CONSTRAINT {name}"), vec![])
-            }
+            ConflictSpec::Constraint(name) => (format!("ON CONFLICT ON CONSTRAINT {name}"), vec![]),
             ConflictSpec::Columns(cols) => {
                 (format!("ON CONFLICT ({})", cols.join(", ")), cols.clone())
             }

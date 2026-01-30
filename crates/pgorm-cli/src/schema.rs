@@ -29,7 +29,10 @@ pub async fn run(args: GenSchemaArgs) -> anyhow::Result<()> {
                 args.config.display()
             );
         };
-        let schemas = args.schemas.clone().unwrap_or_else(|| vec!["public".to_string()]);
+        let schemas = args
+            .schemas
+            .clone()
+            .unwrap_or_else(|| vec!["public".to_string()]);
         let cache_cfg = SchemaCacheConfig {
             cache_dir: std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -129,9 +132,8 @@ pub async fn load_schema_cache(
 
 fn write_schema_cache(path: &std::path::Path, cache: &SchemaCache) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!("failed to create directory {}: {e}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("failed to create directory {}: {e}", parent.display()))?;
     }
 
     let tmp = path.with_extension("json.tmp");
@@ -140,18 +142,18 @@ fn write_schema_cache(path: &std::path::Path, cache: &SchemaCache) -> anyhow::Re
 
     std::fs::write(&tmp, data)
         .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| anyhow::anyhow!("failed to rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to rename {} -> {}: {e}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
 fn to_cache_config(project: &ProjectConfig, schemas: &[String]) -> SchemaCacheConfig {
-    let dir = project
-        .file
-        .schema_cache
-        .dir
-        .as_deref()
-        .unwrap_or(".pgorm");
+    let dir = project.file.schema_cache.dir.as_deref().unwrap_or(".pgorm");
     let file = project
         .file
         .schema_cache

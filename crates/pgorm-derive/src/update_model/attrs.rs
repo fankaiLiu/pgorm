@@ -89,10 +89,7 @@ impl syn::parse::Parse for StructAttrList {
                     }
                     "input_vis" => {
                         let vis: syn::Visibility = syn::parse_str(&value.value()).map_err(|e| {
-                            syn::Error::new(
-                                Span::call_site(),
-                                format!("invalid input_vis: {e}"),
-                            )
+                            syn::Error::new(Span::call_site(), format!("invalid input_vis: {e}"))
                         })?;
                         input_vis = Some(vis);
                     }

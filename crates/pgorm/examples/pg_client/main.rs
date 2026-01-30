@@ -8,7 +8,10 @@
 mod common;
 
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
-use common::{print_banner, print_done, print_header, print_info, print_success, print_warning, setup_products_categories_schema};
+use common::{
+    print_banner, print_done, print_header, print_info, print_success, print_warning,
+    setup_products_categories_schema,
+};
 use pgorm::{CheckMode, FromRow, Model, OrmError, PgClient, PgClientConfig, create_pool, query};
 use std::env;
 use std::time::Duration;
@@ -172,7 +175,7 @@ fn create_stats_table(stats: &pgorm::QueryStats) -> Table {
         let avg = stats.total_duration / stats.total_queries as u32;
         table.add_row(vec![
             Cell::new("Avg Duration"),
-            Cell::new(format!("{:?}", avg)).fg(Color::Yellow),
+            Cell::new(format!("{avg:?}")).fg(Color::Yellow),
         ]);
     }
 
@@ -441,7 +444,7 @@ async fn main() -> Result<(), OrmError> {
     ]);
 
     println!();
-    println!("{}", summary_table);
+    println!("{summary_table}");
 
     print_done();
 

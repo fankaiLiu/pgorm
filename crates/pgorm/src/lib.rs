@@ -26,18 +26,18 @@
 //! ```
 
 mod builder;
+pub mod changeset;
 mod client;
 mod condition;
-pub mod changeset;
+pub mod eager;
 mod error;
 mod ident;
 mod monitor;
-pub mod qb;
 pub mod prelude;
+pub mod qb;
 mod row;
 mod sql;
 mod transaction;
-pub mod eager;
 
 #[cfg(feature = "validate")]
 pub mod validate;
@@ -47,9 +47,10 @@ pub mod validate;
 pub mod migrate;
 
 pub use builder::{NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr};
+pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
 pub use client::GenericClient;
 pub use condition::{Condition, Op};
-pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
+pub use eager::{BelongsToMap, HasManyMap, Loaded};
 pub use error::{OrmError, OrmResult};
 pub use ident::{Ident, IdentPart, IntoIdent};
 pub use monitor::{
@@ -60,7 +61,6 @@ pub use monitor::{
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{Query, Sql, query, sql};
 pub use tokio_postgres::types::Json;
-pub use eager::{BelongsToMap, HasManyMap, Loaded};
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
@@ -114,8 +114,8 @@ pub use checked_client::CheckedClient;
 // Re-export PgClient (recommended API)
 #[cfg(feature = "check")]
 pub use pg_client::{
-    CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig, SelectWithoutLimitPolicy,
-    SqlPolicy,
+    CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig,
+    SelectWithoutLimitPolicy, SqlPolicy,
 };
 
 #[cfg(feature = "check")]

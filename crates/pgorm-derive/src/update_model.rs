@@ -24,7 +24,7 @@ mod types;
 use attrs::{get_field_attrs, get_struct_attrs};
 use gen_base::{generate_update_by_id_methods, generate_update_returning_methods};
 use gen_graph::generate_update_graph_methods;
-use types::{detect_auto_timestamp_type, option_inner, AutoTimestampKind};
+use types::{AutoTimestampKind, detect_auto_timestamp_type, option_inner};
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -215,8 +215,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Generate methods using submodules
-    let update_by_id_methods =
-        generate_update_by_id_methods(table_name, &id_col_expr, &destructure, &set_stmts, has_auto_now);
+    let update_by_id_methods = generate_update_by_id_methods(
+        table_name,
+        &id_col_expr,
+        &destructure,
+        &set_stmts,
+        has_auto_now,
+    );
 
     let update_returning_methods = generate_update_returning_methods(
         &attrs,
@@ -298,7 +303,10 @@ fn generate_input_struct(
                 field_ty.clone()
             }
         } else {
-            let inner_ty = field_attrs.input_as.clone().unwrap_or_else(|| field_ty.clone());
+            let inner_ty = field_attrs
+                .input_as
+                .clone()
+                .unwrap_or_else(|| field_ty.clone());
             syn::parse_quote!(Option<#inner_ty>)
         };
 
@@ -448,7 +456,8 @@ fn generate_input_struct(
             });
         }
 
-        let output_expr = build_output_expr(&field_ident, &field_name_lit, &field_ty, &field_attrs)?;
+        let output_expr =
+            build_output_expr(&field_ident, &field_name_lit, &field_ty, &field_attrs)?;
         build_field_stmts.push(quote! { #field_ident: #output_expr });
     }
 

@@ -1,9 +1,9 @@
 use crate::error::{CheckError, CheckResult};
 
 fn limit_node(limit: i32) -> pg_query::protobuf::Node {
-    use pg_query::protobuf::{AConst, Integer, Node};
     use pg_query::protobuf::a_const;
     use pg_query::protobuf::node::Node as NodeEnum;
+    use pg_query::protobuf::{AConst, Integer, Node};
 
     Node {
         node: Some(NodeEnum::AConst(AConst {

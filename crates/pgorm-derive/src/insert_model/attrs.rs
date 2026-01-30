@@ -86,7 +86,8 @@ impl syn::parse::Parse for StructAttrList {
                         conflict_constraint = Some(parse_sql_ident(&value, "conflict_constraint")?);
                     }
                     "conflict_update" => {
-                        conflict_update = Some(parse_sql_ident_list(&value, "conflict_update", true)?);
+                        conflict_update =
+                            Some(parse_sql_ident_list(&value, "conflict_update", true)?);
                     }
                     "graph_root_id_field" => {
                         graph_root_id_field = Some(value.value());
@@ -107,10 +108,7 @@ impl syn::parse::Parse for StructAttrList {
                     }
                     "input_vis" => {
                         let vis: syn::Visibility = syn::parse_str(&value.value()).map_err(|e| {
-                            syn::Error::new(
-                                Span::call_site(),
-                                format!("invalid input_vis: {e}"),
-                            )
+                            syn::Error::new(Span::call_site(), format!("invalid input_vis: {e}"))
                         })?;
                         input_vis = Some(vis);
                     }

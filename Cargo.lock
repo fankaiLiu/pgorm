@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "colored 3.1.1",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm-check"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1037,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm-derive"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",

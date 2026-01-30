@@ -548,7 +548,8 @@ impl<C: GenericClient> PgClient<C> {
                                         );
                                         rewritten.push_str(&ctx.exec_sql[..pos]);
                                         rewritten.push_str(&ctx.canonical_sql);
-                                        rewritten.push_str(&ctx.exec_sql[pos + old_canonical.len()..]);
+                                        rewritten
+                                            .push_str(&ctx.exec_sql[pos + old_canonical.len()..]);
                                         ctx.exec_sql = rewritten;
                                     } else {
                                         // Fallback: drop exec_sql modifications (e.g. comments) to ensure LIMIT is applied.
@@ -715,8 +716,7 @@ ORDER BY n.nspname, c.relname, a.attnum
                 if errors.is_empty() {
                     Ok(())
                 } else {
-                    let messages: Vec<String> =
-                        errors.iter().map(|i| i.message.clone()).collect();
+                    let messages: Vec<String> = errors.iter().map(|i| i.message.clone()).collect();
                     Err(OrmError::validation(format!(
                         "SQL check failed: {}",
                         messages.join("; ")
@@ -789,11 +789,7 @@ ORDER BY n.nspname, c.relname, a.attnum
     }
 }
 
-fn handle_dangerous_dml(
-    policy: DangerousDmlPolicy,
-    rule: &str,
-    sql: &str,
-) -> Result<(), OrmError> {
+fn handle_dangerous_dml(policy: DangerousDmlPolicy, rule: &str, sql: &str) -> Result<(), OrmError> {
     match policy {
         DangerousDmlPolicy::Allow => Ok(()),
         DangerousDmlPolicy::Warn => {
@@ -1157,9 +1153,18 @@ mod tests {
     fn test_config_defaults() {
         let config = PgClientConfig::default();
         assert_eq!(config.check_mode, CheckMode::WarnOnly);
-        assert_eq!(config.sql_policy.select_without_limit, SelectWithoutLimitPolicy::Allow);
-        assert_eq!(config.sql_policy.delete_without_where, DangerousDmlPolicy::Allow);
-        assert_eq!(config.sql_policy.update_without_where, DangerousDmlPolicy::Allow);
+        assert_eq!(
+            config.sql_policy.select_without_limit,
+            SelectWithoutLimitPolicy::Allow
+        );
+        assert_eq!(
+            config.sql_policy.delete_without_where,
+            DangerousDmlPolicy::Allow
+        );
+        assert_eq!(
+            config.sql_policy.update_without_where,
+            DangerousDmlPolicy::Allow
+        );
         assert!(config.stats_enabled);
         assert!(!config.logging_enabled);
     }
@@ -1186,7 +1191,7 @@ mod tests {
 
         impl GenericClient for DummyClient {
             async fn query(&self, sql: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
-                *self.0 .0.lock().unwrap() = Some(sql.to_string());
+                *self.0.0.lock().unwrap() = Some(sql.to_string());
                 Ok(vec![])
             }
             async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
@@ -1225,7 +1230,7 @@ mod tests {
 
         impl GenericClient for DummyClient {
             async fn query(&self, sql: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
-                *self.0 .0.lock().unwrap() = Some(sql.to_string());
+                *self.0.0.lock().unwrap() = Some(sql.to_string());
                 Ok(vec![])
             }
             async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
@@ -1278,7 +1283,7 @@ mod tests {
                 Ok(None)
             }
             async fn execute(&self, sql: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
-                *self.0 .0.lock().unwrap() = Some(sql.to_string());
+                *self.0.0.lock().unwrap() = Some(sql.to_string());
                 Ok(0)
             }
         }

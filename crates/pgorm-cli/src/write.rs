@@ -13,7 +13,10 @@ pub struct WriteSummary {
     pub written: Vec<PathBuf>,
 }
 
-pub fn apply_generated_files(files: &[GeneratedFile], opts: WriteOptions) -> anyhow::Result<WriteSummary> {
+pub fn apply_generated_files(
+    files: &[GeneratedFile],
+    opts: WriteOptions,
+) -> anyhow::Result<WriteSummary> {
     let mut files = files.to_vec();
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
@@ -57,16 +60,20 @@ pub fn apply_generated_files(files: &[GeneratedFile], opts: WriteOptions) -> any
 
 fn write_atomic(path: &Path, content: &str) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!("failed to create directory {}: {e}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("failed to create directory {}: {e}", parent.display()))?;
     }
 
     let tmp = tmp_path(path);
     std::fs::write(&tmp, content)
         .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| anyhow::anyhow!("failed to rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to rename {} -> {}: {e}",
+            tmp.display(),
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -76,4 +83,3 @@ fn tmp_path(path: &Path) -> PathBuf {
         None => path.with_extension("tmp"),
     }
 }
-

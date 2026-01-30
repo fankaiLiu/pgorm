@@ -17,7 +17,10 @@ pub async fn run(args: SqlCheckArgs) -> anyhow::Result<()> {
             );
         };
 
-        let schemas = args.schemas.clone().unwrap_or_else(|| vec!["public".to_string()]);
+        let schemas = args
+            .schemas
+            .clone()
+            .unwrap_or_else(|| vec!["public".to_string()]);
         let cache_cfg = SchemaCacheConfig {
             cache_dir: std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -27,7 +30,8 @@ pub async fn run(args: SqlCheckArgs) -> anyhow::Result<()> {
         };
 
         let client = connect_db(&database_url).await?;
-        let (cache, _load) = load_schema_cache(&client, &cache_cfg, SchemaCacheMode::Refresh).await?;
+        let (cache, _load) =
+            load_schema_cache(&client, &cache_cfg, SchemaCacheMode::Refresh).await?;
         (cache, schemas)
     };
 

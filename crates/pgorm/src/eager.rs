@@ -197,11 +197,7 @@ mod tests {
             panic!("unexpected query() call")
         }
 
-        async fn query_one(
-            &self,
-            _sql: &str,
-            _params: &[&(dyn ToSql + Sync)],
-        ) -> OrmResult<Row> {
+        async fn query_one(&self, _sql: &str, _params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
             Err(OrmError::not_found("unexpected query_one() call"))
         }
 

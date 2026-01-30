@@ -66,7 +66,9 @@ pub fn normalize_pg_type(pg_type: &str) -> String {
 
     // Remove typmods: `varchar(255)`, `timestamp(3) with time zone`, `numeric(10,2)`, ...
     while let Some(start) = s.find('(') {
-        let Some(end) = s[start..].find(')') else { break };
+        let Some(end) = s[start..].find(')') else {
+            break;
+        };
         s.replace_range(start..start + end + 1, "");
     }
 
@@ -91,7 +93,10 @@ mod tests {
     #[test]
     fn normalize_pg_type_strips_typmods() {
         assert_eq!(normalize_pg_type("character varying(255)"), "varchar");
-        assert_eq!(normalize_pg_type("timestamp(3) with time zone"), "timestamptz");
+        assert_eq!(
+            normalize_pg_type("timestamp(3) with time zone"),
+            "timestamptz"
+        );
     }
 
     #[test]

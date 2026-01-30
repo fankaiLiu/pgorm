@@ -1,4 +1,6 @@
-use crate::analyze::{SelectColumn, extract_param_casts, extract_param_numbers, extract_select_columns};
+use crate::analyze::{
+    SelectColumn, extract_param_casts, extract_param_numbers, extract_select_columns,
+};
 use crate::config::{PackageConfig, ProjectConfig};
 use crate::queries::{QueryDef, QueryFile, QueryKind};
 use crate::type_mapper::TypeMapper;
@@ -82,7 +84,9 @@ fn generate_module_rs(
 
     // Ensure `FromRow` derive is resolvable when requested.
     let mut uses: Vec<String> = pkg.codegen.extra_uses.clone();
-    if pkg.codegen.row_derives.iter().any(|d| d == "FromRow") && !uses.iter().any(|u| u == "pgorm::FromRow") {
+    if pkg.codegen.row_derives.iter().any(|d| d == "FromRow")
+        && !uses.iter().any(|u| u == "pgorm::FromRow")
+    {
         uses.push("pgorm::FromRow".to_string());
     }
     uses.sort();
@@ -198,7 +202,10 @@ fn generate_query_items(
     let (call, await_suffix) = match exec_method {
         ExecMethod::Execute => {
             if pkg.codegen.emit_tagged_exec {
-                (format!("{call}.execute_tagged(self.conn, \"{tag}\")"), ".await")
+                (
+                    format!("{call}.execute_tagged(self.conn, \"{tag}\")"),
+                    ".await",
+                )
             } else {
                 (format!("{call}.execute(self.conn)"), ".await")
             }
@@ -225,7 +232,10 @@ fn generate_query_items(
                     ".await",
                 )
             } else {
-                (format!("{call}.fetch_opt_as::<{row_name}>(self.conn)"), ".await")
+                (
+                    format!("{call}.fetch_opt_as::<{row_name}>(self.conn)"),
+                    ".await",
+                )
             }
         }
         ExecMethod::FetchAll => {
@@ -236,7 +246,10 @@ fn generate_query_items(
                     ".await",
                 )
             } else {
-                (format!("{call}.fetch_all_as::<{row_name}>(self.conn)"), ".await")
+                (
+                    format!("{call}.fetch_all_as::<{row_name}>(self.conn)"),
+                    ".await",
+                )
             }
         }
     };
@@ -332,7 +345,9 @@ fn build_row_struct(
         let col = schema
             .find_table(&table_schema, &table_name)
             .and_then(|t| t.columns.iter().find(|c| c.name == col_name))
-            .ok_or_else(|| anyhow::anyhow!("column not found: {table_schema}.{table_name}.{col_name}"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("column not found: {table_schema}.{table_name}.{col_name}")
+            })?;
 
         let mut ty = if let Some(override_ty) = pkg.overrides.column_override(&q.name, &label) {
             override_ty.to_string()
@@ -346,7 +361,10 @@ fn build_row_struct(
 
         let ident = sanitize_field_ident(&label);
         if !seen_idents.insert(ident.clone()) {
-            anyhow::bail!("duplicate field name in {} after sanitization: {ident}", q.name);
+            anyhow::bail!(
+                "duplicate field name in {} after sanitization: {ident}",
+                q.name
+            );
         }
 
         fields.push(RowField {
@@ -378,7 +396,8 @@ fn build_table_resolution(
         let rel_name = rv.table.as_str();
         let qualifier = rv.alias.as_deref().unwrap_or(rel_name).to_string();
 
-        let Some((resolved_schema, resolved_table)) = resolve_table(schema, rel_schema, rel_name)? else {
+        let Some((resolved_schema, resolved_table)) = resolve_table(schema, rel_schema, rel_name)?
+        else {
             anyhow::bail!(
                 "table not found: {}",
                 match rel_schema {
@@ -480,11 +499,7 @@ fn resolve_column_ref(
             anyhow::bail!("table not found: {schema_part}.{table_part}");
         }
 
-        return Ok((
-            schema_part.clone(),
-            table_part.clone(),
-            col_part.clone(),
-        ));
+        return Ok((schema_part.clone(), table_part.clone(), col_part.clone()));
     }
 
     anyhow::bail!("unsupported column reference shape (MVP): {parts:?}");
@@ -537,8 +552,7 @@ fn sanitize_field_ident(column: &str) -> String {
 fn is_rust_keyword(s: &str) -> bool {
     matches!(
         s,
-        "as"
-            | "break"
+        "as" | "break"
             | "const"
             | "continue"
             | "crate"

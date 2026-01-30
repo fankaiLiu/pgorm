@@ -298,7 +298,12 @@ fn parse_sql<'a>(mut it: impl Iterator<Item = &'a str>) -> anyhow::Result<Comman
     let cmd = match subcmd {
         None => {
             // Treat `pgorm sql` (no args) as help, but keep other cases strict.
-            if files.is_empty() && database.is_none() && schemas.is_none() && !deny_warnings && config == PathBuf::from("pgorm.toml") {
+            if files.is_empty()
+                && database.is_none()
+                && schemas.is_none()
+                && !deny_warnings
+                && config == PathBuf::from("pgorm.toml")
+            {
                 return Ok(Command::Help(HelpTopic::Sql));
             }
             anyhow::bail!("missing subcommand: expected `pgorm sql check`")
@@ -469,6 +474,9 @@ mod tests {
 
         assert_eq!(sql.config, PathBuf::from("pgorm.toml"));
         assert!(sql.deny_warnings);
-        assert_eq!(sql.files, vec![PathBuf::from("a.sql"), PathBuf::from("b.sql")]);
+        assert_eq!(
+            sql.files,
+            vec![PathBuf::from("a.sql"), PathBuf::from("b.sql")]
+        );
     }
 }

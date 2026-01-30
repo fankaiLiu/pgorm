@@ -86,7 +86,10 @@ fn generate_pgorm_models(
     Ok(files)
 }
 
-fn select_tables(cfg: &ModelsConfig, schema: &DbSchema) -> anyhow::Result<Vec<pgorm_check::TableInfo>> {
+fn select_tables(
+    cfg: &ModelsConfig,
+    schema: &DbSchema,
+) -> anyhow::Result<Vec<pgorm_check::TableInfo>> {
     let mut tables: Vec<pgorm_check::TableInfo> = Vec::new();
 
     if cfg.tables.is_empty() {
@@ -114,7 +117,9 @@ fn select_tables(cfg: &ModelsConfig, schema: &DbSchema) -> anyhow::Result<Vec<pg
         }
     }
 
-    tables.sort_by(|a, b| (a.schema.as_str(), a.name.as_str()).cmp(&(b.schema.as_str(), b.name.as_str())));
+    tables.sort_by(|a, b| {
+        (a.schema.as_str(), a.name.as_str()).cmp(&(b.schema.as_str(), b.name.as_str()))
+    });
     tables.dedup_by(|a, b| a.schema == b.schema && a.name == b.name);
 
     Ok(tables)
@@ -207,7 +212,11 @@ fn generate_models_mod_rs(
     Ok(out)
 }
 
-fn struct_name_for_table(cfg: &ModelsConfig, t: &pgorm_check::TableInfo, needs_schema_prefix: bool) -> String {
+fn struct_name_for_table(
+    cfg: &ModelsConfig,
+    t: &pgorm_check::TableInfo,
+    needs_schema_prefix: bool,
+) -> String {
     let key = format!("{}.{}", t.schema, t.name);
     if let Some(v) = cfg.rename.get(&key) {
         return v.clone();
@@ -369,8 +378,7 @@ fn sanitize_field_ident(column: &str) -> String {
 fn is_rust_keyword(s: &str) -> bool {
     matches!(
         s,
-        "as"
-            | "break"
+        "as" | "break"
             | "const"
             | "continue"
             | "crate"

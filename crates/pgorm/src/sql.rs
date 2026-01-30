@@ -866,7 +866,9 @@ impl Sql {
     /// ```
     pub fn page(&mut self, page: i64, per_page: i64) -> OrmResult<&mut Self> {
         if page < 1 {
-            return Err(OrmError::Validation(format!("page must be >= 1, got {page}")));
+            return Err(OrmError::Validation(format!(
+                "page must be >= 1, got {page}"
+            )));
         }
         let offset = (page - 1) * per_page;
         Ok(self.limit_offset(per_page, offset))
@@ -880,10 +882,9 @@ mod tests {
 
     async fn try_connect() -> Option<tokio_postgres::Client> {
         let database_url = std::env::var("DATABASE_URL").ok()?;
-        let (client, connection) =
-            tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
-                .await
-                .expect("Failed to connect to DATABASE_URL with NoTls");
+        let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
+            .await
+            .expect("Failed to connect to DATABASE_URL with NoTls");
         tokio::spawn(async move {
             if let Err(e) = connection.await {
                 eprintln!("tokio-postgres connection error: {e}");
@@ -1082,6 +1083,12 @@ mod tests {
             .fetch_one_strict(&client)
             .await
             .unwrap_err();
-        assert!(matches!(err, OrmError::TooManyRows { expected: 1, got: 2 }));
+        assert!(matches!(
+            err,
+            OrmError::TooManyRows {
+                expected: 1,
+                got: 2
+            }
+        ));
     }
 }

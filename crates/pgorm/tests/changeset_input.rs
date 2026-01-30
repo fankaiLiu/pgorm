@@ -42,21 +42,34 @@ fn validate_and_convert() {
 
     let errs = bad.validate();
     assert!(!errs.is_empty());
-    assert!(errs.iter().any(|e| e.field == "name" && e.code.as_str() == "len"));
-    assert!(errs.iter().any(|e| e.field == "email" && e.code.as_str() == "email"));
-    assert!(errs.iter().any(|e| e.field == "age" && e.code.as_str() == "range"));
-    assert!(errs
-        .iter()
-        .any(|e| e.field == "external_id" && e.code.as_str() == "uuid"));
-    assert!(errs
-        .iter()
-        .any(|e| e.field == "homepage" && e.code.as_str() == "url"));
-    assert!(errs
-        .iter()
-        .any(|e| e.field == "plan" && e.code.as_str() == "one_of"));
-    assert!(errs
-        .iter()
-        .any(|e| e.field == "username" && e.code.as_str() == "regex"));
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "name" && e.code.as_str() == "len")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "email" && e.code.as_str() == "email")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "age" && e.code.as_str() == "range")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "external_id" && e.code.as_str() == "uuid")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "homepage" && e.code.as_str() == "url")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "plan" && e.code.as_str() == "one_of")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "username" && e.code.as_str() == "regex")
+    );
 
     let ok = NewUserInput {
         name: Some("Alice".into()),
@@ -110,12 +123,14 @@ fn validate_update_patch() {
 
     let errs = bad.validate();
     assert!(!errs.is_empty());
-    assert!(errs
-        .iter()
-        .any(|e| e.field == "username" && e.code.as_str() == "len"));
-    assert!(errs
-        .iter()
-        .any(|e| e.field == "email" && e.code.as_str() == "email"));
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "username" && e.code.as_str() == "len")
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.field == "email" && e.code.as_str() == "email")
+    );
 
     let ok = UserPatchInput {
         username: Some("alice".into()),

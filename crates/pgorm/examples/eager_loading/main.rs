@@ -82,7 +82,11 @@ async fn main() -> Result<(), OrmError> {
     println!("\n== Attach style (belongs_to) ==");
     let posts_with_author = Post::load_author(&client, posts.clone()).await?;
     for p in &posts_with_author {
-        let author = p.rel.as_ref().map(|u| u.name.as_str()).unwrap_or("(missing)");
+        let author = p
+            .rel
+            .as_ref()
+            .map(|u| u.name.as_str())
+            .unwrap_or("(missing)");
         println!("- post {} title={:?} author={}", p.id, p.title, author);
     }
 

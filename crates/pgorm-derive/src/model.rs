@@ -12,13 +12,13 @@ mod join;
 mod query;
 mod relations;
 
+use crate::common::syn_types::option_inner;
 use attrs::{get_field_info, get_table_name, is_id_field};
 use join::{JoinClause, get_join_clauses};
 use query::{QueryFieldInfo, generate_query_struct};
 use relations::{
     BelongsToRelation, HasManyRelation, get_belongs_to_relations, get_has_many_relations,
 };
-use crate::common::syn_types::option_inner;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

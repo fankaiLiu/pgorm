@@ -310,10 +310,9 @@ mod tests {
 
     #[test]
     fn extract_select_columns_supports_alias() {
-        let cols = extract_select_columns(
-            "SELECT id, email AS user_email FROM users WHERE id = $1",
-        )
-        .unwrap();
+        let cols =
+            extract_select_columns("SELECT id, email AS user_email FROM users WHERE id = $1")
+                .unwrap();
         assert_eq!(cols.len(), 2);
         assert_eq!(cols[0].label, "id");
         assert_eq!(cols[1].label, "user_email");

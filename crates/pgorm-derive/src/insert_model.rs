@@ -166,12 +166,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         };
 
     // Generate returning methods
-    let returning_method = generate_returning_methods(
-        table_name,
-        &struct_attrs,
-        &insert_sql,
-        &batch_bind_fields,
-    );
+    let returning_method =
+        generate_returning_methods(table_name, &struct_attrs, &insert_sql, &batch_bind_fields);
 
     // Generate with_* setters for all fields
     let with_setters = generate_with_setters(fields);
@@ -187,11 +183,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         generate_insert_graph_methods(&struct_attrs, &input, fields, &insert_sql_info)?;
 
     let input_struct = if let Some(cfg) = &struct_attrs.input {
-        generate_input_struct(
-            &input,
-            fields,
-            cfg,
-        )?
+        generate_input_struct(&input, fields, cfg)?
     } else {
         quote! {}
     };
@@ -266,7 +258,10 @@ fn generate_input_struct(
                 field_ty.clone()
             }
         } else {
-            let inner_ty = field_attrs.input_as.clone().unwrap_or_else(|| field_ty.clone());
+            let inner_ty = field_attrs
+                .input_as
+                .clone()
+                .unwrap_or_else(|| field_ty.clone());
             syn::parse_quote!(Option<#inner_ty>)
         };
 
@@ -419,7 +414,8 @@ fn generate_input_struct(
         }
 
         // Build output field for InsertModel (conversion).
-        let output_expr = build_output_expr(&field_ident, &field_name_lit, &field_ty, &field_attrs)?;
+        let output_expr =
+            build_output_expr(&field_ident, &field_name_lit, &field_ty, &field_attrs)?;
         build_field_stmts.push(quote! { #field_ident: #output_expr });
     }
 

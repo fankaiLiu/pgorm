@@ -182,8 +182,7 @@ impl<C> CheckedClient<C> {
                 if errors.is_empty() {
                     Ok(())
                 } else {
-                    let messages: Vec<String> =
-                        errors.iter().map(|i| i.message.clone()).collect();
+                    let messages: Vec<String> = errors.iter().map(|i| i.message.clone()).collect();
                     Err(OrmError::validation(format!(
                         "SQL check failed: {}",
                         messages.join("; ")

@@ -380,7 +380,9 @@ impl Pagination {
     /// Page numbers start at 1. Returns error if page < 1.
     pub fn page(page: i64, per_page: i64) -> OrmResult<Self> {
         if page < 1 {
-            return Err(OrmError::validation(format!("page must be >= 1, got {page}")));
+            return Err(OrmError::validation(format!(
+                "page must be >= 1, got {page}"
+            )));
         }
         Ok(Self {
             limit: Some(per_page),

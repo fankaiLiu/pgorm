@@ -62,4 +62,3 @@ pub fn validate_sql(header: &str, sql: &str, schema: &DbSchema) -> SqlValidation
 
     out
 }
-

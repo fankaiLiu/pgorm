@@ -9,7 +9,9 @@ mod common;
 
 use colored::Colorize;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
-use common::{print_banner, print_done, print_header, print_info, print_success, setup_products_schema};
+use common::{
+    print_banner, print_done, print_header, print_info, print_success, setup_products_schema,
+};
 use pgorm::{FromRow, InsertModel, Model, OrmError, UpdateModel, create_pool};
 use std::env;
 
@@ -176,7 +178,7 @@ async fn main() -> Result<(), OrmError> {
     };
 
     let affected = patch.update_by_id(&client, 1_i64).await?;
-    print_success(&format!("Updated {} row(s)", affected));
+    print_success(&format!("Updated {affected} row(s)"));
 
     println!();
     let all_products = Product::select_all(&client).await?;
@@ -197,7 +199,7 @@ async fn main() -> Result<(), OrmError> {
     };
 
     let affected = patch.update_by_id(&client, 2_i64).await?;
-    print_success(&format!("Updated {} row(s)", affected));
+    print_success(&format!("Updated {affected} row(s)"));
 
     println!();
     let all_products = Product::select_all(&client).await?;
@@ -219,7 +221,7 @@ async fn main() -> Result<(), OrmError> {
     };
 
     let affected = patch.update_by_id(&client, 1_i64).await?;
-    print_success(&format!("Updated {} row(s)", affected));
+    print_success(&format!("Updated {affected} row(s)"));
 
     println!();
     let all_products = Product::select_all(&client).await?;
@@ -240,7 +242,7 @@ async fn main() -> Result<(), OrmError> {
     };
 
     let affected = patch.update_by_id(&client, 3_i64).await?;
-    print_success(&format!("Updated {} row(s)", affected));
+    print_success(&format!("Updated {affected} row(s)"));
 
     println!();
     let all_products = Product::select_all(&client).await?;
@@ -261,7 +263,7 @@ async fn main() -> Result<(), OrmError> {
     };
 
     let affected = patch.update_by_ids(&client, vec![1_i64, 2_i64]).await?;
-    print_success(&format!("Updated {} row(s)", affected));
+    print_success(&format!("Updated {affected} row(s)"));
 
     println!();
     let all_products = Product::select_all(&client).await?;
@@ -377,7 +379,7 @@ async fn main() -> Result<(), OrmError> {
     ]);
 
     println!();
-    println!("{}", summary_table);
+    println!("{summary_table}");
 
     print_done();
 
