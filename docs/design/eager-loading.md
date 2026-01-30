@@ -259,3 +259,5 @@ let posts_by_user = User::load_posts_map_with(&client, &users, |q| {
 - [ ] 扩展 `#[derive(Model)]`：为 `has_many` / `belongs_to` 生成 `load_*_map` / `load_*` 方法
 - [ ] 增加单元测试：空输入、重复 id、缺失 parent、NULL fk（如果支持 Option fk）
 - [ ] 文档：在 README 或 guide 中补充 eager-loading 用法
+
+> 执行进度与更细粒度的拆解：见 `docs/design/eager-loading.todo.md`。
