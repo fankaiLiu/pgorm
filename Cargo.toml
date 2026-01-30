@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -11,27 +11,27 @@ license = "MIT"
 [workspace.dependencies]
 # Internal crates
 pgorm = { path = "crates/pgorm" }
-pgorm-derive = { path = "crates/pgorm-derive", version = "0.1.1" }
-pgorm-check = { path = "crates/pgorm-check", version = "0.1.1" }
+pgorm-derive = { path = "crates/pgorm-derive", version = "0.1.2" }
+pgorm-check = { path = "crates/pgorm-check", version = "0.1.2" }
 
 # External dependencies
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
-deadpool-postgres = { version = "0.14" }
-thiserror = "2"
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio-postgres = { version = "0.7.16", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
+deadpool-postgres = { version = "0.14.1" }
+thiserror = "2.0.18"
+chrono = { version = "0.4.43", features = ["serde"] }
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["full"] }
 refinery = { version = "0.9.0", features = ["tokio-postgres"] }
 regex = "1.12.2"
 url = "2.5.8"
 
 # Proc macro dependencies
-syn = { version = "2", features = ["full"] }
-quote = "1"
-proc-macro2 = "1"
+syn = { version = "2.0.111", features = ["full"] }
+quote = "1.0.42"
+proc-macro2 = "1.0.103"
 
 # CLI / formatting
-colored = "3"
-comfy-table = "7"
+colored = "3.0.0"
+comfy-table = "7.2.1"
