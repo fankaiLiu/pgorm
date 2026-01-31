@@ -84,6 +84,45 @@ let q = AuditLog::query()
     })?;
 ```
 
+### QueryParams (derive `apply()`)
+
+If you want to reuse the same filter set (e.g. for both `search` and `count`), model your inputs as a struct and derive `QueryParams` to generate `apply()/into_query()`:
+
+- Supports `eq/ne/gt/gte/lt/lte/like/ilike/not_like/not_ilike/is_null/is_not_null/in_list/not_in/between/not_between`, ordering/pagination `order_by/order_by_asc/order_by_desc/order_by_raw/paginate/limit/offset/page`, plus `map(...)` / `raw` / `and` / `or` escape hatches.
+
+```rust
+use pgorm::QueryParams;
+
+#[derive(QueryParams)]
+#[orm(model = "AuditLog")]
+pub struct AuditLogSearchParams<'a> {
+    #[orm(eq(AuditLogQuery::COL_USER_ID))]
+    pub user_id: Option<uuid::Uuid>,
+    #[orm(eq(AuditLogQuery::COL_OPERATION_TYPE))]
+    pub operation_type: Option<&'a str>,
+    #[orm(gte(AuditLogQuery::COL_CREATED_AT))]
+    pub start_date: Option<chrono::DateTime<chrono::Utc>>,
+    #[orm(lte(AuditLogQuery::COL_CREATED_AT))]
+    pub end_date: Option<chrono::DateTime<chrono::Utc>>,
+    #[orm(eq_map(AuditLogQuery::COL_IP_ADDRESS, parse_ip))]
+    pub ip_address: Option<&'a str>,
+
+    // Ordering/pagination (optional)
+    #[orm(order_by_desc)]
+    pub order_by_desc: Option<&'a str>,
+    #[orm(page(per_page = per_page.unwrap_or(20)))]
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+fn parse_ip(s: &str) -> Option<std::net::IpAddr> {
+    s.parse().ok()
+}
+
+let q = AuditLogSearchParams { user_id, operation_type, start_date, end_date, ip_address }
+    .into_query()?;
+```
+
 ## Relations
 
 ### has_many

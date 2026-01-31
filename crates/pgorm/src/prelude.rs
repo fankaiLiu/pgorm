@@ -14,7 +14,7 @@ pub use crate::{FromRow, GenericClient, OrmError, OrmResult, Query, RowExt, Sql,
 pub use crate::{create_pool, create_pool_with_config};
 
 #[cfg(feature = "derive")]
-pub use crate::{InsertModel, Model, UpdateModel, ViewModel};
+pub use crate::{InsertModel, Model, QueryParams, UpdateModel, ViewModel};
 
 #[cfg(feature = "check")]
 pub use crate::{CheckMode, CheckedClient, PgClient, PgClientConfig};

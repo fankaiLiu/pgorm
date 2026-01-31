@@ -95,3 +95,8 @@ path = "examples/jsonb/main.rs"
 [[example]]
 name = "fetch_semantics"
 path = "examples/fetch_semantics/main.rs"
+
+[[example]]
+name = "query_params"
+path = "examples/query_params/main.rs"
+required-features = ["derive"]

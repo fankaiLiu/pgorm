@@ -49,6 +49,10 @@ spec/
 
 ## 4. 模块索引（按仓库实际代码）
 
+### 4.0 总览 / 路线图
+
+- `spec/00-ai-first-roadmap.md`：AI-first 路线图（把 AI 当成默认入口，SQL 资产化 + 校验闭环）
+
 ### 4.1 CLI（`crates/pgorm-cli`）
 
 - 现有：

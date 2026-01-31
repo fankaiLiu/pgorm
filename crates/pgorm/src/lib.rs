@@ -81,7 +81,7 @@ pub use pool::{create_pool, create_pool_with_config};
 pub use pool::{create_pool_with_manager_config, create_pool_with_tls};
 
 #[cfg(feature = "derive")]
-pub use pgorm_derive::{FromRow, InsertModel, Model, UpdateModel, ViewModel};
+pub use pgorm_derive::{FromRow, InsertModel, Model, QueryParams, UpdateModel, ViewModel};
 
 // SQL checking and linting
 mod check;

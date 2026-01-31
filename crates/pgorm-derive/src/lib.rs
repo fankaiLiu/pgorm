@@ -9,6 +9,7 @@ mod common;
 mod from_row;
 mod insert_model;
 mod model;
+mod query_params;
 mod sql_ident;
 mod update_model;
 
@@ -151,6 +152,58 @@ pub fn derive_insert_model(input: TokenStream) -> TokenStream {
 pub fn derive_update_model(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     update_model::expand(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derive `QueryParams` helpers for building dynamic queries from a params struct.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::QueryParams;
+///
+/// #[derive(QueryParams)]
+/// #[orm(model = "User")]
+/// struct UserSearchParams<'a> {
+///     #[orm(eq(UserQuery::COL_ID))]
+///     id: Option<i64>,
+///     #[orm(eq(UserQuery::COL_EMAIL))]
+///     email: Option<&'a str>,
+/// }
+///
+/// let q = UserSearchParams { id, email }.into_query()?;
+/// ```
+///
+/// # Attributes
+///
+/// Struct-level:
+/// - `#[orm(model = "TypePath")]` - The model type that provides `Model::query()`
+///
+/// Field-level:
+/// - `#[orm(eq(COL))]` - Equality filter (auto uses `eq_opt_str` for `&str`/`String`)
+/// - `#[orm(eq_str(COL))]` - Equality filter, forcing string conversion
+/// - `#[orm(eq_map(COL, map_fn))]` - Equality filter after mapping (e.g. parse)
+/// - `#[orm(map(map_fn))]` - Optional mapper (returns `Option<T>`; `None` means "skip filter")
+/// - `#[orm(ne(COL))]` / `#[orm(gt(COL))]` / `#[orm(gte(COL))]` / `#[orm(lt(COL))]` / `#[orm(lte(COL))]`
+/// - `#[orm(like(COL))]` / `#[orm(ilike(COL))]` / `#[orm(not_like(COL))]` / `#[orm(not_ilike(COL))]`
+/// - `#[orm(in_list(COL))]` / `#[orm(not_in(COL))]`
+/// - `#[orm(between(COL))]` / `#[orm(not_between(COL))]` (expects `(T, T)` or `Option<(T, T)>`)
+/// - `#[orm(is_null(COL))]` / `#[orm(is_not_null(COL))]` (expects `bool` or `Option<bool>`)
+/// - `#[orm(order_by)]` - Replace the `OrderBy` builder (expects `OrderBy` or `Option<OrderBy>`)
+/// - `#[orm(order_by_asc)]` / `#[orm(order_by_desc)]` - Add an ORDER BY column (expects a column ident or `Option<...>`)
+/// - `#[orm(order_by_raw)]` - Add a raw ORDER BY item (escape hatch)
+/// - `#[orm(paginate)]` - Replace the `Pagination` builder (expects `Pagination` or `Option<Pagination>`)
+/// - `#[orm(limit)]` / `#[orm(offset)]` - Set LIMIT/OFFSET (expects `i64` or `Option<i64>`)
+/// - `#[orm(page)]` - Page-based pagination (expects `(page, per_page)` or `Option<(page, per_page)>`)
+/// - `#[orm(page(per_page = EXPR))]` - Page-based pagination from a page number (expects `i64`/`Option<i64>`)
+/// - `#[orm(raw)]` - Raw WHERE fragment (escape hatch)
+/// - `#[orm(and)]` / `#[orm(or)]` - Combine a `WhereExpr` (escape hatch)
+/// - `#[orm(skip)]` - Ignore this field
+#[proc_macro_derive(QueryParams, attributes(orm))]
+pub fn derive_query_params(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    query_params::expand(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
