@@ -128,6 +128,10 @@ let ip: Option<std::net::IpAddr> = row.try_get_column("ip_address")?;
 1) 尽量 **显式列出字段**（不要随手 `SELECT *`），避免 schema 改动导致映射不稳定。  
 2) JOIN/聚合时，给列起清晰别名（例如 `SELECT u.id AS user_id ...`），再用 `#[orm(column="user_id")]` 映射。  
 
+## 6) 额外类型
+
+如果你使用了 feature-gated 的额外类型（例如 `time`、`cidr`、`geo-types`），见：[`类型支持`](/zh/guide/type-support)。
+
 ## 下一步
 
 - 下一章：[`模型与派生宏`](/zh/guide/models)

@@ -15,17 +15,23 @@ chrono.workspace = true
 uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing = { version = "0.1.44", optional = true }
+rust_decimal = { workspace = true, optional = true }
+time = { workspace = true, optional = true }
+cidr = { workspace = true, optional = true }
+geo-types = { workspace = true, optional = true }
+eui48 = { workspace = true, optional = true }
+bit-vec = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 pgorm-derive = { workspace = true, optional = true }
 pgorm-check = { workspace = true, features = ["sql"], optional = true }
-inventory = "0.3"
+inventory.workspace = true
 refinery = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-dotenvy = "0.15"
+dotenvy.workspace = true
 colored.workspace = true
 comfy-table.workspace = true
 
@@ -40,6 +46,27 @@ check = ["pgorm-check"]
 
 # Changeset-style validation helpers (email/url/regex/etc)
 validate = ["dep:regex", "dep:url"]
+
+# rust_decimal::Decimal support for UNNEST casts in batch operations.
+rust_decimal = ["dep:rust_decimal"]
+
+# time crate support for UNNEST casts and tokio-postgres conversions.
+time = ["dep:time", "tokio-postgres/with-time-0_3"]
+
+# cidr crate support for UNNEST casts and tokio-postgres conversions.
+cidr = ["dep:cidr", "tokio-postgres/with-cidr-0_3"]
+
+# geo-types crate support for UNNEST casts and tokio-postgres conversions.
+geo_types = ["dep:geo-types", "tokio-postgres/with-geo-types-0_7"]
+
+# eui48 crate support for UNNEST casts and tokio-postgres conversions.
+eui48 = ["dep:eui48", "tokio-postgres/with-eui48-1"]
+
+# bit-vec crate support for UNNEST casts and tokio-postgres conversions.
+bit_vec = ["dep:bit-vec", "tokio-postgres/with-bit-vec-0_8"]
+
+# Convenience feature to enable common extra scalar types.
+extra_types = ["rust_decimal", "time", "cidr", "geo_types", "eui48", "bit_vec"]
 
 # SQL migrations (via refinery)
 migrate = ["dep:refinery"]

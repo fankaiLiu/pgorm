@@ -8,14 +8,14 @@ pgorm 是一个专为 PostgreSQL 设计的 Rust ORM 库，保持 SQL 显式化�
 
 ```toml
 [dependencies]
-pgorm = "0.1.1"
+pgorm = "0.1.4"
 ```
 
 如果只需要 SQL 构建器（不需要连接池/派生宏/运行时 SQL 检查）：
 
 ```toml
 [dependencies]
-pgorm = { version = "0.1.1", default-features = false }
+pgorm = { version = "0.1.4", default-features = false }
 ```
 
 ## Rust 工具链
@@ -34,6 +34,13 @@ pgorm = { version = "0.1.1", default-features = false }
 | `check`    | 运行时 SQL 检查 + 推荐包装器 (`CheckedClient`、`PgClient`)         |
 | `validate` | 变更集风格的验证辅助函数 (email/url/regex 等)                      |
 | `migrate`  | 通过 `refinery` 进行 SQL 迁移                                      |
+| `rust_decimal` | `rust_decimal::Decimal` 的 PgType 支持（用于 UNNEST cast）   |
+| `time`     | `time` crate 类型支持（启用 tokio-postgres `with-time-0_3`）        |
+| `cidr`     | `cidr` crate 类型支持（启用 tokio-postgres `with-cidr-0_3`）        |
+| `geo_types` | `geo-types` crate 类型支持（启用 tokio-postgres `with-geo-types-0_7`） |
+| `eui48`    | `eui48` crate 类型支持（启用 tokio-postgres `with-eui48-1`）        |
+| `bit_vec`  | `bit-vec` crate 类型支持（启用 tokio-postgres `with-bit-vec-0_8`）  |
+| `extra_types` | 便捷开关：开启以上所有常见额外类型                           |
 
 ## 基本用法
 

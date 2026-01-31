@@ -56,6 +56,9 @@ let inserted: Vec<Product> = NewProduct::insert_many_returning(
 .await?;
 ```
 
+注意：批量写入走 `UNNEST`，需要每个参与插入的字段类型实现 `pgorm::PgType`（用于数组类型 cast）。
+部分类型需要额外开启 pgorm feature，例如：`rust_decimal` / `time` / `cidr` / `geo_types` / `eui48` / `bit_vec`（或直接开 `extra_types`）。
+
 > 可运行示例见 `crates/pgorm/examples/insert_many`。
 
 ## 3) 常用字段属性

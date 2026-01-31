@@ -52,6 +52,10 @@ let inserted: Vec<Product> = NewProduct::insert_many_returning(
 .await?;
 ```
 
+Note: bulk insert helpers use `UNNEST` and require each inserted field type to implement `pgorm::PgType`
+(for array type casts). For some types you may need to enable extra pgorm features, e.g.
+`rust_decimal` / `time` / `cidr` / `geo_types` / `eui48` / `bit_vec` (or just `extra_types`).
+
 > Runnable example: `crates/pgorm/examples/insert_many`.
 
 ## 3) Common field attributes

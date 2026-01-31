@@ -36,6 +36,11 @@
   },
   {
     "type": "file",
+    "name": "type-support",
+    "label": "类型支持"
+  },
+  {
+    "type": "file",
     "name": "models",
     "label": "模型与派生宏"
   },

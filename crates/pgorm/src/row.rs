@@ -108,6 +108,97 @@ impl PgType for uuid::Uuid {
     }
 }
 
+#[cfg(feature = "rust_decimal")]
+impl PgType for rust_decimal::Decimal {
+    fn pg_array_type() -> &'static str {
+        "numeric[]"
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+impl PgType for &rust_decimal::Decimal {
+    fn pg_array_type() -> &'static str {
+        "numeric[]"
+    }
+}
+
+#[cfg(feature = "time")]
+impl PgType for time::Date {
+    fn pg_array_type() -> &'static str {
+        "date[]"
+    }
+}
+
+#[cfg(feature = "time")]
+impl PgType for time::Time {
+    fn pg_array_type() -> &'static str {
+        "time[]"
+    }
+}
+
+#[cfg(feature = "time")]
+impl PgType for time::PrimitiveDateTime {
+    fn pg_array_type() -> &'static str {
+        "timestamp[]"
+    }
+}
+
+#[cfg(feature = "time")]
+impl PgType for time::OffsetDateTime {
+    fn pg_array_type() -> &'static str {
+        "timestamptz[]"
+    }
+}
+
+#[cfg(feature = "cidr")]
+impl PgType for cidr::IpCidr {
+    fn pg_array_type() -> &'static str {
+        "cidr[]"
+    }
+}
+
+#[cfg(feature = "cidr")]
+impl PgType for cidr::IpInet {
+    fn pg_array_type() -> &'static str {
+        "inet[]"
+    }
+}
+
+#[cfg(feature = "geo_types")]
+impl PgType for geo_types::Point<f64> {
+    fn pg_array_type() -> &'static str {
+        "point[]"
+    }
+}
+
+#[cfg(feature = "geo_types")]
+impl PgType for geo_types::Rect<f64> {
+    fn pg_array_type() -> &'static str {
+        "box[]"
+    }
+}
+
+#[cfg(feature = "geo_types")]
+impl PgType for geo_types::LineString<f64> {
+    fn pg_array_type() -> &'static str {
+        "path[]"
+    }
+}
+
+#[cfg(feature = "eui48")]
+impl PgType for eui48::MacAddress {
+    fn pg_array_type() -> &'static str {
+        "macaddr[]"
+    }
+}
+
+#[cfg(feature = "bit_vec")]
+impl PgType for bit_vec::BitVec {
+    fn pg_array_type() -> &'static str {
+        "varbit[]"
+    }
+}
+
 impl PgType for chrono::NaiveDate {
     fn pg_array_type() -> &'static str {
         "date[]"
@@ -214,5 +305,41 @@ mod tests {
     #[test]
     fn pg_type_inet_ipv6addr() {
         assert_eq!(<std::net::Ipv6Addr as PgType>::pg_array_type(), "inet[]");
+    }
+
+    #[cfg(feature = "rust_decimal")]
+    #[test]
+    fn pg_type_rust_decimal_decimal() {
+        assert_eq!(<rust_decimal::Decimal as PgType>::pg_array_type(), "numeric[]");
+    }
+
+    #[cfg(feature = "time")]
+    #[test]
+    fn pg_type_time_offset_datetime() {
+        assert_eq!(<time::OffsetDateTime as PgType>::pg_array_type(), "timestamptz[]");
+    }
+
+    #[cfg(feature = "cidr")]
+    #[test]
+    fn pg_type_cidr_ip_cidr() {
+        assert_eq!(<cidr::IpCidr as PgType>::pg_array_type(), "cidr[]");
+    }
+
+    #[cfg(feature = "geo_types")]
+    #[test]
+    fn pg_type_geo_types_point() {
+        assert_eq!(<geo_types::Point<f64> as PgType>::pg_array_type(), "point[]");
+    }
+
+    #[cfg(feature = "eui48")]
+    #[test]
+    fn pg_type_eui48_mac_address() {
+        assert_eq!(<eui48::MacAddress as PgType>::pg_array_type(), "macaddr[]");
+    }
+
+    #[cfg(feature = "bit_vec")]
+    #[test]
+    fn pg_type_bit_vec_bit_vec() {
+        assert_eq!(<bit_vec::BitVec as PgType>::pg_array_type(), "varbit[]");
     }
 }

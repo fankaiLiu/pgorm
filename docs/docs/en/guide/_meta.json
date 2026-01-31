@@ -36,6 +36,11 @@
   },
   {
     "type": "file",
+    "name": "type-support",
+    "label": "Type Support"
+  },
+  {
+    "type": "file",
     "name": "models",
     "label": "Models & Derive"
   },

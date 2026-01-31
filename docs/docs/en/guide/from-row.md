@@ -127,6 +127,10 @@ let ip: Option<std::net::IpAddr> = row.try_get_column("ip_address")?;
 - Prefer explicit column lists over `SELECT *` for more stable mappings.
 - For joins/aggregations, give columns clear aliases and map with `#[orm(column = "...")]`.
 
+## 6) Extra types
+
+If you use feature-gated extra types (e.g. `time`, `cidr`, `geo-types`), see: [`Type Support`](/en/guide/type-support).
+
 ## Next
 
 - Next: [`Models & Derive`](/en/guide/models)

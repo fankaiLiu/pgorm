@@ -8,14 +8,14 @@ Add pgorm to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pgorm = "0.1.1"
+pgorm = "0.1.4"
 ```
 
 If you only want the SQL builder (no pool / derive macros / runtime SQL checking):
 
 ```toml
 [dependencies]
-pgorm = { version = "0.1.1", default-features = false }
+pgorm = { version = "0.1.4", default-features = false }
 ```
 
 ## Rust Toolchain
@@ -34,6 +34,13 @@ Default features: `pool`, `derive`, `check`, `validate`.
 | `check`    | runtime SQL checking + recommended wrappers (`CheckedClient`, `PgClient`)   |
 | `validate` | changeset-style validation helpers (email/url/regex/etc)           |
 | `migrate`  | SQL migrations via `refinery`                                      |
+| `rust_decimal` | `rust_decimal::Decimal` PgType support (for UNNEST casts)      |
+| `time`     | `time` crate type support (enables tokio-postgres `with-time-0_3`) |
+| `cidr`     | `cidr` crate type support (enables tokio-postgres `with-cidr-0_3`) |
+| `geo_types` | `geo-types` crate type support (enables tokio-postgres `with-geo-types-0_7`) |
+| `eui48`    | `eui48` crate type support (enables tokio-postgres `with-eui48-1`) |
+| `bit_vec`  | `bit-vec` crate type support (enables tokio-postgres `with-bit-vec-0_8`) |
+| `extra_types` | Convenience: enables all the above extra scalar types         |
 
 ## Basic Usage
 

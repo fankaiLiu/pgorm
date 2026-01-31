@@ -11,7 +11,7 @@ tokio-postgres.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
-async-trait = "0.1"
+async-trait.workspace = true
 
 [features]
 default = []
@@ -20,15 +20,15 @@ default = []
 sql = ["dep:pg_query"]
 
 [dependencies.pg_query]
-version = "6.1"
+workspace = true
 optional = true
 
 [dev-dependencies]
 tokio.workspace = true
-dotenvy = "0.15"
-colored = "2"
+dotenvy.workspace = true
+colored.workspace = true
 deadpool-postgres.workspace = true
-async-trait = "0.1"
+async-trait.workspace = true
 
 [[example]]
 name = "sql_check"
