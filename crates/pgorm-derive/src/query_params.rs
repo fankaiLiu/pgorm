@@ -56,8 +56,9 @@ fn parse_struct_model_attr(input: &DeriveInput) -> Result<syn::Path> {
             continue;
         }
 
-        let items =
-            attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)?;
+        let items = attr.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        )?;
 
         for meta in items {
             let syn::Meta::NameValue(nv) = meta else {
@@ -147,8 +148,9 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
             continue;
         }
 
-        let items =
-            attr.parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)?;
+        let items = attr.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        )?;
 
         for meta in items {
             match meta {
@@ -585,7 +587,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                     _ => unreachable!(),
                 };
 
-                let tuple_inner = if let Some(inner) = opt_inner { inner } else { field_ty };
+                let tuple_inner = if let Some(inner) = opt_inner {
+                    inner
+                } else {
+                    field_ty
+                };
                 let syn::Type::Tuple(tuple) = tuple_inner else {
                     return Err(syn::Error::new_spanned(
                         field,
@@ -764,7 +770,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 }
             }
             FilterOpKind::Page => {
-                let tuple_ty = if let Some(inner) = opt_inner { inner } else { field_ty };
+                let tuple_ty = if let Some(inner) = opt_inner {
+                    inner
+                } else {
+                    field_ty
+                };
                 let is_tuple = matches!(tuple_ty, syn::Type::Tuple(t) if t.elems.len() == 2);
 
                 if is_tuple {
