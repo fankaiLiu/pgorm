@@ -310,13 +310,19 @@ mod tests {
     #[cfg(feature = "rust_decimal")]
     #[test]
     fn pg_type_rust_decimal_decimal() {
-        assert_eq!(<rust_decimal::Decimal as PgType>::pg_array_type(), "numeric[]");
+        assert_eq!(
+            <rust_decimal::Decimal as PgType>::pg_array_type(),
+            "numeric[]"
+        );
     }
 
     #[cfg(feature = "time")]
     #[test]
     fn pg_type_time_offset_datetime() {
-        assert_eq!(<time::OffsetDateTime as PgType>::pg_array_type(), "timestamptz[]");
+        assert_eq!(
+            <time::OffsetDateTime as PgType>::pg_array_type(),
+            "timestamptz[]"
+        );
     }
 
     #[cfg(feature = "cidr")]
@@ -328,7 +334,10 @@ mod tests {
     #[cfg(feature = "geo_types")]
     #[test]
     fn pg_type_geo_types_point() {
-        assert_eq!(<geo_types::Point<f64> as PgType>::pg_array_type(), "point[]");
+        assert_eq!(
+            <geo_types::Point<f64> as PgType>::pg_array_type(),
+            "point[]"
+        );
     }
 
     #[cfg(feature = "eui48")]
