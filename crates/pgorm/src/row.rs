@@ -223,6 +223,35 @@ impl<Tz: chrono::TimeZone> PgType for chrono::DateTime<Tz> {
     }
 }
 
+// Vec<T> represents a Postgres array column type (e.g. `text[]` -> `Vec<String>`).
+// In UNNEST bulk insert, we bind a *list of rows* (Vec<...>), so we need one extra
+// array dimension for the cast (e.g. `Vec<String>` -> `text[][]`).
+impl<T: PgType> PgType for Vec<T> {
+    fn pg_array_type() -> &'static str {
+        use std::collections::HashMap;
+        use std::sync::{Mutex, OnceLock};
+
+        static CACHE: OnceLock<Mutex<HashMap<&'static str, &'static str>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+        // `type_name` is `'static` and works even for non-`'static` reference types.
+        let key = std::any::type_name::<Vec<T>>();
+
+        // Fast path: already cached.
+        if let Some(cached) = cache.lock().unwrap().get(key).copied() {
+            return cached;
+        }
+
+        // Don't hold the lock while calling into `T::pg_array_type()` (it may recurse into this impl).
+        let computed = format!("{}[]", T::pg_array_type());
+        let computed: &'static str = Box::leak(computed.into_boxed_str());
+
+        // Store (best-effort); if another thread won the race, return the stored value.
+        let mut map = cache.lock().unwrap();
+        *map.entry(key).or_insert(computed)
+    }
+}
+
 // Option<T> delegates to inner type
 impl<T: PgType> PgType for Option<T> {
     fn pg_array_type() -> &'static str {
@@ -350,5 +379,20 @@ mod tests {
     #[test]
     fn pg_type_bit_vec_bit_vec() {
         assert_eq!(<bit_vec::BitVec as PgType>::pg_array_type(), "varbit[]");
+    }
+
+    #[test]
+    fn pg_type_vec_string_is_2d_text_array() {
+        assert_eq!(<Vec<String> as PgType>::pg_array_type(), "text[][]");
+    }
+
+    #[test]
+    fn pg_type_option_vec_string_is_2d_text_array() {
+        assert_eq!(<Option<Vec<String>> as PgType>::pg_array_type(), "text[][]");
+    }
+
+    #[test]
+    fn pg_type_vec_vec_string_is_3d_text_array() {
+        assert_eq!(<Vec<Vec<String>> as PgType>::pg_array_type(), "text[][][]");
     }
 }
