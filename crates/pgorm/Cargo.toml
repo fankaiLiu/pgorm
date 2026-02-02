@@ -104,6 +104,10 @@ name = "insert_many"
 path = "examples/insert_many/main.rs"
 
 [[example]]
+name = "insert_many_array"
+path = "examples/insert_many_array/main.rs"
+
+[[example]]
 name = "upsert"
 path = "examples/upsert/main.rs"
 
