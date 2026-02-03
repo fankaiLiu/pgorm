@@ -241,7 +241,7 @@ impl OrderItem {
     fn append_to_sql(&self, sql: &mut Sql) {
         match self {
             OrderItem::Column { column, dir, nulls } => {
-                sql.push(&column.to_sql());
+                sql.push_ident_ref(column);
                 sql.push(" ");
                 sql.push(dir.to_sql());
                 if let Some(nulls) = nulls {

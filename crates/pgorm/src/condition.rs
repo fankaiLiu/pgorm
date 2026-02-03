@@ -474,14 +474,14 @@ impl Condition {
                     }
                 }
                 ConditionValue::Single(v) => {
-                    sql.push(&column.to_sql());
+                    sql.push_ident_ref(column);
                     sql.push(" ");
                     sql.push(operator);
                     sql.push(" ");
                     sql.push_bind_value(v.clone());
                 }
                 ConditionValue::Pair(a, b) => {
-                    sql.push(&column.to_sql());
+                    sql.push_ident_ref(column);
                     sql.push(" ");
                     sql.push(operator);
                     sql.push(" ");
@@ -490,7 +490,7 @@ impl Condition {
                     sql.push_bind_value(b.clone());
                 }
                 ConditionValue::List(vals) => {
-                    sql.push(&column.to_sql());
+                    sql.push_ident_ref(column);
                     sql.push(" ");
                     sql.push(operator);
                     sql.push(" (");
@@ -503,7 +503,7 @@ impl Condition {
                     sql.push(")");
                 }
                 ConditionValue::None => {
-                    sql.push(&column.to_sql());
+                    sql.push_ident_ref(column);
                     sql.push(" ");
                     sql.push(operator);
                 }

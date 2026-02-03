@@ -483,21 +483,55 @@ impl Sql {
         I: IntoIdent,
     {
         let ident = ident.into_ident()?;
-        Ok(self.push(&ident.to_sql()))
+        Ok(self.push_ident_ref(&ident))
+    }
+
+    pub(crate) fn push_ident_ref(&mut self, ident: &crate::Ident) -> &mut Self {
+        match self.parts.last_mut() {
+            Some(SqlPart::Raw(last)) => ident.write_sql(last),
+            _ => {
+                let mut s = String::new();
+                ident.write_sql(&mut s);
+                self.parts.push(SqlPart::Raw(s));
+            }
+        }
+        self
     }
 
     /// Render SQL with `$1, $2, ...` placeholders.
     pub fn to_sql(&self) -> String {
-        let mut out = String::new();
-        let mut idx: usize = 0;
+        fn decimal_digits(mut n: usize) -> usize {
+            let mut digits = 1;
+            while n >= 10 {
+                n /= 10;
+                digits += 1;
+            }
+            digits
+        }
 
+        // Pre-size to avoid repeated reallocations (hot path).
+        let mut idx: usize = 0;
+        let mut cap: usize = 0;
+        for part in &self.parts {
+            match part {
+                SqlPart::Raw(s) => cap += s.len(),
+                SqlPart::Param => {
+                    idx += 1;
+                    cap += 1 /* '$' */ + decimal_digits(idx);
+                }
+            }
+        }
+
+        let mut out = String::with_capacity(cap);
+        idx = 0;
         for part in &self.parts {
             match part {
                 SqlPart::Raw(s) => out.push_str(s),
                 SqlPart::Param => {
                     idx += 1;
+                    out.push('$');
                     use std::fmt::Write;
-                    let _ = write!(&mut out, "${idx}");
+                    let _ = write!(&mut out, "{idx}");
                 }
             }
         }

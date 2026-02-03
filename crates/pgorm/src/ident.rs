@@ -156,14 +156,39 @@ impl Ident {
 
     /// Render the identifier as SQL.
     pub fn to_sql(&self) -> String {
-        self.parts
-            .iter()
-            .map(|p| match p {
-                IdentPart::Unquoted(s) => s.clone(),
-                IdentPart::Quoted(s) => format!("\"{}\"", s.replace('"', "\"\"")),
-            })
-            .collect::<Vec<_>>()
-            .join(".")
+        let mut cap = self.parts.len().saturating_sub(1); // dots
+        for part in &self.parts {
+            match part {
+                IdentPart::Unquoted(s) => cap += s.len(),
+                IdentPart::Quoted(s) => cap += s.len() + 2, // surrounding quotes (escapes may add more)
+            }
+        }
+        let mut out = String::with_capacity(cap);
+        self.write_sql(&mut out);
+        out
+    }
+
+    pub(crate) fn write_sql(&self, out: &mut String) {
+        for (i, part) in self.parts.iter().enumerate() {
+            if i > 0 {
+                out.push('.');
+            }
+            match part {
+                IdentPart::Unquoted(s) => out.push_str(s),
+                IdentPart::Quoted(s) => {
+                    out.push('"');
+                    for ch in s.chars() {
+                        if ch == '"' {
+                            out.push('"');
+                            out.push('"');
+                        } else {
+                            out.push(ch);
+                        }
+                    }
+                    out.push('"');
+                }
+            }
+        }
     }
 }
 
