@@ -85,7 +85,7 @@ struct Item {
     #[orm(id)]
     id: i64,
     name: String,
-    tags: Vec<String>,          // PG: text[]
+    tags: Vec<String>,           // PG: text[]
     model_types: Vec<ModelType>, // PG: text[]
 }
 
@@ -151,4 +151,3 @@ async fn main() -> OrmResult<()> {
 
     Ok(())
 }
-
