@@ -124,8 +124,10 @@ impl TableSchema {
 /// Use this to register all your model tables and then check SQL against them.
 #[derive(Debug, Clone)]
 pub struct SchemaRegistry {
-    /// Map of (schema, table) -> TableSchema
-    tables: HashMap<(String, String), TableSchema>,
+    /// Map of schema -> (table -> TableSchema)
+    ///
+    /// This layout avoids per-lookup allocations in hot paths (`get_table`/`has_table`).
+    tables: HashMap<String, HashMap<String, TableSchema>>,
     #[cfg(feature = "check")]
     parse_cache: std::sync::Arc<pgorm_check::SqlParseCache>,
 }
@@ -149,18 +151,27 @@ impl SchemaRegistry {
             table.add_column(*col, is_pk);
         }
 
-        self.tables.insert((schema_name, table_name), table);
+        self.tables
+            .entry(schema_name)
+            .or_insert_with(HashMap::new)
+            .insert(table_name, table);
     }
 
     /// Register a table schema directly.
     pub fn register_table(&mut self, table: TableSchema) {
-        let key = (table.schema.clone(), table.name.clone());
-        self.tables.insert(key, table);
+        let schema = table.schema.clone();
+        let name = table.name.clone();
+        self.tables
+            .entry(schema)
+            .or_insert_with(HashMap::new)
+            .insert(name, table);
     }
 
     /// Get a table by schema and name.
     pub fn get_table(&self, schema: &str, name: &str) -> Option<&TableSchema> {
-        self.tables.get(&(schema.to_string(), name.to_string()))
+        self.tables
+            .get(schema)
+            .and_then(|by_name| by_name.get(name))
     }
 
     /// Find a table by name, searching all schemas.
@@ -170,28 +181,29 @@ impl SchemaRegistry {
             return Some(t);
         }
         // Then try any schema
-        self.tables.values().find(|t| t.name == name)
+        self.tables.values().find_map(|by_name| by_name.get(name))
     }
 
     /// Check if a table exists.
     pub fn has_table(&self, schema: &str, name: &str) -> bool {
         self.tables
-            .contains_key(&(schema.to_string(), name.to_string()))
+            .get(schema)
+            .map_or(false, |by_name| by_name.contains_key(name))
     }
 
     /// Get all registered tables.
     pub fn tables(&self) -> impl Iterator<Item = &TableSchema> {
-        self.tables.values()
+        self.tables.values().flat_map(|by_name| by_name.values())
     }
 
     /// Get the number of registered tables.
     pub fn len(&self) -> usize {
-        self.tables.len()
+        self.tables.values().map(|by_name| by_name.len()).sum()
     }
 
     /// Check if the registry is empty.
     pub fn is_empty(&self) -> bool {
-        self.tables.is_empty()
+        self.tables.values().all(|by_name| by_name.is_empty())
     }
 }
 
@@ -341,7 +353,7 @@ impl SchemaRegistry {
         }
 
         // Build a map of qualifier -> table using RangeVar + alias info.
-        let mut qualifier_to_table: std::collections::HashMap<String, &TableSchema> =
+        let mut qualifier_to_table: std::collections::HashMap<&str, &TableSchema> =
             std::collections::HashMap::new();
         let mut visible_tables: Vec<&TableSchema> = Vec::new();
 
@@ -364,10 +376,7 @@ impl SchemaRegistry {
             match table {
                 Some(t) => {
                     // If an alias exists, the base name should not be visible.
-                    if qualifier_to_table
-                        .insert(qualifier.to_string(), t)
-                        .is_none()
-                    {
+                    if qualifier_to_table.insert(qualifier, t).is_none() {
                         visible_tables.push(t);
                     }
                 }
