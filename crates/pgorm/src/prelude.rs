@@ -7,8 +7,11 @@
 //! use pgorm::prelude::*;
 //! ```
 
-pub use crate::{BelongsToMap, HasManyMap, Loaded};
-pub use crate::{FromRow, GenericClient, OrmError, OrmResult, Query, RowExt, Sql, query, sql};
+pub use crate::{BelongsToMap, HasManyMap, HasOneMap, Loaded};
+pub use crate::{
+    FromRow, GenericClient, OrmError, OrmResult, Query, RowExt, RowStream, Sql, StreamingClient,
+    query, sql,
+};
 
 #[cfg(feature = "pool")]
 pub use crate::{create_pool, create_pool_with_config};
@@ -20,4 +23,4 @@ pub use crate::{InsertModel, Model, QueryParams, UpdateModel, ViewModel};
 pub use crate::{CheckMode, CheckedClient, PgClient, PgClientConfig};
 
 pub use crate::Json;
-pub use crate::{Condition, Ident, IntoIdent, Op};
+pub use crate::{Condition, Cursor, Ident, IntoIdent, Keyset1, Keyset2, Op};

@@ -46,11 +46,11 @@ pub mod validate;
 #[cfg(feature = "migrate")]
 pub mod migrate;
 
-pub use builder::{NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr};
+pub use builder::{Cursor, Keyset1, Keyset2, NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr};
 pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
-pub use client::GenericClient;
+pub use client::{GenericClient, RowStream, StreamingClient};
 pub use condition::{Condition, Op};
-pub use eager::{BelongsToMap, HasManyMap, Loaded};
+pub use eager::{BelongsToMap, HasManyMap, HasOneMap, Loaded};
 pub use error::{OrmError, OrmResult};
 pub use ident::{Ident, IdentPart, IntoIdent};
 #[cfg(feature = "tracing")]
@@ -61,7 +61,7 @@ pub use monitor::{
     StatsMonitor,
 };
 pub use row::{FromRow, PgType, RowExt};
-pub use sql::{Query, Sql, query, sql};
+pub use sql::{FromRowStream, Query, Sql, query, sql};
 pub use tokio_postgres::types::Json;
 
 // Re-export refinery types for convenience
@@ -116,7 +116,7 @@ pub use checked_client::CheckedClient;
 // Re-export PgClient (recommended API)
 #[cfg(feature = "check")]
 pub use pg_client::{
-    CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig,
+    CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig, StatementCacheConfig,
     SelectWithoutLimitPolicy, SqlPolicy,
 };
 
