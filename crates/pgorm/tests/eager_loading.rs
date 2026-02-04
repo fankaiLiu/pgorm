@@ -9,6 +9,7 @@ use pgorm::{FromRow, GenericClient, Model, OrmResult};
 #[derive(Debug, Clone, FromRow, Model)]
 #[orm(table = "users")]
 #[orm(has_many(Post, foreign_key = "user_id", as = "posts"))]
+#[orm(has_one(Profile, foreign_key = "user_id", as = "profile"))]
 struct User {
     #[orm(id)]
     id: i64,
@@ -16,13 +17,37 @@ struct User {
 }
 
 #[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "profiles")]
+struct Profile {
+    #[orm(id)]
+    id: i64,
+    user_id: i64,
+    bio: String,
+}
+
+#[derive(Debug, Clone, FromRow, Model)]
 #[orm(table = "posts")]
 #[orm(belongs_to(User, foreign_key = "user_id", as = "author"))]
+#[orm(many_to_many(
+    Tag,
+    through = "post_tags",
+    self_key = "post_id",
+    other_key = "tag_id",
+    as = "tags"
+))]
 struct Post {
     #[orm(id)]
     id: i64,
     user_id: i64,
     title: String,
+}
+
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "tags")]
+struct Tag {
+    #[orm(id)]
+    id: i64,
+    name: String,
 }
 
 #[derive(Debug, Clone, FromRow, Model)]
@@ -47,7 +72,20 @@ async fn _api_compiles(
         q.push(" ORDER BY id DESC");
     })
     .await?;
-    let _users_loaded = User::load_posts(conn, users).await?;
+    let _users_loaded = User::load_posts(conn, users.clone()).await?;
+
+    // has_one
+    let _profile_by_user = User::load_profile_map(conn, &users).await?;
+    let _profile_by_user = User::load_profile_map_with(conn, &users, |q| {
+        q.push(" ORDER BY id DESC");
+    })
+    .await?;
+    let _profile_by_user = User::load_profile_map_strict(conn, &users).await?;
+    let _profile_by_user = User::load_profile_map_strict_with(conn, &users, |q| {
+        q.push(" ORDER BY id DESC");
+    })
+    .await?;
+    let _users_loaded = User::load_profile(conn, users).await?;
 
     // belongs_to (non-optional fk)
     let _users_by_id = Post::load_author_map(conn, &posts).await?;
@@ -55,7 +93,15 @@ async fn _api_compiles(
         q.push(" ORDER BY id DESC");
     })
     .await?;
-    let _posts_loaded = Post::load_author(conn, posts).await?;
+    let _posts_loaded = Post::load_author(conn, posts.clone()).await?;
+
+    // many_to_many
+    let _tags_by_post = Post::load_tags_map(conn, &posts).await?;
+    let _tags_by_post = Post::load_tags_map_with(conn, &posts, |q| {
+        q.push(" ORDER BY id DESC");
+    })
+    .await?;
+    let _posts_loaded = Post::load_tags(conn, posts).await?;
 
     // belongs_to (optional fk) + strict variant
     let _comments_loaded = Comment::load_post_strict(conn, comments).await?;

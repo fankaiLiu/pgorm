@@ -5,7 +5,7 @@
 //! - `attrs`: Struct and field attribute parsing (`get_table_name`, `get_field_info`, `is_id_field`)
 //! - `join`: JOIN clause parsing (`get_join_clauses`)
 //! - `query`: Query struct generation
-//! - `relations`: has_many/belongs_to parsing (`get_has_many_relations`, `get_belongs_to_relations`)
+//! - `relations`: relation parsing (`get_has_many_relations`, `get_has_one_relations`, `get_many_to_many_relations`, `get_belongs_to_relations`)
 
 mod attrs;
 mod join;
@@ -17,7 +17,9 @@ use attrs::{get_field_info, get_table_name, is_id_field};
 use join::{JoinClause, get_join_clauses};
 use query::{QueryFieldInfo, generate_query_struct};
 use relations::{
-    BelongsToRelation, HasManyRelation, get_belongs_to_relations, get_has_many_relations,
+    BelongsToRelation, HasManyRelation, HasOneRelation, ManyToManyRelation,
+    get_belongs_to_relations, get_has_many_relations, get_has_one_relations,
+    get_many_to_many_relations,
 };
 
 use proc_macro2::TokenStream;
@@ -30,6 +32,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
     let table_name = get_table_name(&input)?;
     let has_many_relations = get_has_many_relations(&input)?;
+    let has_one_relations = get_has_one_relations(&input)?;
+    let many_to_many_relations = get_many_to_many_relations(&input)?;
     let belongs_to_relations = get_belongs_to_relations(&input)?;
     let join_clauses = get_join_clauses(&input)?;
 
@@ -162,6 +166,17 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let has_many_methods =
         generate_has_many_methods(&has_many_relations, id_field_type, id_field_ident.as_ref());
 
+    // Generate has_one methods (requires ID field)
+    let has_one_methods =
+        generate_has_one_methods(&has_one_relations, id_field_type, id_field_ident.as_ref());
+
+    // Generate many_to_many methods (requires ID field)
+    let many_to_many_methods = generate_many_to_many_methods(
+        &many_to_many_relations,
+        id_field_type,
+        id_field_ident.as_ref(),
+    );
+
     // Generate belongs_to methods
     let belongs_to_methods =
         generate_belongs_to_methods(&belongs_to_relations, &fk_field_types, &fk_field_idents);
@@ -219,6 +234,10 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #delete_by_id_methods
 
             #(#has_many_methods)*
+
+            #(#has_one_methods)*
+
+            #(#many_to_many_methods)*
 
             #(#belongs_to_methods)*
 
@@ -522,6 +541,441 @@ fn generate_has_many_methods(
                             #related_model::TABLE,
                             #related_model::JOIN_CLAUSE,
                             #fk,
+                            with,
+                        )
+                        .await
+                    }
+
+                    /// Batch load related records and attach them to each base row.
+                    ///
+                    /// Output order matches the input `base` order.
+                    pub async fn #load_attach_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: ::std::vec::Vec<Self>,
+                    ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::vec::Vec<#related_model>>>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let mut rel_map = Self::#load_map_name(conn, &base).await?;
+                        let out = base
+                            .into_iter()
+                            .map(|m| {
+                                let rel = rel_map.remove(pgorm::ModelPk::pk(&m)).unwrap_or_default();
+                                pgorm::Loaded { base: m, rel }
+                            })
+                            .collect();
+                        ::std::result::Result::Ok(out)
+                    }
+
+                    /// Like [`Self::#load_attach_name`], but allows appending global filters / ordering.
+                    pub async fn #load_attach_with_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: ::std::vec::Vec<Self>,
+                        with: impl FnOnce(&mut pgorm::Sql),
+                    ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::vec::Vec<#related_model>>>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let mut rel_map = Self::#load_map_with_name(conn, &base, with).await?;
+                        let out = base
+                            .into_iter()
+                            .map(|m| {
+                                let rel = rel_map.remove(pgorm::ModelPk::pk(&m)).unwrap_or_default();
+                                pgorm::Loaded { base: m, rel }
+                            })
+                            .collect();
+                        ::std::result::Result::Ok(out)
+                    }
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    }
+}
+
+/// Generate has_one relationship methods.
+fn generate_has_one_methods(
+    has_one_relations: &[HasOneRelation],
+    id_field_type: Option<&syn::Type>,
+    id_field_ident: Option<&syn::Ident>,
+) -> Vec<TokenStream> {
+    if let (Some(id_ty), Some(id_field)) = (id_field_type, id_field_ident) {
+        has_one_relations
+            .iter()
+            .map(|rel| {
+                let method_name = format_ident!("select_{}", rel.method_name);
+                let load_map_name = format_ident!("load_{}_map", rel.method_name);
+                let load_map_with_name = format_ident!("load_{}_map_with", rel.method_name);
+                let load_map_strict_name = format_ident!("load_{}_map_strict", rel.method_name);
+                let load_map_strict_with_name =
+                    format_ident!("load_{}_map_strict_with", rel.method_name);
+                let load_attach_name = format_ident!("load_{}", rel.method_name);
+                let load_attach_with_name = format_ident!("load_{}_with", rel.method_name);
+                let related_model = &rel.model;
+                let fk = &rel.foreign_key;
+
+                quote! {
+                    /// Fetch the related record (has_one relationship).
+                    pub async fn #method_name(
+                        &self,
+                        conn: &impl pgorm::GenericClient,
+                    ) -> pgorm::OrmResult<::std::option::Option<#related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                    {
+                        let sql = ::std::format!(
+                            "SELECT {} FROM {} {} WHERE {}.{} = $1",
+                            #related_model::SELECT_LIST,
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #related_model::TABLE,
+                            #fk
+                        );
+                        let row = conn.query_opt(&sql, &[&self.#id_field]).await?;
+                        match row {
+                            ::std::option::Option::Some(row) => {
+                                ::std::result::Result::Ok(::std::option::Option::Some(pgorm::FromRow::from_row(&row)?))
+                            }
+                            ::std::option::Option::None => ::std::result::Result::Ok(::std::option::Option::None),
+                        }
+                    }
+
+                    /// Batch load related records into a map keyed by parent id.
+                    ///
+                    /// Exactly one extra query is executed.
+                    pub async fn #load_map_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: &[Self],
+                    ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let parent_ids: ::std::vec::Vec<#id_ty> = base
+                            .iter()
+                            .map(|m| pgorm::ModelPk::pk(m).clone())
+                            .collect();
+
+                        pgorm::eager::load_has_one_map(
+                            conn,
+                            parent_ids,
+                            #related_model::SELECT_LIST,
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #fk,
+                        )
+                        .await
+                    }
+
+                    /// Like [`Self::#load_map_name`], but allows appending global filters / ordering.
+                    pub async fn #load_map_with_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: &[Self],
+                        with: impl FnOnce(&mut pgorm::Sql),
+                    ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let parent_ids: ::std::vec::Vec<#id_ty> = base
+                            .iter()
+                            .map(|m| pgorm::ModelPk::pk(m).clone())
+                            .collect();
+
+                        pgorm::eager::load_has_one_map_with(
+                            conn,
+                            parent_ids,
+                            #related_model::SELECT_LIST,
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #fk,
+                            with,
+                        )
+                        .await
+                    }
+
+                    /// Strict variant of [`Self::#load_map_name`]:
+                    /// errors if a parent has multiple related rows.
+                    pub async fn #load_map_strict_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: &[Self],
+                    ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let parent_ids: ::std::vec::Vec<#id_ty> = base
+                            .iter()
+                            .map(|m| pgorm::ModelPk::pk(m).clone())
+                            .collect();
+
+                        pgorm::eager::load_has_one_map_strict(
+                            conn,
+                            parent_ids,
+                            #related_model::SELECT_LIST,
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #fk,
+                        )
+                        .await
+                    }
+
+                    /// Like [`Self::#load_map_strict_name`], but allows appending global filters / ordering.
+                    pub async fn #load_map_strict_with_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: &[Self],
+                        with: impl FnOnce(&mut pgorm::Sql),
+                    ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let parent_ids: ::std::vec::Vec<#id_ty> = base
+                            .iter()
+                            .map(|m| pgorm::ModelPk::pk(m).clone())
+                            .collect();
+
+                        pgorm::eager::load_has_one_map_strict_with(
+                            conn,
+                            parent_ids,
+                            #related_model::SELECT_LIST,
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #fk,
+                            with,
+                        )
+                        .await
+                    }
+
+                    /// Batch load related records and attach them to each base row.
+                    ///
+                    /// Output order matches the input `base` order.
+                    pub async fn #load_attach_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: ::std::vec::Vec<Self>,
+                    ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::option::Option<#related_model>>>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let mut rel_map = Self::#load_map_name(conn, &base).await?;
+                        let out = base
+                            .into_iter()
+                            .map(|m| {
+                                let rel = rel_map.remove(pgorm::ModelPk::pk(&m));
+                                pgorm::Loaded { base: m, rel }
+                            })
+                            .collect();
+                        ::std::result::Result::Ok(out)
+                    }
+
+                    /// Like [`Self::#load_attach_name`], but allows appending global filters / ordering.
+                    pub async fn #load_attach_with_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: ::std::vec::Vec<Self>,
+                        with: impl FnOnce(&mut pgorm::Sql),
+                    ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::option::Option<#related_model>>>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let mut rel_map = Self::#load_map_with_name(conn, &base, with).await?;
+                        let out = base
+                            .into_iter()
+                            .map(|m| {
+                                let rel = rel_map.remove(pgorm::ModelPk::pk(&m));
+                                pgorm::Loaded { base: m, rel }
+                            })
+                            .collect();
+                        ::std::result::Result::Ok(out)
+                    }
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    }
+}
+
+/// Generate many_to_many relationship methods.
+fn generate_many_to_many_methods(
+    many_to_many_relations: &[ManyToManyRelation],
+    id_field_type: Option<&syn::Type>,
+    id_field_ident: Option<&syn::Ident>,
+) -> Vec<TokenStream> {
+    if let (Some(id_ty), Some(id_field)) = (id_field_type, id_field_ident) {
+        many_to_many_relations
+            .iter()
+            .map(|rel| {
+                let method_name = format_ident!("select_{}", rel.method_name);
+                let load_map_name = format_ident!("load_{}_map", rel.method_name);
+                let load_map_with_name = format_ident!("load_{}_map_with", rel.method_name);
+                let load_attach_name = format_ident!("load_{}", rel.method_name);
+                let load_attach_with_name = format_ident!("load_{}_with", rel.method_name);
+                let related_model = &rel.model;
+                let through = &rel.through;
+                let self_key = &rel.self_key;
+                let other_key = &rel.other_key;
+
+                quote! {
+                    /// Fetch related records (many_to_many relationship) through a join table.
+                    pub async fn #method_name(
+                        &self,
+                        conn: &impl pgorm::GenericClient,
+                    ) -> pgorm::OrmResult<::std::vec::Vec<#related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                    {
+                        let select_list = if #related_model::JOIN_CLAUSE.trim().is_empty() {
+                            #related_model::select_list_as(#related_model::TABLE)
+                        } else {
+                            #related_model::SELECT_LIST.to_string()
+                        };
+                        let sql = ::std::format!(
+                            "SELECT {} FROM {} JOIN {} jt ON jt.{} = {}.{} {} WHERE jt.{} = $1",
+                            select_list,
+                            #related_model::TABLE,
+                            #through,
+                            #other_key,
+                            #related_model::TABLE,
+                            #related_model::ID,
+                            #related_model::JOIN_CLAUSE,
+                            #self_key
+                        );
+                        let rows = conn.query(&sql, &[&self.#id_field]).await?;
+                        rows.iter().map(pgorm::FromRow::from_row).collect()
+                    }
+
+                    /// Batch load related records into a map keyed by parent id.
+                    ///
+                    /// Exactly one extra query is executed.
+                    pub async fn #load_map_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: &[Self],
+                    ) -> pgorm::OrmResult<pgorm::HasManyMap<#id_ty, #related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let parent_ids: ::std::vec::Vec<#id_ty> = base
+                            .iter()
+                            .map(|m| pgorm::ModelPk::pk(m).clone())
+                            .collect();
+
+                        let select_list = if #related_model::JOIN_CLAUSE.trim().is_empty() {
+                            #related_model::select_list_as(#related_model::TABLE)
+                        } else {
+                            #related_model::SELECT_LIST.to_string()
+                        };
+                        pgorm::eager::load_many_to_many_map(
+                            conn,
+                            parent_ids,
+                            select_list.as_str(),
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #through,
+                            #self_key,
+                            #other_key,
+                            #related_model::ID,
+                        )
+                        .await
+                    }
+
+                    /// Like [`Self::#load_map_name`], but allows appending global filters / ordering.
+                    pub async fn #load_map_with_name(
+                        conn: &impl pgorm::GenericClient,
+                        base: &[Self],
+                        with: impl FnOnce(&mut pgorm::Sql),
+                    ) -> pgorm::OrmResult<pgorm::HasManyMap<#id_ty, #related_model>>
+                    where
+                        #related_model: pgorm::FromRow,
+                        #id_ty: ::tokio_postgres::types::ToSql
+                            + ::tokio_postgres::types::FromSqlOwned
+                            + ::std::cmp::Eq
+                            + ::std::hash::Hash
+                            + ::core::marker::Send
+                            + ::core::marker::Sync
+                            + 'static,
+                    {
+                        let parent_ids: ::std::vec::Vec<#id_ty> = base
+                            .iter()
+                            .map(|m| pgorm::ModelPk::pk(m).clone())
+                            .collect();
+
+                        let select_list = if #related_model::JOIN_CLAUSE.trim().is_empty() {
+                            #related_model::select_list_as(#related_model::TABLE)
+                        } else {
+                            #related_model::SELECT_LIST.to_string()
+                        };
+                        pgorm::eager::load_many_to_many_map_with(
+                            conn,
+                            parent_ids,
+                            select_list.as_str(),
+                            #related_model::TABLE,
+                            #related_model::JOIN_CLAUSE,
+                            #through,
+                            #self_key,
+                            #other_key,
+                            #related_model::ID,
                             with,
                         )
                         .await
