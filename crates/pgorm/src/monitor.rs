@@ -32,11 +32,14 @@
 //!     .with_monitor(LoggingMonitor);
 //! ```
 
-use crate::client::GenericClient;
+use crate::client::{GenericClient, RowStream, StreamingClient};
 use crate::error::{OrmError, OrmResult};
+use futures_core::Stream;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
@@ -535,6 +538,10 @@ pub struct StatsMonitor {
     delete_count: std::sync::atomic::AtomicU64,
     max_duration_nanos: std::sync::atomic::AtomicU64,
     slowest_query: std::sync::Mutex<Option<String>>,
+    stmt_cache_hits: std::sync::atomic::AtomicU64,
+    stmt_cache_misses: std::sync::atomic::AtomicU64,
+    stmt_prepare_count: std::sync::atomic::AtomicU64,
+    stmt_prepare_duration_nanos: std::sync::atomic::AtomicU64,
 }
 
 /// Collected query statistics.
@@ -558,6 +565,14 @@ pub struct QueryStats {
     pub max_duration: Duration,
     /// Slowest query SQL.
     pub slowest_query: Option<String>,
+    /// Prepared statement cache hits.
+    pub stmt_cache_hits: u64,
+    /// Prepared statement cache misses.
+    pub stmt_cache_misses: u64,
+    /// Number of statement prepares performed (misses + retries).
+    pub stmt_prepare_count: u64,
+    /// Total time spent preparing statements.
+    pub stmt_prepare_duration: Duration,
 }
 
 impl StatsMonitor {
@@ -580,6 +595,12 @@ impl StatsMonitor {
             delete_count: self.delete_count.load(Ordering::Relaxed),
             max_duration: Duration::from_nanos(self.max_duration_nanos.load(Ordering::Relaxed)),
             slowest_query: self.slowest_query.lock().unwrap().clone(),
+            stmt_cache_hits: self.stmt_cache_hits.load(Ordering::Relaxed),
+            stmt_cache_misses: self.stmt_cache_misses.load(Ordering::Relaxed),
+            stmt_prepare_count: self.stmt_prepare_count.load(Ordering::Relaxed),
+            stmt_prepare_duration: Duration::from_nanos(
+                self.stmt_prepare_duration_nanos.load(Ordering::Relaxed),
+            ),
         }
     }
 
@@ -596,6 +617,38 @@ impl StatsMonitor {
         self.delete_count.store(0, Ordering::Relaxed);
         self.max_duration_nanos.store(0, Ordering::Relaxed);
         *self.slowest_query.lock().unwrap() = None;
+        self.stmt_cache_hits.store(0, Ordering::Relaxed);
+        self.stmt_cache_misses.store(0, Ordering::Relaxed);
+        self.stmt_prepare_count.store(0, Ordering::Relaxed);
+        self.stmt_prepare_duration_nanos.store(0, Ordering::Relaxed);
+    }
+
+    /// Record a prepared statement cache hit.
+    pub fn on_stmt_cache_hit(&self) {
+        use std::sync::atomic::Ordering;
+        self.stmt_cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a prepared statement cache miss.
+    pub fn on_stmt_cache_miss(&self) {
+        use std::sync::atomic::Ordering;
+        self.stmt_cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a statement prepare operation and its duration.
+    pub fn on_stmt_prepare(&self, duration: Duration) {
+        use std::sync::atomic::Ordering;
+
+        let nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
+        self.stmt_prepare_count.fetch_add(1, Ordering::Relaxed);
+
+        let prev = self
+            .stmt_prepare_duration_nanos
+            .fetch_add(nanos, Ordering::Relaxed);
+        if prev.checked_add(nanos).is_none() {
+            self.stmt_prepare_duration_nanos
+                .store(u64::MAX, Ordering::Relaxed);
+        }
     }
 }
 
@@ -611,6 +664,10 @@ impl Default for StatsMonitor {
             delete_count: std::sync::atomic::AtomicU64::new(0),
             max_duration_nanos: std::sync::atomic::AtomicU64::new(0),
             slowest_query: std::sync::Mutex::new(None),
+            stmt_cache_hits: std::sync::atomic::AtomicU64::new(0),
+            stmt_cache_misses: std::sync::atomic::AtomicU64::new(0),
+            stmt_prepare_count: std::sync::atomic::AtomicU64::new(0),
+            stmt_prepare_duration_nanos: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -1167,6 +1224,202 @@ impl<C: GenericClient> InstrumentedClient<C> {
     }
 }
 
+struct InstrumentedRowStream {
+    inner: RowStream,
+    monitor: Arc<dyn QueryMonitor>,
+    hook: Option<Arc<dyn QueryHook>>,
+    config: MonitorConfig,
+    ctx: QueryContext,
+    start: Instant,
+    rows: usize,
+    cancel_token: Option<tokio_postgres::CancelToken>,
+    timeout_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
+    finished: bool,
+    terminated: bool,
+}
+
+impl InstrumentedRowStream {
+    fn new(
+        inner: RowStream,
+        monitor: Arc<dyn QueryMonitor>,
+        hook: Option<Arc<dyn QueryHook>>,
+        config: MonitorConfig,
+        mut ctx: QueryContext,
+        start: Instant,
+        cancel_token: Option<tokio_postgres::CancelToken>,
+        timeout_remaining: Option<Duration>,
+    ) -> Self {
+        ctx.fields.insert("stream".to_string(), "true".to_string());
+
+        let timeout_sleep = timeout_remaining.map(|d| Box::pin(tokio::time::sleep(d)));
+
+        Self {
+            inner,
+            monitor,
+            hook,
+            config,
+            ctx,
+            start,
+            rows: 0,
+            cancel_token,
+            timeout_sleep,
+            finished: false,
+            terminated: false,
+        }
+    }
+
+    fn finalize(&mut self, dropped: bool, err: Option<&OrmError>) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        self.ctx
+            .fields
+            .insert("stream_dropped".to_string(), dropped.to_string());
+
+        if !self.config.monitoring_enabled {
+            return;
+        }
+
+        let duration = self.start.elapsed();
+        let query_result = match err {
+            None => QueryResult::Rows(self.rows),
+            Some(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
+            Some(e) => QueryResult::Error(e.to_string()),
+        };
+
+        if let Some(hook) = &self.hook {
+            hook.after_query(&self.ctx, duration, &query_result);
+        }
+
+        self.monitor
+            .on_query_complete(&self.ctx, duration, &query_result);
+
+        if let Some(threshold) = self.config.slow_query_threshold {
+            if duration > threshold {
+                self.monitor.on_slow_query(&self.ctx, duration);
+            }
+        }
+    }
+}
+
+impl Stream for InstrumentedRowStream {
+    type Item = OrmResult<Row>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.terminated {
+            return Poll::Ready(None);
+        }
+
+        if let (Some(timeout), Some(sleep)) = (self.config.query_timeout, self.timeout_sleep.as_mut())
+        {
+            if Pin::new(sleep).poll(cx).is_ready() {
+                self.timeout_sleep = None;
+                self.terminated = true;
+
+                if let Some(cancel_token) = self.cancel_token.take() {
+                    tokio::spawn(async move {
+                        let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+                    });
+                }
+
+                let err = OrmError::Timeout(timeout);
+                self.finalize(false, Some(&err));
+                return Poll::Ready(Some(Err(err)));
+            }
+        }
+
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(row))) => {
+                self.rows += 1;
+                Poll::Ready(Some(Ok(row)))
+            }
+            Poll::Ready(Some(Err(e))) => {
+                self.terminated = true;
+                self.finalize(false, Some(&e));
+                Poll::Ready(Some(Err(e)))
+            }
+            Poll::Ready(None) => {
+                self.terminated = true;
+                self.finalize(false, None);
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl Drop for InstrumentedRowStream {
+    fn drop(&mut self) {
+        if self.terminated {
+            return;
+        }
+        self.finalize(true, None);
+    }
+}
+
+impl<C: GenericClient + StreamingClient> InstrumentedClient<C> {
+    async fn query_stream_inner(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+        tag: Option<&str>,
+    ) -> OrmResult<RowStream> {
+        let mut ctx = QueryContext::new(sql, params.len());
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
+
+        self.apply_hook(&mut ctx)?;
+
+        if self.config.monitoring_enabled {
+            self.monitor.on_query_start(&ctx);
+        }
+
+        let start = Instant::now();
+        let result = self
+            .execute_with_timeout(self.client.query_stream(&ctx.exec_sql, params))
+            .await;
+
+        match result {
+            Ok(stream) => {
+                let needs_wrap = self.config.monitoring_enabled || self.config.query_timeout.is_some();
+                if !needs_wrap {
+                    return Ok(stream);
+                }
+
+                let timeout_remaining = self
+                    .config
+                    .query_timeout
+                    .map(|t| t.saturating_sub(start.elapsed()));
+
+                Ok(RowStream::new(InstrumentedRowStream::new(
+                    stream,
+                    self.monitor.clone(),
+                    self.hook.clone(),
+                    self.config.clone(),
+                    ctx,
+                    start,
+                    self.client.cancel_token(),
+                    timeout_remaining,
+                )))
+            }
+            Err(e) => {
+                let mut ctx = ctx;
+                ctx.fields.insert("stream".to_string(), "true".to_string());
+
+                let duration = start.elapsed();
+                let query_result = match &e {
+                    OrmError::Timeout(d) => QueryResult::Error(format!("timeout after {d:?}")),
+                    other => QueryResult::Error(other.to_string()),
+                };
+                self.report_result(&ctx, duration, &query_result);
+                Err(e)
+            }
+        }
+    }
+}
+
 impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
     async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
         self.query_inner(sql, params, None).await
@@ -1225,6 +1478,21 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
     }
 }
 
+impl<C: GenericClient + StreamingClient> StreamingClient for InstrumentedClient<C> {
+    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+        self.query_stream_inner(sql, params, None).await
+    }
+
+    async fn query_stream_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
+        self.query_stream_inner(sql, params, Some(tag)).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1280,6 +1548,10 @@ mod tests {
         assert_eq!(stats.total_queries, 2);
         assert_eq!(stats.select_count, 2);
         assert_eq!(stats.total_duration, Duration::from_millis(30));
+        assert_eq!(stats.stmt_cache_hits, 0);
+        assert_eq!(stats.stmt_cache_misses, 0);
+        assert_eq!(stats.stmt_prepare_count, 0);
+        assert_eq!(stats.stmt_prepare_duration, Duration::ZERO);
     }
 
     #[test]

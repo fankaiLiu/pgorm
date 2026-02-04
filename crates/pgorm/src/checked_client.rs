@@ -29,6 +29,8 @@
 
 use crate::GenericClient;
 use crate::error::{OrmError, OrmResult};
+#[cfg(feature = "check")]
+use crate::{RowStream, StreamingClient};
 use std::sync::Arc;
 use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
@@ -257,6 +259,24 @@ impl<C: GenericClient> GenericClient for CheckedClient<C> {
 
     fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
         self.client.cancel_token()
+    }
+}
+
+#[cfg(feature = "check")]
+impl<C: GenericClient + StreamingClient> StreamingClient for CheckedClient<C> {
+    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+        self.check_sql(sql)?;
+        self.client.query_stream(sql, params).await
+    }
+
+    async fn query_stream_tagged(
+        &self,
+        tag: &str,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
+        self.check_sql(sql)?;
+        self.client.query_stream_tagged(tag, sql, params).await
     }
 }
 
