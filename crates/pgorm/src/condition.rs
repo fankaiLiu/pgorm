@@ -169,6 +169,17 @@ enum ConditionValue {
     None,
 }
 
+/// A controlled SQL template part.
+///
+/// This is used internally by specific helpers (e.g. `ANY/ALL`, full-text search)
+/// where the shape cannot be expressed as `col <op> $n`.
+#[derive(Debug, Clone)]
+enum ConditionPart {
+    Raw(&'static str),
+    Ident(Ident),
+    Param(Arc<dyn ToSql + Send + Sync>),
+}
+
 /// Internal representation of a [`Condition`].
 #[derive(Debug, Clone)]
 enum ConditionInner {
@@ -192,6 +203,11 @@ enum ConditionInner {
         operator: &'static str,
         values: (Arc<dyn ToSql + Send + Sync>, Arc<dyn ToSql + Send + Sync>),
     },
+    /// A structured condition expressed as a controlled sequence of parts.
+    ///
+    /// This is an internal escape hatch for specific Postgres operators/functions
+    /// that don't fit `Expr { column, operator, value }`.
+    Parts(Vec<ConditionPart>),
 }
 
 /// A query condition primitive used by builders.
@@ -432,10 +448,190 @@ impl Condition {
         Self::new(column, Op::NotBetween(from, to))
     }
 
+    /// Create a NULL-safe comparison: column IS DISTINCT FROM value
+    pub fn is_distinct_from<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(
+            column.into_ident()?,
+            "IS DISTINCT FROM",
+            Arc::new(value),
+        ))
+    }
+
+    /// Create a NULL-safe comparison: column IS NOT DISTINCT FROM value
+    pub fn is_not_distinct_from<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(
+            column.into_ident()?,
+            "IS NOT DISTINCT FROM",
+            Arc::new(value),
+        ))
+    }
+
+    /// Create a "contains" condition: column @> value
+    pub fn contains<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "@>", Arc::new(value)))
+    }
+
+    /// Create a "contained by" condition: column <@ value
+    pub fn contained_by<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "<@", Arc::new(value)))
+    }
+
+    /// Create an "overlaps" condition: column && value
+    pub fn overlaps<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "&&", Arc::new(value)))
+    }
+
+    /// Create a jsonb key existence condition: column ? key
+    pub fn has_key<I>(column: I, key: impl Into<String>) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+    {
+        Ok(Self::cmp_dyn(
+            column.into_ident()?,
+            "?",
+            Arc::new(key.into()),
+        ))
+    }
+
+    /// Create a jsonb "has any keys" condition: column ?| keys
+    ///
+    /// `keys` is bound as a `text[]`.
+    pub fn has_any_keys<I>(column: I, keys: Vec<String>) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "?|", Arc::new(keys)))
+    }
+
+    /// Create a jsonb "has all keys" condition: column ?& keys
+    ///
+    /// `keys` is bound as a `text[]`.
+    pub fn has_all_keys<I>(column: I, keys: Vec<String>) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "?&", Arc::new(keys)))
+    }
+
+    /// Create a Postgres `= ANY($n)` condition, binding the values as a single array parameter.
+    pub fn eq_any<I, T>(column: I, values: Vec<T>) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        let column = column.into_ident()?;
+        let values: Arc<dyn ToSql + Send + Sync> = Arc::new(values);
+        Ok(Condition(ConditionInner::Parts(vec![
+            ConditionPart::Ident(column),
+            ConditionPart::Raw(" = ANY("),
+            ConditionPart::Param(values),
+            ConditionPart::Raw(")"),
+        ])))
+    }
+
+    /// Create a Postgres `!= ALL($n)` condition, binding the values as a single array parameter.
+    pub fn ne_all<I, T>(column: I, values: Vec<T>) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        let column = column.into_ident()?;
+        let values: Arc<dyn ToSql + Send + Sync> = Arc::new(values);
+        Ok(Condition(ConditionInner::Parts(vec![
+            ConditionPart::Ident(column),
+            ConditionPart::Raw(" != ALL("),
+            ConditionPart::Param(values),
+            ConditionPart::Raw(")"),
+        ])))
+    }
+
+    /// Create a Postgres full-text search condition:
+    /// `to_tsvector(column) @@ plainto_tsquery($n)`
+    pub fn ts_match<I>(column: I, query: impl Into<String>) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+    {
+        let column = column.into_ident()?;
+        let query: Arc<dyn ToSql + Send + Sync> = Arc::new(query.into());
+        Ok(Condition(ConditionInner::Parts(vec![
+            ConditionPart::Raw("to_tsvector("),
+            ConditionPart::Ident(column),
+            ConditionPart::Raw(") @@ plainto_tsquery("),
+            ConditionPart::Param(query),
+            ConditionPart::Raw(")"),
+        ])))
+    }
+
+    /// Create a Postgres full-text search condition using an explicit language/config:
+    /// `to_tsvector($lang::regconfig, column) @@ plainto_tsquery($lang::regconfig, $query)`
+    ///
+    /// Note: the language is bound (not interpolated) to avoid SQL injection.
+    pub fn ts_match_lang<I>(
+        lang: impl Into<String>,
+        column: I,
+        query: impl Into<String>,
+    ) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+    {
+        let column = column.into_ident()?;
+        let lang: Arc<dyn ToSql + Send + Sync> = Arc::new(lang.into());
+        let query: Arc<dyn ToSql + Send + Sync> = Arc::new(query.into());
+        Ok(Condition(ConditionInner::Parts(vec![
+            ConditionPart::Raw("to_tsvector("),
+            ConditionPart::Param(lang.clone()),
+            ConditionPart::Raw("::regconfig, "),
+            ConditionPart::Ident(column),
+            ConditionPart::Raw(") @@ plainto_tsquery("),
+            ConditionPart::Param(lang),
+            ConditionPart::Raw("::regconfig, "),
+            ConditionPart::Param(query),
+            ConditionPart::Raw(")"),
+        ])))
+    }
+
     /// Build the SQL fragment and return parameter references.
     pub fn build(&self, param_idx: &mut usize) -> (String, Vec<&(dyn ToSql + Sync)>) {
         match &self.0 {
             ConditionInner::Raw(s) => (s.clone(), Vec::new()),
+            ConditionInner::Parts(parts) => {
+                let mut out = String::new();
+                let mut params: Vec<&(dyn ToSql + Sync)> = Vec::new();
+                for part in parts {
+                    match part {
+                        ConditionPart::Raw(s) => out.push_str(s),
+                        ConditionPart::Ident(ident) => ident.write_sql(&mut out),
+                        ConditionPart::Param(v) => {
+                            *param_idx += 1;
+                            out.push('$');
+                            use std::fmt::Write;
+                            let _ = write!(&mut out, "{}", *param_idx);
+                            params.push(&**v as &(dyn ToSql + Sync));
+                        }
+                    }
+                }
+                (out, params)
+            }
             ConditionInner::Expr {
                 column,
                 operator,
@@ -514,6 +710,21 @@ impl Condition {
             ConditionInner::Raw(s) => {
                 sql.push(s);
             }
+            ConditionInner::Parts(parts) => {
+                for part in parts {
+                    match part {
+                        ConditionPart::Raw(s) => {
+                            sql.push(s);
+                        }
+                        ConditionPart::Ident(ident) => {
+                            sql.push_ident_ref(ident);
+                        }
+                        ConditionPart::Param(v) => {
+                            sql.push_bind_value(v.clone());
+                        }
+                    }
+                }
+            }
             ConditionInner::Expr {
                 column,
                 operator,
@@ -580,5 +791,95 @@ impl Condition {
                 sql.push(")");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_condition_sql(cond: &Condition, expected_sql: &str, expected_params: usize) {
+        let mut idx = 0;
+        let (sql, params) = cond.build(&mut idx);
+        assert_eq!(sql, expected_sql);
+        assert_eq!(params.len(), expected_params);
+        assert_eq!(idx, expected_params);
+
+        let mut b = Sql::empty();
+        cond.append_to_sql(&mut b);
+        assert_eq!(b.to_sql(), expected_sql);
+        assert_eq!(b.params_ref().len(), expected_params);
+    }
+
+    #[test]
+    fn condition_is_distinct_from() {
+        let cond = Condition::is_distinct_from("deleted_at", Option::<i64>::None).unwrap();
+        assert_condition_sql(&cond, "deleted_at IS DISTINCT FROM $1", 1);
+    }
+
+    #[test]
+    fn condition_contains_jsonb() {
+        let cond = Condition::contains("metadata", serde_json::json!({"env": "prod"})).unwrap();
+        assert_condition_sql(&cond, "metadata @> $1", 1);
+    }
+
+    #[test]
+    fn condition_has_key() {
+        let cond = Condition::has_key("metadata", "user_id").unwrap();
+        assert_condition_sql(&cond, "metadata ? $1", 1);
+    }
+
+    #[test]
+    fn condition_has_any_keys() {
+        let cond = Condition::has_any_keys(
+            "metadata",
+            vec!["a".to_string(), "b".to_string()],
+        )
+        .unwrap();
+        assert_condition_sql(&cond, "metadata ?| $1", 1);
+    }
+
+    #[test]
+    fn condition_eq_any() {
+        let cond = Condition::eq_any("user_id", vec![1_i64, 2, 3]).unwrap();
+        assert_condition_sql(&cond, "user_id = ANY($1)", 1);
+    }
+
+    #[test]
+    fn condition_ne_all() {
+        let cond = Condition::ne_all("user_id", vec![1_i64, 2, 3]).unwrap();
+        assert_condition_sql(&cond, "user_id != ALL($1)", 1);
+    }
+
+    #[test]
+    fn condition_ts_match() {
+        let cond = Condition::ts_match("content", "hello world").unwrap();
+        assert_condition_sql(&cond, "to_tsvector(content) @@ plainto_tsquery($1)", 1);
+    }
+
+    #[test]
+    fn condition_ts_match_lang() {
+        let cond = Condition::ts_match_lang("english", "content", "hello world").unwrap();
+        assert_condition_sql(
+            &cond,
+            "to_tsvector($1::regconfig, content) @@ plainto_tsquery($2::regconfig, $3)",
+            3,
+        );
+    }
+
+    #[test]
+    fn condition_build_respects_param_idx() {
+        let c1 = Condition::eq_any("id", vec![1_i32, 2]).unwrap();
+        let c2 = Condition::is_distinct_from("a", 1_i32).unwrap();
+
+        let mut idx = 0;
+        let (sql1, p1) = c1.build(&mut idx);
+        assert_eq!(sql1, "id = ANY($1)");
+        assert_eq!(p1.len(), 1);
+
+        let (sql2, p2) = c2.build(&mut idx);
+        assert_eq!(sql2, "a IS DISTINCT FROM $2");
+        assert_eq!(p2.len(), 1);
+        assert_eq!(idx, 2);
     }
 }
