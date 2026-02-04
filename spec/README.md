@@ -96,6 +96,15 @@ spec/
 - `PgClient/CheckedClient`：运行时检查/观测的组合方式、性能与开关策略
 - pool/transaction：GenericClient 抽象、事务宏的边界与错误处理
 
+补充计划（已新增草案）：
+
+- `spec/42-core-streaming-rowstream.md`：流式查询（RowStream）与监控集成计划
+- `spec/43-core-prepared-statement-cache.md`：prepared statement 缓存（per-connection）计划
+- `spec/44-core-keyset-pagination.md`：keyset/cursor pagination（seek method）计划
+- `spec/45-core-eager-loading-extensions.md`：eager loading 扩展（has_one / many-to-many）计划
+- `spec/46-core-condition-operator-extensions.md`：Condition/Op 扩展（IS DISTINCT FROM、array/jsonb、ANY/ALL、全文检索）计划
+- `spec/47-ai-runtime-manifest-allowlist.md`：运行时 manifest allowlist（AI-first 门禁）计划
+
 ### 4.5 可选特性
 
 - `migrate`（refinery）：迁移来源、嵌入方式、与 schema cache/检查的协同
