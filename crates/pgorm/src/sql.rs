@@ -19,11 +19,15 @@
 //! let users: Vec<User> = q.fetch_all_as(&conn).await?;
 //! ```
 
-use crate::client::GenericClient;
+use crate::client::{GenericClient, RowStream, StreamingClient};
 use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
 use crate::ident::IntoIdent;
 use crate::row::FromRow;
+use futures_core::Stream;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::sync::Arc;
 use tokio_postgres::Row;
 use tokio_postgres::types::{FromSql, ToSql};
@@ -108,6 +112,34 @@ fn starts_with_keyword(s: &str, keyword: &str) -> bool {
     }
 }
 
+#[must_use]
+pub struct FromRowStream<T> {
+    inner: RowStream,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> FromRowStream<T> {
+    pub(crate) fn new(inner: RowStream) -> Self {
+        Self {
+            inner,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: FromRow> Stream for FromRowStream<T> {
+    type Item = OrmResult<T>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(row))) => Poll::Ready(Some(T::from_row(&row))),
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 impl Query {
     /// Create a new pre-numbered query.
     pub fn new(sql: impl Into<String>) -> Self {
@@ -167,6 +199,26 @@ impl Query {
             Some(tag) => conn.query_tagged(tag, &self.sql, &params).await,
             None => conn.query(&self.sql, &params).await,
         }
+    }
+
+    // ==================== Streaming execution ====================
+
+    /// Execute the query and return a row stream.
+    pub async fn stream(&self, conn: &impl StreamingClient) -> OrmResult<RowStream> {
+        let params = self.params_ref();
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_stream_tagged(tag, &self.sql, &params).await,
+            None => conn.query_stream(&self.sql, &params).await,
+        }
+    }
+
+    /// Execute the query and return a stream of `T`.
+    pub async fn stream_as<T: FromRow>(
+        &self,
+        conn: &impl StreamingClient,
+    ) -> OrmResult<FromRowStream<T>> {
+        let stream = self.stream(conn).await?;
+        Ok(FromRowStream::new(stream))
     }
 
     /// Execute the query and return all rows mapped to `T`.
@@ -571,6 +623,28 @@ impl Sql {
             Some(tag) => conn.query_tagged(tag, &sql, &params).await,
             None => conn.query(&sql, &params).await,
         }
+    }
+
+    // ==================== Streaming execution ====================
+
+    /// Execute the built SQL and return a row stream.
+    pub async fn stream(&self, conn: &impl StreamingClient) -> OrmResult<RowStream> {
+        self.validate()?;
+        let sql = self.to_sql();
+        let params = self.params_ref();
+        match self.tag.as_deref() {
+            Some(tag) => conn.query_stream_tagged(tag, &sql, &params).await,
+            None => conn.query_stream(&sql, &params).await,
+        }
+    }
+
+    /// Execute the built SQL and return a stream of `T`.
+    pub async fn stream_as<T: FromRow>(
+        &self,
+        conn: &impl StreamingClient,
+    ) -> OrmResult<FromRowStream<T>> {
+        let stream = self.stream(conn).await?;
+        Ok(FromRowStream::new(stream))
     }
 
     /// Execute the built SQL and return all rows mapped to `T`.
