@@ -183,6 +183,15 @@ enum ConditionInner {
         operator: &'static str,
         value: ConditionValue,
     },
+    /// A structured tuple comparison condition over validated identifiers.
+    ///
+    /// This is primarily used for keyset/cursor pagination:
+    /// `WHERE (a, b) < ($1, $2)` / `WHERE (a, b) > ($1, $2)`.
+    Tuple2 {
+        columns: (Ident, Ident),
+        operator: &'static str,
+        values: (Arc<dyn ToSql + Send + Sync>, Arc<dyn ToSql + Send + Sync>),
+    },
 }
 
 /// A query condition primitive used by builders.
@@ -243,6 +252,32 @@ impl Condition {
     /// Be careful with SQL injection when using raw conditions.
     pub fn raw(sql: impl Into<String>) -> Self {
         Condition(ConditionInner::Raw(sql.into()))
+    }
+
+    pub(crate) fn cmp_dyn(
+        column: Ident,
+        operator: &'static str,
+        value: Arc<dyn ToSql + Send + Sync>,
+    ) -> Self {
+        Condition(ConditionInner::Expr {
+            column,
+            operator,
+            value: ConditionValue::Single(value),
+        })
+    }
+
+    pub(crate) fn tuple2_cmp_dyn(
+        a: Ident,
+        b: Ident,
+        operator: &'static str,
+        va: Arc<dyn ToSql + Send + Sync>,
+        vb: Arc<dyn ToSql + Send + Sync>,
+    ) -> Self {
+        Condition(ConditionInner::Tuple2 {
+            columns: (a, b),
+            operator,
+            values: (va, vb),
+        })
     }
 
     // ==================== Convenience constructors ====================
@@ -448,6 +483,25 @@ impl Condition {
                     }
                 }
             }
+            ConditionInner::Tuple2 {
+                columns: (a, b),
+                operator,
+                values: (va, vb),
+            } => {
+                *param_idx += 1;
+                let p1 = *param_idx;
+                *param_idx += 1;
+                let p2 = *param_idx;
+                let sql = format!(
+                    "({}, {}) {} (${}, ${})",
+                    a.to_sql(),
+                    b.to_sql(),
+                    operator,
+                    p1,
+                    p2
+                );
+                (sql, vec![&**va as &(dyn ToSql + Sync), &**vb as &(dyn ToSql + Sync)])
+            }
         }
     }
 
@@ -508,6 +562,23 @@ impl Condition {
                     sql.push(operator);
                 }
             },
+            ConditionInner::Tuple2 {
+                columns: (a, b),
+                operator,
+                values: (va, vb),
+            } => {
+                sql.push("(");
+                sql.push_ident_ref(a);
+                sql.push(", ");
+                sql.push_ident_ref(b);
+                sql.push(") ");
+                sql.push(operator);
+                sql.push(" (");
+                sql.push_bind_value(va.clone());
+                sql.push(", ");
+                sql.push_bind_value(vb.clone());
+                sql.push(")");
+            }
         }
     }
 }

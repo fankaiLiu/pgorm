@@ -4,6 +4,7 @@
 //! - [`WhereExpr`]: Boolean expression tree for WHERE clauses (AND/OR/NOT/grouping)
 //! - [`OrderBy`]: Structured ORDER BY builder with nulls handling
 //! - [`Pagination`]: LIMIT/OFFSET builder
+//! - [`Keyset1`] / [`Keyset2`]: Keyset/cursor pagination builders
 //! - [`Ident`]: Safe SQL identifier handling (see [`crate::Ident`])
 
 use crate::Ident;
@@ -11,6 +12,8 @@ use crate::condition::Condition;
 use crate::error::{OrmError, OrmResult};
 use crate::ident::IntoIdent;
 use crate::sql::Sql;
+use std::sync::Arc;
+use tokio_postgres::types::ToSql;
 
 // ==================== WhereExpr: Boolean expression tree ====================
 
@@ -420,6 +423,227 @@ impl Pagination {
     }
 }
 
+// ==================== Keyset pagination (cursor/seek method) ====================
+
+type DynValue = Arc<dyn ToSql + Send + Sync>;
+
+const DEFAULT_KEYSET_LIMIT: i64 = 50;
+
+/// Cursor position for keyset pagination.
+#[derive(Debug, Clone)]
+pub enum Cursor<T> {
+    After(T),
+    Before(T),
+}
+
+fn seek_cmp_op<T>(dir: SortDir, cursor: &Cursor<T>) -> &'static str {
+    match (dir, cursor) {
+        (SortDir::Asc, Cursor::After(_)) => ">",
+        (SortDir::Asc, Cursor::Before(_)) => "<",
+        (SortDir::Desc, Cursor::After(_)) => "<",
+        (SortDir::Desc, Cursor::Before(_)) => ">",
+    }
+}
+
+/// Single-column keyset pagination builder.
+///
+/// Semantics:
+/// - `after(x)`: "next page" in the current sort direction.
+/// - `before(x)`: "previous page" in the current sort direction.
+#[derive(Debug, Clone)]
+pub struct Keyset1 {
+    column: Ident,
+    dir: SortDir,
+    cursor: Option<Cursor<DynValue>>,
+    limit: i64,
+}
+
+impl Keyset1 {
+    pub fn asc(column: impl IntoIdent) -> OrmResult<Self> {
+        Ok(Self {
+            column: column.into_ident()?,
+            dir: SortDir::Asc,
+            cursor: None,
+            limit: DEFAULT_KEYSET_LIMIT,
+        })
+    }
+
+    pub fn desc(column: impl IntoIdent) -> OrmResult<Self> {
+        Ok(Self {
+            column: column.into_ident()?,
+            dir: SortDir::Desc,
+            cursor: None,
+            limit: DEFAULT_KEYSET_LIMIT,
+        })
+    }
+
+    pub fn after<T>(mut self, v: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        self.cursor = Some(Cursor::After(Arc::new(v)));
+        self
+    }
+
+    pub fn before<T>(mut self, v: T) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        self.cursor = Some(Cursor::Before(Arc::new(v)));
+        self
+    }
+
+    pub fn limit(mut self, n: i64) -> Self {
+        self.limit = n;
+        self
+    }
+
+    pub fn order_by(&self) -> OrderBy {
+        OrderBy::new().add(OrderItem::new(self.column.clone(), self.dir))
+    }
+
+    pub fn into_where_expr(&self) -> OrmResult<WhereExpr> {
+        let Some(cursor) = &self.cursor else {
+            return Ok(WhereExpr::and(Vec::new()));
+        };
+
+        let op = seek_cmp_op(self.dir, cursor);
+        let v = match cursor {
+            Cursor::After(v) | Cursor::Before(v) => v.clone(),
+        };
+        Ok(WhereExpr::atom(Condition::cmp_dyn(
+            self.column.clone(),
+            op,
+            v,
+        )))
+    }
+
+    pub fn append_order_by_limit_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+        if self.limit < 1 {
+            return Err(OrmError::validation(format!(
+                "keyset limit must be >= 1, got {}",
+                self.limit
+            )));
+        }
+        self.order_by().append_to_sql(sql);
+        sql.limit(self.limit);
+        Ok(())
+    }
+
+    pub fn append_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+        let seek = self.into_where_expr()?;
+        if !seek.is_trivially_true() {
+            sql.push(" WHERE ");
+            seek.append_to_sql(sql);
+        }
+        self.append_order_by_limit_to_sql(sql)
+    }
+}
+
+/// Two-column keyset pagination builder (primary key + tie-breaker).
+///
+/// This uses Postgres tuple comparison:
+/// `WHERE (a, b) < ($1, $2)` / `WHERE (a, b) > ($1, $2)`.
+#[derive(Debug, Clone)]
+pub struct Keyset2 {
+    a: Ident,
+    b: Ident,
+    dir: SortDir,
+    cursor: Option<Cursor<(DynValue, DynValue)>>,
+    limit: i64,
+}
+
+impl Keyset2 {
+    pub fn asc(a: impl IntoIdent, b: impl IntoIdent) -> OrmResult<Self> {
+        Ok(Self {
+            a: a.into_ident()?,
+            b: b.into_ident()?,
+            dir: SortDir::Asc,
+            cursor: None,
+            limit: DEFAULT_KEYSET_LIMIT,
+        })
+    }
+
+    pub fn desc(a: impl IntoIdent, b: impl IntoIdent) -> OrmResult<Self> {
+        Ok(Self {
+            a: a.into_ident()?,
+            b: b.into_ident()?,
+            dir: SortDir::Desc,
+            cursor: None,
+            limit: DEFAULT_KEYSET_LIMIT,
+        })
+    }
+
+    pub fn after<A, B>(mut self, a: A, b: B) -> Self
+    where
+        A: ToSql + Send + Sync + 'static,
+        B: ToSql + Send + Sync + 'static,
+    {
+        self.cursor = Some(Cursor::After((Arc::new(a), Arc::new(b))));
+        self
+    }
+
+    pub fn before<A, B>(mut self, a: A, b: B) -> Self
+    where
+        A: ToSql + Send + Sync + 'static,
+        B: ToSql + Send + Sync + 'static,
+    {
+        self.cursor = Some(Cursor::Before((Arc::new(a), Arc::new(b))));
+        self
+    }
+
+    pub fn limit(mut self, n: i64) -> Self {
+        self.limit = n;
+        self
+    }
+
+    pub fn order_by(&self) -> OrderBy {
+        OrderBy::new()
+            .add(OrderItem::new(self.a.clone(), self.dir))
+            .add(OrderItem::new(self.b.clone(), self.dir))
+    }
+
+    pub fn into_where_expr(&self) -> OrmResult<WhereExpr> {
+        let Some(cursor) = &self.cursor else {
+            return Ok(WhereExpr::and(Vec::new()));
+        };
+
+        let op = seek_cmp_op(self.dir, cursor);
+        let (va, vb) = match cursor {
+            Cursor::After((va, vb)) | Cursor::Before((va, vb)) => (va.clone(), vb.clone()),
+        };
+
+        Ok(WhereExpr::atom(Condition::tuple2_cmp_dyn(
+            self.a.clone(),
+            self.b.clone(),
+            op,
+            va,
+            vb,
+        )))
+    }
+
+    pub fn append_order_by_limit_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+        if self.limit < 1 {
+            return Err(OrmError::validation(format!(
+                "keyset limit must be >= 1, got {}",
+                self.limit
+            )));
+        }
+        self.order_by().append_to_sql(sql);
+        sql.limit(self.limit);
+        Ok(())
+    }
+
+    pub fn append_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+        let seek = self.into_where_expr()?;
+        if !seek.is_trivially_true() {
+            sql.push(" WHERE ");
+            seek.append_to_sql(sql);
+        }
+        self.append_order_by_limit_to_sql(sql)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,6 +789,82 @@ mod tests {
     fn order_by_validates_column() {
         let res = OrderBy::new().asc("valid_column; DROP TABLE users;");
         assert!(res.is_err());
+    }
+
+    // ==================== Keyset tests ====================
+
+    #[test]
+    fn keyset1_asc_after_generates_sql() {
+        let keyset = Keyset1::asc("id").unwrap().after(100_i64).limit(10);
+        let mut sql = Sql::new("SELECT * FROM users");
+        keyset.append_to_sql(&mut sql).unwrap();
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM users WHERE id > $1 ORDER BY id ASC LIMIT $2"
+        );
+    }
+
+    #[test]
+    fn keyset1_desc_after_flips_comparator() {
+        let keyset = Keyset1::desc("created_at")
+            .unwrap()
+            .after(123_i64)
+            .limit(5);
+        let mut sql = Sql::new("SELECT * FROM users");
+        keyset.append_to_sql(&mut sql).unwrap();
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM users WHERE created_at < $1 ORDER BY created_at DESC LIMIT $2"
+        );
+    }
+
+    #[test]
+    fn keyset1_composes_with_other_where_expr() {
+        let keyset = Keyset1::asc("id").unwrap().after(10_i64).limit(3);
+        let where_expr = WhereExpr::atom(Condition::eq("status", "active").unwrap())
+            .and_with(keyset.into_where_expr().unwrap());
+
+        let mut sql = Sql::new("SELECT * FROM users WHERE ");
+        where_expr.append_to_sql(&mut sql);
+        keyset.append_order_by_limit_to_sql(&mut sql).unwrap();
+
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM users WHERE (status = $1 AND id > $2) ORDER BY id ASC LIMIT $3"
+        );
+    }
+
+    #[test]
+    fn keyset2_desc_after_generates_tuple_cmp() {
+        let keyset = Keyset2::desc("created_at", "id")
+            .unwrap()
+            .after(100_i64, 42_i64)
+            .limit(20);
+        let mut sql = Sql::new("SELECT * FROM users");
+        keyset.append_to_sql(&mut sql).unwrap();
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM users WHERE (created_at, id) < ($1, $2) ORDER BY created_at DESC, id DESC LIMIT $3"
+        );
+    }
+
+    #[test]
+    fn keyset2_composes_with_other_where_expr() {
+        let keyset = Keyset2::asc("created_at", "id")
+            .unwrap()
+            .after(123_i64, 456_i64)
+            .limit(2);
+        let where_expr = WhereExpr::atom(Condition::eq("status", "active").unwrap())
+            .and_with(keyset.into_where_expr().unwrap());
+
+        let mut sql = Sql::new("SELECT * FROM users WHERE ");
+        where_expr.append_to_sql(&mut sql);
+        keyset.append_order_by_limit_to_sql(&mut sql).unwrap();
+
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM users WHERE (status = $1 AND (created_at, id) > ($2, $3)) ORDER BY created_at ASC, id ASC LIMIT $4"
+        );
     }
 
     // ==================== Pagination tests ====================
