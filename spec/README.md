@@ -57,6 +57,7 @@ spec/
 
 - 现有：
   - `spec/pgorm-cli.md`：CLI 优化计划与 Roadmap（建议后续拆分到 `spec/cli/*`）
+  - `spec/54-cli-schema-generation.md`：Schema 生成（DDL Generation / Schema Diff / 迁移生成）计划
 - 建议拆分主题（可逐篇补齐）：
   - `pgorm.toml` 配置规范（version/engine/database/schema_cache/packages/models）
   - 命令与工作流：`pgorm gen/*`、`pgorm model`、`pgorm sql check`
@@ -74,6 +75,9 @@ spec/
 - normalized SQL & fingerprint：去噪规则、稳定性保证、用于 diff/manifest 的字段定义
 
 ### 4.3 派生宏（`crates/pgorm-derive`）
+
+- 现有：
+  - `spec/55-derive-field-modifiers.md`：字段修饰符（只读字段 / 不可变字段 / 生命周期回调 / 字段转换器）计划
 
 建议主题（可逐篇补齐）：
 
@@ -104,6 +108,12 @@ spec/
 - `spec/45-core-eager-loading-extensions.md`：eager loading 扩展（has_one / many-to-many）计划
 - `spec/46-core-condition-operator-extensions.md`：Condition/Op 扩展（IS DISTINCT FROM、array/jsonb、ANY/ALL、全文检索）计划
 - `spec/47-ai-runtime-manifest-allowlist.md`：运行时 manifest allowlist（AI-first 门禁）计划
+- `spec/48-core-optimistic-locking.md`：乐观锁（版本号字段 + 并发冲突检测）计划
+- `spec/49-core-aggregate-queries.md`：聚合查询（count/sum/avg/min/max + group_by）计划
+- `spec/50-core-bulk-operations.md`：批量更新/删除（update_many / delete_many）计划
+- `spec/51-core-cte-queries.md`：CTE（WITH 子句）查询支持计划
+- `spec/52-core-pg-special-types.md`：PostgreSQL 特有类型（ENUM / Range / Composite）支持计划
+- `spec/53-core-transaction-enhancements.md`：事务增强（Savepoint / 嵌套事务）计划
 
 ### 4.5 可选特性
 
