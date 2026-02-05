@@ -19,8 +19,10 @@
 //! let users: Vec<User> = q.fetch_all_as(&conn).await?;
 //! ```
 
+use crate::bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};
 use crate::client::{GenericClient, RowStream, StreamingClient};
 use crate::condition::Condition;
+use crate::cte::WithBuilder;
 use crate::error::{OrmError, OrmResult};
 use crate::ident::IntoIdent;
 use crate::row::FromRow;
@@ -981,6 +983,163 @@ impl Sql {
         let offset = (page - 1) * per_page;
         Ok(self.limit_offset(per_page, offset))
     }
+
+    // ==================== Consuming convenience APIs ====================
+
+    /// Bind a parameter and return `self` (consuming version of [`push_bind`]).
+    ///
+    /// Useful for chaining in contexts where you need ownership, e.g. CTE sub-queries:
+    ///
+    /// ```ignore
+    /// pgorm::sql("SELECT * FROM users WHERE status = ")
+    ///     .bind("active")
+    /// ```
+    pub fn bind<T>(mut self, value: T) -> Self
+    where
+        T: ToSql + Sync + Send + 'static,
+    {
+        self.push_bind(value);
+        self
+    }
+
+    // ==================== Bulk operations ====================
+
+    /// Create a bulk UPDATE builder.
+    ///
+    /// The initial SQL fragment is used as the table name.
+    ///
+    /// # Example
+    /// ```ignore
+    /// pgorm::sql("users")
+    ///     .update_many([
+    ///         SetExpr::set("status", "inactive")?,
+    ///     ])?
+    ///     .filter(Condition::lt("last_login", one_year_ago)?)
+    ///     .execute(&client)
+    ///     .await?;
+    /// ```
+    pub fn update_many(
+        self,
+        sets: impl IntoIterator<Item = SetExpr>,
+    ) -> OrmResult<UpdateManyBuilder> {
+        let table_name = self.to_sql();
+        let table = table_name.trim().into_ident()?;
+        let sets: Vec<SetExpr> = sets.into_iter().collect();
+        if sets.is_empty() {
+            return Err(OrmError::Validation(
+                "update_many requires at least one SetExpr".to_string(),
+            ));
+        }
+        Ok(UpdateManyBuilder {
+            table,
+            sets,
+            where_clause: None,
+            all_rows: false,
+        })
+    }
+
+    /// Create a bulk DELETE builder.
+    ///
+    /// The initial SQL fragment is used as the table name.
+    ///
+    /// # Example
+    /// ```ignore
+    /// pgorm::sql("sessions")
+    ///     .delete_many()?
+    ///     .filter(Condition::lt("expires_at", now)?)
+    ///     .execute(&client)
+    ///     .await?;
+    /// ```
+    pub fn delete_many(self) -> OrmResult<DeleteManyBuilder> {
+        let table_name = self.to_sql();
+        let table = table_name.trim().into_ident()?;
+        Ok(DeleteManyBuilder {
+            table,
+            where_clause: None,
+            all_rows: false,
+        })
+    }
+
+    // ==================== CTE (WITH clause) ====================
+
+    /// Start building a CTE (WITH clause) query.
+    ///
+    /// # Example
+    /// ```ignore
+    /// pgorm::sql("")
+    ///     .with("active_users", pgorm::sql("SELECT id FROM users WHERE status = ").bind("active"))?
+    ///     .select(pgorm::sql("SELECT * FROM active_users"))
+    ///     .fetch_all_as::<User>(&client)
+    ///     .await?;
+    /// ```
+    pub fn with(self, name: impl IntoIdent, query: Sql) -> OrmResult<WithBuilder> {
+        let name = name.into_ident()?;
+        Ok(WithBuilder::new(name, query))
+    }
+
+    /// Start building a CTE with explicit column names.
+    ///
+    /// # Example
+    /// ```ignore
+    /// pgorm::sql("")
+    ///     .with_columns(
+    ///         "monthly_sales",
+    ///         ["month", "total"],
+    ///         pgorm::sql("SELECT DATE_TRUNC('month', created_at), SUM(amount) FROM orders GROUP BY 1"),
+    ///     )?
+    ///     .select(pgorm::sql("SELECT * FROM monthly_sales"))
+    /// ```
+    pub fn with_columns(
+        self,
+        name: impl IntoIdent,
+        columns: impl IntoIterator<Item = impl IntoIdent>,
+        query: Sql,
+    ) -> OrmResult<WithBuilder> {
+        let name = name.into_ident()?;
+        let cols: Vec<crate::Ident> = columns
+            .into_iter()
+            .map(|c| c.into_ident())
+            .collect::<OrmResult<Vec<_>>>()?;
+        Ok(WithBuilder::new_with_columns(name, cols, query))
+    }
+
+    /// Start building a recursive CTE (WITH RECURSIVE).
+    ///
+    /// Uses UNION ALL by default.
+    ///
+    /// # Example
+    /// ```ignore
+    /// pgorm::sql("")
+    ///     .with_recursive(
+    ///         "org_tree",
+    ///         pgorm::sql("SELECT id, name, parent_id, 0 as level FROM employees WHERE parent_id IS NULL"),
+    ///         pgorm::sql("SELECT e.id, e.name, e.parent_id, t.level + 1 FROM employees e JOIN org_tree t ON e.parent_id = t.id"),
+    ///     )?
+    ///     .select(pgorm::sql("SELECT * FROM org_tree ORDER BY level"))
+    ///     .fetch_all_as::<OrgNode>(&client)
+    ///     .await?;
+    /// ```
+    pub fn with_recursive(
+        self,
+        name: impl IntoIdent,
+        base: Sql,
+        recursive: Sql,
+    ) -> OrmResult<WithBuilder> {
+        let name = name.into_ident()?;
+        Ok(WithBuilder::new_recursive(name, base, recursive, true))
+    }
+
+    /// Start building a recursive CTE using UNION (with deduplication).
+    pub fn with_recursive_union(
+        self,
+        name: impl IntoIdent,
+        base: Sql,
+        recursive: Sql,
+    ) -> OrmResult<WithBuilder> {
+        let name = name.into_ident()?;
+        Ok(WithBuilder::new_recursive(name, base, recursive, false))
+    }
+
 }
 
 #[cfg(test)]
