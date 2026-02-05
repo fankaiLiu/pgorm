@@ -7,7 +7,8 @@
 //! **Recoverable** — the caller should match on these and handle them:
 //! [`NotFound`](OrmError::NotFound), [`TooManyRows`](OrmError::TooManyRows),
 //! [`UniqueViolation`](OrmError::UniqueViolation), [`ForeignKeyViolation`](OrmError::ForeignKeyViolation),
-//! [`CheckViolation`](OrmError::CheckViolation), [`StaleRecord`](OrmError::StaleRecord),
+//! [`CheckViolation`](OrmError::CheckViolation), [`SerializationFailure`](OrmError::SerializationFailure),
+//! [`DeadlockDetected`](OrmError::DeadlockDetected), [`StaleRecord`](OrmError::StaleRecord),
 //! [`Timeout`](OrmError::Timeout), [`Validation`](OrmError::Validation).
 //!
 //! **Configuration / programming errors** — typically propagated with `?`:
@@ -80,6 +81,20 @@ pub enum OrmError {
     #[error("Check constraint violation: {0}")]
     CheckViolation(String),
 
+    /// Serialization failure (DB error code 40001).
+    ///
+    /// This occurs when a transaction cannot be committed due to a serialization
+    /// conflict. The recommended response is to retry the transaction.
+    #[error("Serialization failure: {0}")]
+    SerializationFailure(String),
+
+    /// Deadlock detected (DB error code 40P01).
+    ///
+    /// This occurs when two or more transactions are waiting on each other.
+    /// The recommended response is to retry the transaction.
+    #[error("Deadlock detected: {0}")]
+    DeadlockDetected(String),
+
     /// Input validation error.
     #[error("Validation error: {0}")]
     Validation(String),
@@ -133,7 +148,8 @@ impl OrmError {
     /// Returns `true` if this error is recoverable (the caller should handle it).
     ///
     /// Recoverable errors include: `NotFound`, `TooManyRows`, `UniqueViolation`,
-    /// `ForeignKeyViolation`, `CheckViolation`, `StaleRecord`, `Timeout`, `Validation`.
+    /// `ForeignKeyViolation`, `CheckViolation`, `SerializationFailure`,
+    /// `DeadlockDetected`, `StaleRecord`, `Timeout`, `Validation`.
     pub fn is_recoverable(&self) -> bool {
         matches!(
             self,
@@ -142,9 +158,21 @@ impl OrmError {
                 | Self::UniqueViolation(_)
                 | Self::ForeignKeyViolation(_)
                 | Self::CheckViolation(_)
+                | Self::SerializationFailure(_)
+                | Self::DeadlockDetected(_)
                 | Self::StaleRecord { .. }
                 | Self::Timeout(_)
                 | Self::Validation(_)
+        )
+    }
+
+    /// Returns `true` if this error is retryable (transaction should be retried).
+    ///
+    /// Retryable errors include: `SerializationFailure`, `DeadlockDetected`.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::SerializationFailure(_) | Self::DeadlockDetected(_)
         )
     }
 
@@ -173,6 +201,31 @@ impl OrmError {
         matches!(self, Self::StaleRecord { .. })
     }
 
+    /// Return the PostgreSQL SQLSTATE code if this error originated from the database.
+    ///
+    /// Returns `None` for non-database errors (e.g. `NotFound`, `Timeout`, `Validation`).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// match result {
+    ///     Err(ref e) if e.sqlstate() == Some("23505") => { /* unique violation */ }
+    ///     Err(ref e) if e.sqlstate() == Some("40001") => { /* retry transaction */ }
+    ///     _ => {}
+    /// }
+    /// ```
+    pub fn sqlstate(&self) -> Option<&str> {
+        match self {
+            Self::Query(e) => e.as_db_error().map(|db| db.code().code()),
+            Self::UniqueViolation(_) => Some("23505"),
+            Self::ForeignKeyViolation(_) => Some("23503"),
+            Self::CheckViolation(_) => Some("23514"),
+            Self::SerializationFailure(_) => Some("40001"),
+            Self::DeadlockDetected(_) => Some("40P01"),
+            _ => None,
+        }
+    }
+
     /// Parse a tokio_postgres error into a more specific OrmError
     pub fn from_db_error(err: tokio_postgres::Error) -> Self {
         if let Some(db_err) = err.as_db_error() {
@@ -185,6 +238,8 @@ impl OrmError {
                     return Self::ForeignKeyViolation(format!("{constraint}: {message}"));
                 }
                 "23514" => return Self::CheckViolation(format!("{constraint}: {message}")),
+                "40001" => return Self::SerializationFailure(message.to_string()),
+                "40P01" => return Self::DeadlockDetected(message.to_string()),
                 _ => {}
             }
         }
@@ -204,4 +259,15 @@ impl From<refinery::Error> for OrmError {
     fn from(err: refinery::Error) -> Self {
         Self::Migration(err.to_string())
     }
+}
+
+/// Emit a pgorm warning message.
+///
+/// Uses `tracing::warn!` when the `tracing` feature is enabled,
+/// falls back to `eprintln!` otherwise.
+pub(crate) fn pgorm_warn(msg: &str) {
+    #[cfg(feature = "tracing")]
+    tracing::warn!(target: "pgorm", "{}", msg);
+    #[cfg(not(feature = "tracing"))]
+    eprintln!("{msg}");
 }

@@ -228,7 +228,7 @@ pub(crate) fn handle_dangerous_dml(
     match policy {
         DangerousDmlPolicy::Allow => Ok(()),
         DangerousDmlPolicy::Warn => {
-            eprintln!("[pgorm warn] SQL policy: {rule}: {sql}");
+            crate::error::pgorm_warn(&format!("[pgorm warn] SQL policy: {rule}: {sql}"));
             Ok(())
         }
         DangerousDmlPolicy::Error => Err(OrmError::validation(format!(

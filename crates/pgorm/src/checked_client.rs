@@ -31,9 +31,9 @@
 #[cfg(feature = "check")]
 use crate::GenericClient;
 #[cfg(feature = "check")]
-use crate::check::SchemaRegistry;
+use crate::check::{SchemaIssueLevel, SchemaRegistry};
 #[cfg(feature = "check")]
-use crate::error::{OrmError, OrmResult};
+use crate::error::{OrmError, OrmResult, pgorm_warn};
 #[cfg(feature = "check")]
 use crate::{RowStream, StreamingClient};
 #[cfg(feature = "check")]
@@ -65,6 +65,41 @@ pub enum CheckMode {
     WarnOnly,
     /// Strict mode: return error if SQL check fails.
     Strict,
+}
+
+/// Handle SQL check issues according to the check mode.
+///
+/// Shared implementation used by both `CheckedClient` and `PgClient`.
+#[cfg(feature = "check")]
+pub(crate) fn handle_check_issues(
+    mode: CheckMode,
+    issues: Vec<crate::check::SchemaIssue>,
+    prefix: &str,
+) -> OrmResult<()> {
+    match mode {
+        CheckMode::Disabled => Ok(()),
+        CheckMode::WarnOnly => {
+            for issue in &issues {
+                pgorm_warn(&format!("[pgorm warn] {prefix}: {issue}"));
+            }
+            Ok(())
+        }
+        CheckMode::Strict => {
+            let errors: Vec<_> = issues
+                .iter()
+                .filter(|i| i.level == SchemaIssueLevel::Error)
+                .collect();
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                let messages: Vec<String> = errors.iter().map(|i| i.message.clone()).collect();
+                Err(OrmError::validation(format!(
+                    "SQL check failed: {}",
+                    messages.join("; ")
+                )))
+            }
+        }
+    }
 }
 
 /// A client wrapper that automatically checks SQL against registered schemas.
@@ -172,32 +207,8 @@ impl<C> CheckedClient<C> {
     /// Returns Ok(()) if check passes or mode allows continuation.
     /// Returns Err if in strict mode and check fails.
     fn check_sql(&self, sql: &str) -> OrmResult<()> {
-        match self.check_mode {
-            CheckMode::Disabled => Ok(()),
-            CheckMode::WarnOnly => {
-                let issues = self.registry.check_sql(sql);
-                for issue in issues {
-                    eprintln!("[pgorm warn] {issue}");
-                }
-                Ok(())
-            }
-            CheckMode::Strict => {
-                let issues = self.registry.check_sql(sql);
-                let errors: Vec<_> = issues
-                    .iter()
-                    .filter(|i| i.level == crate::check::SchemaIssueLevel::Error)
-                    .collect();
-                if errors.is_empty() {
-                    Ok(())
-                } else {
-                    let messages: Vec<String> = errors.iter().map(|i| i.message.clone()).collect();
-                    Err(OrmError::validation(format!(
-                        "SQL check failed: {}",
-                        messages.join("; ")
-                    )))
-                }
-            }
-        }
+        let issues = self.registry.check_sql(sql);
+        handle_check_issues(self.check_mode, issues, "SQL check")
     }
 }
 

@@ -20,42 +20,7 @@ pub enum QueryType {
 impl QueryType {
     /// Detect query type from SQL string.
     pub fn from_sql(sql: &str) -> Self {
-        fn strip_sql_prefix(sql: &str) -> &str {
-            let mut s = sql;
-            loop {
-                let before = s;
-                s = s.trim_start();
-                if s.starts_with("--") {
-                    if let Some(pos) = s.find('\n') {
-                        s = &s[pos + 1..];
-                        continue;
-                    }
-                    return "";
-                }
-                if s.starts_with("/*") {
-                    if let Some(pos) = s.find("*/") {
-                        s = &s[pos + 2..];
-                        continue;
-                    }
-                    return "";
-                }
-                if s.starts_with('(') {
-                    s = &s[1..];
-                    continue;
-                }
-                if s == before {
-                    break;
-                }
-            }
-            s
-        }
-
-        fn starts_with_keyword(s: &str, keyword: &str) -> bool {
-            match s.get(0..keyword.len()) {
-                Some(prefix) => prefix.eq_ignore_ascii_case(keyword),
-                None => false,
-            }
-        }
+        use crate::sql::{starts_with_keyword, strip_sql_prefix};
 
         let trimmed = strip_sql_prefix(sql);
         if starts_with_keyword(trimmed, "SELECT") || starts_with_keyword(trimmed, "WITH") {

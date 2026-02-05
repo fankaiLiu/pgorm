@@ -43,7 +43,7 @@ pub fn sql(initial_sql: impl Into<String>) -> Sql {
 
 /// Strip leading whitespace, SQL comments (`--` and `/* */`), and parentheses
 /// from a SQL string to find the first meaningful keyword.
-fn strip_sql_prefix(sql: &str) -> &str {
+pub(crate) fn strip_sql_prefix(sql: &str) -> &str {
     let mut s = sql;
     loop {
         let before = s;
@@ -77,7 +77,7 @@ fn strip_sql_prefix(sql: &str) -> &str {
     s
 }
 
-fn starts_with_keyword(s: &str, keyword: &str) -> bool {
+pub(crate) fn starts_with_keyword(s: &str, keyword: &str) -> bool {
     match s.get(0..keyword.len()) {
         Some(prefix) => prefix.eq_ignore_ascii_case(keyword),
         None => false,

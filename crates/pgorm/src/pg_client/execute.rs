@@ -50,10 +50,10 @@ impl<C: GenericClient> super::PgClient<C> {
                     match policy.select_without_limit {
                         SelectWithoutLimitPolicy::Allow => {}
                         SelectWithoutLimitPolicy::Warn => {
-                            eprintln!(
+                            crate::error::pgorm_warn(&format!(
                                 "[pgorm warn] SQL policy: SELECT without LIMIT/OFFSET: {}",
                                 ctx.canonical_sql
-                            );
+                            ));
                         }
                         SelectWithoutLimitPolicy::Error => {
                             return Err(OrmError::validation(format!(
@@ -130,32 +130,8 @@ impl<C: GenericClient> super::PgClient<C> {
 
     /// Check SQL against the registry.
     pub(super) fn check_sql(&self, sql: &str) -> OrmResult<()> {
-        match self.config.check_mode {
-            super::config::CheckMode::Disabled => Ok(()),
-            super::config::CheckMode::WarnOnly => {
-                let issues = self.registry.check_sql(sql);
-                for issue in issues {
-                    eprintln!("[pgorm warn] SQL check: {issue}");
-                }
-                Ok(())
-            }
-            super::config::CheckMode::Strict => {
-                let issues = self.registry.check_sql(sql);
-                let errors: Vec<_> = issues
-                    .iter()
-                    .filter(|i| i.level == crate::check::SchemaIssueLevel::Error)
-                    .collect();
-                if errors.is_empty() {
-                    Ok(())
-                } else {
-                    let messages: Vec<String> = errors.iter().map(|i| i.message.clone()).collect();
-                    Err(OrmError::validation(format!(
-                        "SQL check failed: {}",
-                        messages.join("; ")
-                    )))
-                }
-            }
-        }
+        let issues = self.registry.check_sql(sql);
+        crate::checked_client::handle_check_issues(self.config.check_mode, issues, "SQL check")
     }
 
     /// Process hook before query.

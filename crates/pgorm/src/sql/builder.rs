@@ -57,6 +57,23 @@ impl Sql {
         self
     }
 
+    /// Associate a tag for monitoring/observability (consuming version).
+    ///
+    /// This is the consuming counterpart of [`Sql::tag`], convenient for
+    /// chaining on temporary values.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let users: Vec<User> = pgorm::sql("SELECT * FROM users")
+    ///     .tagged("users.all")
+    ///     .fetch_all_as(&pg)
+    ///     .await?;
+    /// ```
+    pub fn tagged(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+
     /// Append raw SQL (no parameters).
     pub fn push(&mut self, sql: &str) -> &mut Self {
         if sql.is_empty() {
