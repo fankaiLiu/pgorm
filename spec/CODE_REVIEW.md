@@ -265,7 +265,7 @@ let timeout_remaining = self.config.query_timeout
 
 ---
 
-### I-04. `params_ref()` 每次分配 Vec
+### I-04. `params_ref()` 每次分配 Vec (暂不修复 — SmallVec 依赖不值得)
 
 **模块**: sql | **文件**: `sql/builder.rs:228-233`
 
@@ -279,9 +279,11 @@ pub fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
 
 **建议**: 使用 `SmallVec<[&(dyn ToSql + Sync); 8]>` 避免小查询的堆分配。
 
+**评估**: 典型查询参数数量 1-20 个, Vec 分配开销相对 DB 网络延迟可忽略; 引入 SmallVec 依赖的复杂度不值得。
+
 ---
 
-### I-05. Query 和 Sql 的 API 大量重复
+### I-05. Query 和 Sql 的 API 大量重复 (P3 — 后续优化)
 
 **模块**: sql | **文件**: `sql/builder.rs`, `sql/query.rs`
 
@@ -348,7 +350,7 @@ match db_err.code().code() {
 
 ---
 
-### I-10. `push_ident()` 返回 Result 打破链式调用
+### ~~I-10. `push_ident()` 返回 Result 打破链式调用~~ ✅
 
 **模块**: sql | **文件**: `sql/builder.rs:141-147`
 
@@ -360,7 +362,7 @@ sql.push_ident("users")?.push(" WHERE id = ").push_bind(1);
 
 ---
 
-### I-11. Feature 标记设计：check 默认拉入 pg_query
+### I-11. Feature 标记设计：check 默认拉入 pg_query (P2 — 后续优化)
 
 **模块**: 项目结构 | **文件**: `crates/pgorm/Cargo.toml:29`
 
@@ -374,7 +376,7 @@ pgorm-check = { path = "crates/pgorm-check", features = ["sql"], optional = true
 
 ---
 
-### I-12. 测试覆盖率不均匀
+### I-12. 测试覆盖率不均匀 (P1 — 需要集成测试环境)
 
 **模块**: 项目结构
 
@@ -402,7 +404,7 @@ self.tables.values().find_map(|by_name| by_name.get(name))
 
 ---
 
-### I-14. SQL Lint Code 使用硬编码字符串
+### ~~I-14. SQL Lint Code 使用硬编码字符串~~ ✅
 
 **模块**: check | **文件**: `pgorm-check/src/sql_lint.rs:253-305`
 
@@ -424,31 +426,35 @@ self.tables.values().find_map(|by_name| by_name.get(name))
 
 ## 建议优化 (Suggestion)
 
-### S-01. Statement 频繁克隆
+### ~~S-01. Statement 频繁克隆~~ ✅ (验证: tokio_postgres::Statement 内部使用 Arc, clone 开销极低)
 
 **文件**: `pg_client/statement_cache.rs:45, 55, 125`
 
 每次 `touch()` 都克隆 `Statement`。建议使用 `Arc<Statement>` 减少克隆开销。
 
-### S-02. 参数存储的 Arc 开销
+### S-02. 参数存储的 Arc 开销 (暂不修复 — Arc 是标准模式)
 
 **文件**: `sql/builder.rs:22`
 
 所有参数都包装在 `Arc<dyn ToSql>`。对 i32/i64 等基础类型来说是额外开销。考虑用 enum 存储常见类型。
 
-### S-03. `validate()` 重复调用
+**评估**: Arc<dyn ToSql> 是 Rust 生态中处理异构参数的标准模式。enum 优化需维护大量变体, 且相对 DB 往返延迟改善微乎其微。
+
+### ~~S-03. `validate()` 重复调用~~ ✅ (验证: 设计正确 — Sql 是可变 builder, 无法安全缓存验证结果)
 
 **文件**: `sql/builder.rs:235-249`
 
 `validate()` 在每个执行方法中都被调用。建议在 `to_sql()` 时一次性验证，或缓存结果。
 
-### S-04. `push_bind_list()` 空列表行为文档不清
+**评估**: `Sql` 使用 `&mut self` API, 用户可在两次执行间追加新 parts。缓存验证结果会导致使用已过期的校验, 当前逐次验证是正确行为。
+
+### ~~S-04. `push_bind_list()` 空列表行为文档不清~~ ✅
 
 **文件**: `sql/builder.rs:106-124`
 
 `IN (NULL)` 总是返回 `FALSE/UNKNOWN`，应在文档中明确警告。
 
-### S-05. 系统列列表硬编码
+### ~~S-05. 系统列列表硬编码~~ ✅
 
 **文件**: `check/lint.rs:85-87`
 
@@ -464,7 +470,7 @@ matches!(col, "ctid" | "xmin" | "xmax" | "cmin" | "cmax" | "tableoid")
 
 建议在 `StmtCacheProbe` 上添加 `populate_context_fields()` 方法。
 
-### S-07. 流完成报告可能重复
+### ~~S-07. 流完成报告可能重复~~ ✅ (验证: Ok/Err 路径互斥, 无重复报告)
 
 **文件**: `monitor/stream.rs:150-210`
 
@@ -476,43 +482,43 @@ matches!(col, "ctid" | "xmin" | "xmax" | "cmin" | "cmax" | "tableoid")
 
 `QueryResult::Error(String)` 无长度限制，建议截断至 512 字符，避免监控数据爆炸。
 
-### S-09. 环境变量展开错误消息不够友好
+### ~~S-09. 环境变量展开错误消息不够友好~~ ✅
 
 **文件**: `pgorm-cli/src/config.rs:385-421`
 
 `${INVALID_VAR}` 错误应提示可用的变量或解决方案。
 
-### S-10. SQL check 中缺少 CTE 的深度分析
+### S-10. SQL check 中缺少 CTE 的深度分析 (P3 — 需要 AST 递归改造)
 
 **文件**: `pgorm-check/src/sql_check.rs:52-65`
 
 CTE 内部的列引用不被验证，应递归检查。
 
-### S-11. 缺少 `cargo audit` CI 步骤
+### ~~S-11. 缺少 `cargo audit` CI 步骤~~ ✅
 
 **文件**: `.github/workflows/ci.yml`
 
 建议添加依赖漏洞扫描和代码覆盖率报告。
 
-### S-12. InsertModel 验证代码过长
+### S-12. InsertModel 验证代码过长 (P3 — derive 宏重构)
 
 **文件**: `pgorm-derive/src/insert_model.rs:212-462`
 
 800+ 行重复的验证代码，应提取共享验证模式。
 
-### S-13. 缺少钩子执行失败的容错
+### ~~S-13. 缺少钩子执行失败的容错~~ ✅
 
 **文件**: `monitor/monitors.rs:394-429`
 
 如果一个钩子的 `before_query()` panic，整个链中断。建议包装 `catch_unwind()` 或明确文档约束。
 
-### S-14. `parse_cache_capacity` 硬编码默认值
+### ~~S-14. `parse_cache_capacity` 硬编码默认值~~ ✅
 
 **文件**: `pg_client/config.rs:40-54`
 
 `parse_cache_capacity: 256` 硬编码，无文档说明选择依据，缺少最大值验证。
 
-### S-15. 缺少生产部署指南
+### S-15. 缺少生产部署指南 (P3 — 文档任务)
 
 README 缺少关于连接池配置、超时设置、缓存调优的生产建议。
 

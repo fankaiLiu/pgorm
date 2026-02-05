@@ -408,8 +408,17 @@ fn expand_env_vars(input: &str) -> anyhow::Result<String> {
                 anyhow::bail!("invalid env var reference: ${{}}");
             }
 
-            let v = std::env::var(&key)
-                .map_err(|_| anyhow::anyhow!("missing env var for config expansion: {key}"))?;
+            let v = std::env::var(&key).map_err(|e| {
+                let hint = match e {
+                    std::env::VarError::NotPresent => {
+                        format!("environment variable '{key}' is not set. Set it with: export {key}=<value>")
+                    }
+                    std::env::VarError::NotUnicode(_) => {
+                        format!("environment variable '{key}' contains invalid Unicode")
+                    }
+                };
+                anyhow::anyhow!("config expansion failed: ${{{key}}}: {hint}")
+            })?;
             out.push_str(&v);
             continue;
         }

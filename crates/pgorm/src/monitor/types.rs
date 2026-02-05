@@ -234,6 +234,14 @@ pub enum HookAction {
 /// Trait for hooking into the query execution lifecycle.
 ///
 /// Hooks can inspect, modify, or abort queries before they are executed.
+///
+/// # Panic safety
+///
+/// Hook implementations **must not panic**. If a hook panics inside
+/// [`CompositeHook`](super::CompositeHook), the panic will propagate and
+/// abort the entire query — subsequent hooks in the chain will not run.
+/// If your hook calls fallible external code, catch errors internally and
+/// return [`HookAction::Continue`] or [`HookAction::Abort`] as appropriate.
 pub trait QueryHook: Send + Sync {
     /// Called before a query is executed.
     ///

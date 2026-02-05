@@ -105,7 +105,12 @@ impl Sql {
 
     /// Append a comma-separated list of placeholders and bind all values.
     ///
-    /// If `values` is empty, this appends `NULL` (so `IN (NULL)` is valid SQL).
+    /// If `values` is empty, this appends `NULL` (so `IN (NULL)` is valid SQL
+    /// but always evaluates to `FALSE`/`UNKNOWN` since nothing equals NULL).
+    ///
+    /// **Warning**: An empty list produces `IN (NULL)`, which is *never* true for
+    /// any row. If you need "match nothing" semantics this is correct, but it may
+    /// be surprising. Consider checking for emptiness before calling this method.
     pub fn push_bind_list<T>(&mut self, values: impl IntoIterator<Item = T>) -> &mut Self
     where
         T: ToSql + Sync + Send + 'static,
@@ -146,7 +151,16 @@ impl Sql {
         Ok(self.push_ident_ref(&ident))
     }
 
-    pub(crate) fn push_ident_ref(&mut self, ident: &crate::Ident) -> &mut Self {
+    /// Append a pre-validated [`Ident`](crate::Ident) without returning `Result`.
+    ///
+    /// Unlike [`push_ident`](Sql::push_ident), this takes an already-validated `Ident`
+    /// reference and cannot fail, making it suitable for chaining.
+    ///
+    /// ```ignore
+    /// let ident = "users".into_ident()?;
+    /// sql.push_ident_ref(&ident).push(" WHERE id = ").push_bind(1);
+    /// ```
+    pub fn push_ident_ref(&mut self, ident: &crate::Ident) -> &mut Self {
         match self.parts.last_mut() {
             Some(SqlPart::Raw(last)) => ident.write_sql(last),
             _ => {

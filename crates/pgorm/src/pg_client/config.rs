@@ -19,8 +19,10 @@ pub struct PgClientConfig {
     pub statement_cache: StatementCacheConfig,
     /// SQL parse cache capacity (shared across all PgClient instances using the same registry).
     ///
-    /// Default: 256. Set to 0 to disable caching (every SQL will be re-parsed).
-    /// Larger values use more memory but improve hit rates for diverse query sets.
+    /// Default: 256. This is a good balance for most applications — a typical CRUD service
+    /// has 50–200 distinct SQL patterns. Set to 0 to disable caching (every SQL will be
+    /// re-parsed). For applications with highly dynamic SQL, consider 512–1024.
+    /// Values above 10,000 are unlikely to help and will increase memory usage.
     pub parse_cache_capacity: usize,
     /// Whether to collect query statistics.
     pub stats_enabled: bool,

@@ -10,6 +10,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::sql_analysis::{ColumnRefFull, analyze_sql};
 
+// ── Lint codes ──────────────────────────────────────────────────────
+// Centralised constants to avoid magic strings scattered across the codebase.
+
+/// SQL syntax error.
+pub const LINT_E001: &str = "E001";
+/// DELETE without WHERE clause.
+pub const LINT_E002: &str = "E002";
+/// UPDATE without WHERE clause.
+pub const LINT_E003: &str = "E003";
+/// Expected a SELECT statement.
+pub const LINT_E004: &str = "E004";
+/// SELECT * usage (informational).
+pub const LINT_I001: &str = "I001";
+/// TRUNCATE warning.
+pub const LINT_W001: &str = "W001";
+/// DROP TABLE warning.
+pub const LINT_W002: &str = "W002";
+/// SELECT without LIMIT.
+pub const LINT_W003: &str = "W003";
+
 /// Result of SQL parsing/validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseResult {
@@ -250,7 +270,7 @@ pub fn lint_sql(sql: &str) -> LintResult {
     if !analysis.parse_result.valid {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
-            code: "E001",
+            code: LINT_E001,
             message: format!(
                 "SQL syntax error: {}",
                 analysis.parse_result.error.unwrap_or_default()
@@ -265,7 +285,7 @@ pub fn lint_sql(sql: &str) -> LintResult {
             if analysis.select_has_star == Some(true) {
                 result.issues.push(LintIssue {
                     level: LintLevel::Info,
-                    code: "I001",
+                    code: LINT_I001,
                     message: "SELECT * used; consider specifying columns explicitly".to_string(),
                 });
             }
@@ -274,7 +294,7 @@ pub fn lint_sql(sql: &str) -> LintResult {
             if analysis.delete_has_where == Some(false) {
                 result.issues.push(LintIssue {
                     level: LintLevel::Error,
-                    code: "E002",
+                    code: LINT_E002,
                     message: "DELETE without WHERE clause will delete all rows".to_string(),
                 });
             }
@@ -283,7 +303,7 @@ pub fn lint_sql(sql: &str) -> LintResult {
             if analysis.update_has_where == Some(false) {
                 result.issues.push(LintIssue {
                     level: LintLevel::Error,
-                    code: "E003",
+                    code: LINT_E003,
                     message: "UPDATE without WHERE clause will update all rows".to_string(),
                 });
             }
@@ -291,14 +311,14 @@ pub fn lint_sql(sql: &str) -> LintResult {
         Some(StatementKind::Truncate) => {
             result.issues.push(LintIssue {
                 level: LintLevel::Warning,
-                code: "W001",
+                code: LINT_W001,
                 message: "TRUNCATE will delete all rows from the table".to_string(),
             });
         }
         Some(StatementKind::DropTable) => {
             result.issues.push(LintIssue {
                 level: LintLevel::Warning,
-                code: "W002",
+                code: LINT_W002,
                 message: "DROP TABLE is a destructive operation".to_string(),
             });
         }
@@ -330,7 +350,7 @@ pub fn lint_select_many(sql: &str) -> LintResult {
     if !analysis.parse_result.valid {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
-            code: "E001",
+            code: LINT_E001,
             message: format!(
                 "SQL syntax error: {}",
                 analysis.parse_result.error.unwrap_or_default()
@@ -342,7 +362,7 @@ pub fn lint_select_many(sql: &str) -> LintResult {
     if analysis.statement_kind != Some(StatementKind::Select) {
         result.issues.push(LintIssue {
             level: LintLevel::Error,
-            code: "E004",
+            code: LINT_E004,
             message: "Expected a SELECT statement".to_string(),
         });
         return result;
@@ -351,7 +371,7 @@ pub fn lint_select_many(sql: &str) -> LintResult {
     if analysis.select_has_limit != Some(true) {
         result.issues.push(LintIssue {
             level: LintLevel::Warning,
-            code: "W003",
+            code: LINT_W003,
             message: "SELECT without LIMIT may return unbounded results".to_string(),
         });
     }
@@ -359,7 +379,7 @@ pub fn lint_select_many(sql: &str) -> LintResult {
     if analysis.select_has_star == Some(true) {
         result.issues.push(LintIssue {
             level: LintLevel::Info,
-            code: "I001",
+            code: LINT_I001,
             message: "SELECT * used; consider specifying columns explicitly".to_string(),
         });
     }
@@ -537,12 +557,12 @@ mod tests {
         // DELETE without WHERE
         let result = lint_sql("DELETE FROM users");
         assert!(result.has_errors());
-        assert!(result.issues.iter().any(|i| i.code == "E002"));
+        assert!(result.issues.iter().any(|i| i.code == LINT_E002));
 
         // UPDATE without WHERE
         let result = lint_sql("UPDATE users SET name = 'foo'");
         assert!(result.has_errors());
-        assert!(result.issues.iter().any(|i| i.code == "E003"));
+        assert!(result.issues.iter().any(|i| i.code == LINT_E003));
 
         // Valid queries
         let result = lint_sql("DELETE FROM users WHERE id = 1");
@@ -554,7 +574,7 @@ mod tests {
         // SELECT * (info level, not an error)
         let result = lint_sql("SELECT * FROM users");
         assert!(!result.has_errors());
-        assert!(result.issues.iter().any(|i| i.code == "I001"));
+        assert!(result.issues.iter().any(|i| i.code == LINT_I001));
     }
 
     #[test]
@@ -562,7 +582,7 @@ mod tests {
         // Without LIMIT
         let result = lint_select_many("SELECT * FROM users");
         assert!(result.has_warnings());
-        assert!(result.issues.iter().any(|i| i.code == "W003"));
+        assert!(result.issues.iter().any(|i| i.code == LINT_W003));
 
         // With LIMIT
         let result = lint_select_many("SELECT * FROM users LIMIT 100");
@@ -571,6 +591,6 @@ mod tests {
         // Not a SELECT
         let result = lint_select_many("DELETE FROM users");
         assert!(result.has_errors());
-        assert!(result.issues.iter().any(|i| i.code == "E004"));
+        assert!(result.issues.iter().any(|i| i.code == LINT_E004));
     }
 }

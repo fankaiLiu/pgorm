@@ -2,6 +2,16 @@ use super::registry::{
     SchemaIssue, SchemaIssueKind, SchemaIssueLevel, SchemaRegistry, TableSchema,
 };
 
+/// PostgreSQL system columns that exist on every table but are not modeled in schema metadata.
+///
+/// See: <https://www.postgresql.org/docs/current/ddl-system-columns.html>
+const SYSTEM_COLUMNS: &[&str] = &["ctid", "xmin", "xmax", "cmin", "cmax", "tableoid"];
+
+/// Check whether a column name is a PostgreSQL system column.
+fn is_system_column(col: &str) -> bool {
+    SYSTEM_COLUMNS.contains(&col)
+}
+
 // Re-export from pgorm-check when check feature is enabled
 #[cfg(feature = "check")]
 #[allow(unused_imports)]
@@ -15,6 +25,15 @@ pub use pgorm_check::{
     ColumnRefFull,
     DbSchema,
     InsertAnalysis,
+    // Lint code constants
+    LINT_E001,
+    LINT_E002,
+    LINT_E003,
+    LINT_E004,
+    LINT_I001,
+    LINT_W001,
+    LINT_W002,
+    LINT_W003,
     LintIssue,
     LintLevel,
     LintResult,
@@ -78,12 +97,6 @@ impl SchemaRegistry {
                 ),
             });
             return issues;
-        }
-
-        // System columns exist on every table but are not modeled in TableMeta.
-        // Keep this allocation-free (hot path).
-        fn is_system_column(col: &str) -> bool {
-            matches!(col, "ctid" | "xmin" | "xmax" | "cmin" | "cmax" | "tableoid")
         }
 
         // Build a map of qualifier -> table using RangeVar + alias info.
