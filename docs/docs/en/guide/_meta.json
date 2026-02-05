@@ -6,18 +6,38 @@
   },
   {
     "type": "file",
-    "name": "pooling",
-    "label": "Connection Pooling"
+    "name": "installation",
+    "label": "Installation & Feature Flags"
+  },
+  {
+    "type": "file",
+    "name": "connection",
+    "label": "Connection & Pooling"
+  },
+  {
+    "type": "file",
+    "name": "models",
+    "label": "Models & Derive Macros"
+  },
+  {
+    "type": "file",
+    "name": "relations",
+    "label": "Relations & Eager Loading"
+  },
+  {
+    "type": "file",
+    "name": "pg-types",
+    "label": "PostgreSQL Types"
+  },
+  {
+    "type": "file",
+    "name": "writes",
+    "label": "Writes: Insert, Update, Upsert"
   },
   {
     "type": "file",
     "name": "query",
-    "label": "Hand-written SQL: query()"
-  },
-  {
-    "type": "file",
-    "name": "sql-builder",
-    "label": "Dynamic SQL: sql()"
+    "label": "SQL Queries: query() & sql()"
   },
   {
     "type": "file",
@@ -27,62 +47,22 @@
   {
     "type": "file",
     "name": "fetch-semantics",
-    "label": "Fetch Semantics"
+    "label": "Fetch Semantics & Streaming"
   },
   {
     "type": "file",
-    "name": "from-row",
-    "label": "Row Mapping: FromRow"
-  },
-  {
-    "type": "file",
-    "name": "type-support",
-    "label": "Type Support"
-  },
-  {
-    "type": "file",
-    "name": "models",
-    "label": "Models & Derive"
-  },
-  {
-    "type": "file",
-    "name": "relations",
-    "label": "Relations"
-  },
-  {
-    "type": "file",
-    "name": "eager-loading",
-    "label": "Eager Loading"
-  },
-  {
-    "type": "file",
-    "name": "insert-model",
-    "label": "Writes: InsertModel"
-  },
-  {
-    "type": "file",
-    "name": "update-model",
-    "label": "Writes: UpdateModel"
-  },
-  {
-    "type": "file",
-    "name": "upsert",
-    "label": "Writes: Upsert"
-  },
-  {
-    "type": "file",
-    "name": "write-graph",
-    "label": "Advanced: Write Graph"
+    "name": "advanced-queries",
+    "label": "Advanced: CTE & Bulk Ops"
   },
   {
     "type": "file",
     "name": "transactions",
-    "label": "Transactions"
+    "label": "Transactions & Savepoints"
   },
   {
     "type": "file",
-    "name": "migrations",
-    "label": "Migrations"
+    "name": "write-graph",
+    "label": "Multi-Table Write Graph"
   },
   {
     "type": "file",
@@ -91,12 +71,22 @@
   },
   {
     "type": "file",
-    "name": "runtime-sql-check",
-    "label": "Runtime SQL Checking"
+    "name": "safety",
+    "label": "SQL Safety & Checking"
   },
   {
     "type": "file",
-    "name": "validation-and-input",
-    "label": "Validation & Input"
+    "name": "validation",
+    "label": "Input Validation"
+  },
+  {
+    "type": "file",
+    "name": "migrations",
+    "label": "Migrations"
+  },
+  {
+    "type": "file",
+    "name": "cli",
+    "label": "CLI: pgorm-cli"
   }
 ]

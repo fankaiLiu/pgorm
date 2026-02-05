@@ -16,25 +16,22 @@ hero:
     src: /rspress-icon.png
     alt: pgorm Logo
 features:
-  - title: Under Active Development
-    details: This project is rapidly evolving. APIs may change. Not recommended for production use yet.
-    icon: 🚧
   - title: Model-First Design
-    details: Define models with derive macros, pgorm generates insert/update/query helpers automatically.
+    details: Define models with derive macros. pgorm generates insert, update, query, and relation helpers automatically.
     icon: 📝
   - title: Type-Safe Queries
-    details: Derive macros (FromRow, Model) provide compile-time safety with zero runtime overhead.
+    details: FromRow, Model, PgEnum, PgComposite derive macros provide compile-time safety with zero runtime overhead.
     icon: 🔒
-  - title: Eager Loading
-    details: Explicit batch preloading for has_many and belongs_to relations - no N+1 queries.
+  - title: Relations & Eager Loading
+    details: Explicit batch preloading for has_many, belongs_to, has_one, and many_to_many relations. No N+1 queries.
     icon: ⚡
-  - title: JSONB Support
-    details: First-class support for PostgreSQL JSONB with serde integration.
+  - title: PostgreSQL Types
+    details: First-class support for JSONB, ENUM, Composite Types, Range types, and all standard PG types.
     icon: 📦
-  - title: Connection Pooling
-    details: Built-in deadpool-postgres integration with TLS support.
-    icon: 🔌
-  - title: Runtime SQL Checking
-    details: Optional guardrails for AI-generated SQL with CheckedClient and PgClient.
+  - title: Advanced Queries
+    details: CTE (WITH) queries, keyset pagination, streaming, bulk operations, and optimistic locking.
+    icon: 🔄
+  - title: Safety & Monitoring
+    details: Runtime SQL checking, safety policies, query monitoring, hooks, and LRU statement cache.
     icon: 🛡️
 ---

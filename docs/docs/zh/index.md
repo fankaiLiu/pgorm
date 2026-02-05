@@ -4,7 +4,7 @@ pageType: home
 hero:
   name: pgorm
   text: Rust PostgreSQL ORM
-  tagline: 一个模型定义优先、AI 友好的 PostgreSQL ORM 库
+  tagline: 模型定义优先、AI 友好的 PostgreSQL ORM 库
   actions:
     - theme: brand
       text: 快速开始
@@ -16,25 +16,22 @@ hero:
     src: /rspress-icon.png
     alt: pgorm Logo
 features:
-  - title: 快速开发中
-    details: 本项目正在快速迭代开发中，API 可能会有变动，暂不建议用于生产环境。
-    icon: 🚧
-  - title: 模型定义优先
-    details: 通过派生宏定义模型，pgorm 自动生成增删改查辅助方法。
+  - title: 模型优先设计
+    details: 使用派生宏定义模型，pgorm 自动生成插入、更新、查询和关系加载方法。
     icon: 📝
-  - title: 类型安全
-    details: 派生宏（FromRow、Model）提供编译时安全性，零运行时开销。
+  - title: 类型安全查询
+    details: FromRow、Model、PgEnum、PgComposite 派生宏提供编译期安全保障，零运行时开销。
     icon: 🔒
-  - title: 预加载
-    details: 显式批量预加载 has_many 和 belongs_to 关系，避免 N+1 查询问题。
+  - title: 关系与预加载
+    details: 显式批量预加载 has_many、belongs_to、has_one、many_to_many 关系，杜绝 N+1 查询。
     icon: ⚡
-  - title: JSONB 支持
-    details: 原生支持 PostgreSQL JSONB，集成 serde 序列化。
+  - title: PostgreSQL 类型
+    details: 原生支持 JSONB、ENUM、复合类型、范围类型及所有标准 PG 类型。
     icon: 📦
-  - title: 连接池
-    details: 内置 deadpool-postgres 集成，支持 TLS。
-    icon: 🔌
-  - title: 运行时 SQL 检查
-    details: 可选的 AI 生成 SQL 保护机制，使用 CheckedClient 和 PgClient。
+  - title: 高级查询
+    details: CTE (WITH) 查询、游标分页、流式查询、批量操作和乐观锁。
+    icon: 🔄
+  - title: 安全与监控
+    details: 运行时 SQL 检查、安全策略、查询监控、Hook 和 LRU 预处理语句缓存。
     icon: 🛡️
 ---

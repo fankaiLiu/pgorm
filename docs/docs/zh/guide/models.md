@@ -1,10 +1,10 @@
 # 模型与派生宏
 
-pgorm 提供了多个派生宏来处理数据库模型。
+pgorm 提供了多个派生宏，用于将 Rust 结构体映射到数据库表。本页涵盖 `FromRow`、`Model`、`QueryParams` 和 `ViewModel`。
 
-## FromRow
+## `#[derive(FromRow)]`
 
-`FromRow` 派生宏将数据库行映射到 Rust 结构体：
+将数据库行映射到 Rust 结构体。每个结构体字段对应同名的列。
 
 ```rust
 use pgorm::FromRow;
@@ -17,9 +17,22 @@ struct User {
 }
 ```
 
-## Model
+### 列重命名
 
-`Model` 派生宏提供 CRUD 操作和关系辅助方法：
+使用 `#[orm(column = "...")]` 将字段映射到不同名称的列：
+
+```rust
+#[derive(FromRow)]
+struct User {
+    id: i64,
+    #[orm(column = "user_name")]
+    username: String,
+}
+```
+
+## `#[derive(Model)]`
+
+基于 `FromRow` 构建，添加表元数据、生成常量、CRUD 方法和查询构建器。需要 `#[orm(table = "...")]` 和 `#[orm(id)]`。
 
 ```rust
 use pgorm::{FromRow, Model};
@@ -34,177 +47,199 @@ struct User {
 }
 ```
 
-### 表名
+### 生成的常量
 
-使用 `#[orm(table = "table_name")]` 指定数据库表名。
+`Model` 会在结构体本身和一个伴生的 `<Name>Query` 结构体上生成常量：
 
-### 主键
+| 常量 | 示例值 | 描述 |
+|------|--------|------|
+| `User::TABLE` | `"users"` | 表名 |
+| `User::ID` | `"id"` | 主键列名 |
+| `User::SELECT_LIST` | `"id, name, email"` | 逗号分隔的列列表 |
+| `UserQuery::COL_ID` | `"id"` | 用于查询构建器的类型化列名 |
+| `UserQuery::COL_NAME` | `"name"` | 用于查询构建器的类型化列名 |
+| `UserQuery::COL_EMAIL` | `"email"` | 用于查询构建器的类型化列名 |
 
-使用 `#[orm(id)]` 标记主键字段。
+### CRUD 方法
 
-## Query Builder（`Model::query()`）
-
-`Model` 还会生成一个轻量的 Query Builder：`<Model>Query` 和 `Model::query()`。
+`Model` 生成以下方法：
 
 ```rust
-// 类型安全的列名常量：
-// - UserQuery::COL_ID（永远可用）
-// - UserQuery::id（仅当不与方法名冲突时生成）
+// 查询所有行
+let users = User::select_all(&client).await?;
+
+// 按主键查询单行（不存在时返回 OrmError::NotFound）
+let user = User::select_one(&client, 1_i64).await?;
+
+// 按主键删除
+let affected = User::delete_by_id(&client, 1_i64).await?;
+
+// 按多个主键删除
+let affected = User::delete_by_ids(&client, vec![1, 2, 3]).await?;
+
+// 删除并返回（RETURNING）
+let deleted = User::delete_by_id_returning(&client, 1_i64).await?;
+```
+
+## 查询构建器：`Model::query()`
+
+`Model` 通过 `User::query()` 生成一个轻量的查询构建器。它返回一个 `UserQuery` 实例，支持链式调用过滤方法。
+
+```rust
+// 按列值查找用户
 let users = User::query()
-    .eq(UserQuery::COL_ID, 1_i64)?
+    .eq(UserQuery::COL_EMAIL, "admin@example.com")?
     .find(&client)
+    .await?;
+
+// 统计匹配的行数
+let count = User::query()
+    .eq(UserQuery::COL_NAME, "Alice")?
+    .count(&client)
     .await?;
 ```
 
-### 可选条件（`*_opt` / `apply_if_*`）
+### 可选过滤（`*_opt`、`apply_if_*`）
 
-当你的输入是 `Option<T>` / `Result<T, E>` 时，可以用这些 helper 避免大量 `if let Some(...)` 样板代码。
+当输入为 `Option<T>` 时，可以使用可选过滤辅助方法来避免 `if let Some(...)` 的样板代码。如果值为 `None`，则跳过该过滤条件。
 
 ```rust
 let q = User::query()
-    .eq_opt(UserQuery::COL_ID, user_id)?
-    .eq_opt(UserQuery::COL_EMAIL, email)?
-    .apply_if_ok(ip_str.parse::<std::net::IpAddr>(), |q, ip| q.eq("ip_address", ip))?;
+    .eq_opt(UserQuery::COL_ID, user_id)?           // Option<i64>
+    .eq_opt(UserQuery::COL_EMAIL, email)?           // Option<String>
+    .apply_if_ok(ip_str.parse::<std::net::IpAddr>(), |q, ip| {
+        q.eq("ip_address", ip)
+    })?;
 ```
 
-另外也提供了一些常用的“更少样板”helper：
+便捷辅助方法：
 
-- `eq_opt_str`：`Option<&str>` / `Option<String>` 直接用于等值过滤（自动转成 owned `String`）
-- `eq_opt_map`：`Option<T>` 先做一次转换（如 `parse()`），成功才追加过滤
-- `range_opt`：把 `gte_opt + lte_opt` 合并成一次调用（常见的时间范围）
+- `eq_opt_str` -- 接受 `Option<&str>` / `Option<String>`（自动转换为 owned `String`）
+- `eq_opt_map` -- 对 `Option<T>` 进行转换（如 `parse()`），仅在成功时应用过滤
+- `range_opt` -- 将 `gte_opt` + `lte_opt` 合并为一次调用（常用于时间范围）
 
 ```rust
 let q = AuditLog::query()
     .eq_opt(AuditLogQuery::COL_USER_ID, user_id)?
     .eq_opt_str(AuditLogQuery::COL_OPERATION_TYPE, operation_type)?
-    .eq_opt_str(AuditLogQuery::COL_RESOURCE_TYPE, resource_type)?
     .range_opt(AuditLogQuery::COL_CREATED_AT, start_date, end_date)?
     .eq_opt_map(AuditLogQuery::COL_IP_ADDRESS, ip_address, |s| {
         s.parse::<std::net::IpAddr>().ok()
     })?;
 ```
 
-### QueryParams（按参数 struct 自动生成 `apply()`）
+## `#[derive(QueryParams)]`
 
-当你希望复用同一套过滤条件（比如同时用于 `search` 和 `count`），可以把入参收敛成一个 struct，并用 `#[derive(QueryParams)]` 生成 `apply()/into_query()`：
-
-- 支持：`eq/ne/gt/gte/lt/lte/like/ilike/not_like/not_ilike/is_null/is_not_null/in_list/not_in/between/not_between`，排序分页支持 `order_by/order_by_asc/order_by_desc/order_by_raw/paginate/limit/offset/page`，以及 `map(...)` / `raw` / `and` / `or` 这些 escape hatch
+当你希望对 `find`（搜索）和 `count` 复用同一套过滤条件时，可以将输入定义为一个结构体并派生 `QueryParams`：
 
 ```rust
 use pgorm::QueryParams;
-
-#[derive(QueryParams)]
-#[orm(model = "AuditLog")]
-pub struct AuditLogSearchParams<'a> {
-    #[orm(eq(AuditLogQuery::COL_USER_ID))]
-    pub user_id: Option<uuid::Uuid>,
-    #[orm(eq(AuditLogQuery::COL_OPERATION_TYPE))]
-    pub operation_type: Option<&'a str>,
-    #[orm(gte(AuditLogQuery::COL_CREATED_AT))]
-    pub start_date: Option<chrono::DateTime<chrono::Utc>>,
-    #[orm(lte(AuditLogQuery::COL_CREATED_AT))]
-    pub end_date: Option<chrono::DateTime<chrono::Utc>>,
-    #[orm(eq_map(AuditLogQuery::COL_IP_ADDRESS, parse_ip))]
-    pub ip_address: Option<&'a str>,
-
-    // 排序/分页（可选）
-    #[orm(order_by_desc)]
-    pub order_by_desc: Option<&'a str>,
-    #[orm(page(per_page = per_page.unwrap_or(20)))]
-    pub page: Option<i64>,
-    pub per_page: Option<i64>,
-}
 
 fn parse_ip(s: &str) -> Option<std::net::IpAddr> {
     s.parse().ok()
 }
 
-let q = AuditLogSearchParams { user_id, operation_type, start_date, end_date, ip_address }
-    .into_query()?;
-```
+#[derive(QueryParams)]
+#[orm(model = "AuditLog")]
+struct AuditLogSearchParams<'a> {
+    #[orm(eq(AuditLogQuery::COL_USER_ID))]
+    user_id: Option<uuid::Uuid>,
 
-## 关系
+    #[orm(eq(AuditLogQuery::COL_OPERATION_TYPE))]
+    operation_type: Option<&'a str>,
 
-### has_many
+    #[orm(gte(AuditLogQuery::COL_CREATED_AT))]
+    start_date: Option<DateTime<Utc>>,
 
-定义一对多关系：
+    #[orm(lte(AuditLogQuery::COL_CREATED_AT))]
+    end_date: Option<DateTime<Utc>>,
 
-```rust
-#[derive(Debug, Clone, FromRow, Model)]
-#[orm(table = "users")]
-#[orm(has_many(Post, foreign_key = "user_id", as = "posts"))]
-struct User {
-    #[orm(id)]
-    id: i64,
-    name: String,
+    #[orm(eq(AuditLogQuery::COL_IP_ADDRESS), map(parse_ip))]
+    ip_address: Option<&'a str>,
+
+    #[orm(in_list(AuditLogQuery::COL_STATUS_CODE))]
+    status_any: Option<Vec<i16>>,
+
+    #[orm(order_by_desc)]
+    order_by_desc: Option<&'a str>,
+
+    #[orm(page(per_page = per_page.unwrap_or(10)))]
+    page: Option<i64>,
+
+    per_page: Option<i64>,
 }
 ```
 
-### belongs_to
+### 用法
 
-定义多对一关系：
+`QueryParams` 生成 `into_query()` 方法，返回一个可复用的查询构建器。可同时用于列表查询和计数查询：
 
 ```rust
-#[derive(Debug, Clone, FromRow, Model)]
+let params = AuditLogSearchParams {
+    user_id: Some(uuid::Uuid::nil()),
+    operation_type: Some("LOGIN"),
+    start_date: None,
+    end_date: None,
+    ip_address: Some("127.0.0.1"),
+    status_any: Some(vec![200, 201, 204]),
+    order_by_desc: Some("created_at"),
+    page: Some(1),
+    per_page: Some(10),
+};
+
+let q = params.into_query()?;
+
+// 同一个查询构建器同时用于列表和计数
+let rows = q.find(&client).await?;
+let total = q.count(&client).await?;
+```
+
+### 支持的操作符
+
+`QueryParams` 支持以下字段级属性：
+
+**条件：** `eq`、`ne`、`gt`、`gte`、`lt`、`lte`、`like`、`ilike`、`not_like`、`not_ilike`、`is_null`、`is_not_null`、`in_list`、`not_in`、`between`、`not_between`
+
+**排序/分页：** `order_by`、`order_by_asc`、`order_by_desc`、`order_by_raw`、`paginate`、`limit`、`offset`、`page`
+
+**逃逸手段：** `map(...)`、`raw`、`and`、`or`
+
+## `#[derive(ViewModel)]`
+
+`ViewModel` 是 `Model` 的别名，用于只读视图模型，可选包含 JOIN。写操作（`InsertModel`、`UpdateModel`）需要单独派生。
+
+```rust
+use pgorm::{FromRow, ViewModel};
+
+#[derive(Debug, Clone, FromRow, ViewModel)]
 #[orm(table = "posts")]
-#[orm(belongs_to(User, foreign_key = "user_id", as = "author"))]
-struct Post {
+struct PostWithAuthor {
     #[orm(id)]
     id: i64,
-    user_id: i64,
     title: String,
+    #[orm(table = "users", column = "name")]
+    author_name: String,
 }
 ```
 
-## JSONB 支持
+## 使用 `RowExt` 手动类型化访问
 
-pgorm 支持 PostgreSQL JSONB 列：
-
-```rust
-use pgorm::{FromRow, Json};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Meta {
-    tags: Vec<String>,
-}
-
-#[derive(FromRow)]
-struct User {
-    id: i64,
-    meta: Json<Meta>, // jsonb 列
-}
-```
-
-## INET（IP 地址）支持
-
-如果表里用 PostgreSQL `inet` 存 IP 地址，推荐直接映射成 `std::net::IpAddr`（可空用 `Option<IpAddr>`），这样查询/写入都不需要 `::text`。
+当你需要从原始 `tokio_postgres::Row` 中读取列，而不使用完整的 `FromRow` 结构体时，可以使用 `RowExt` trait：
 
 ```rust
-use pgorm::FromRow;
+use pgorm::{RowExt, query};
 
-#[derive(Debug, FromRow)]
-struct AuditLog {
-    id: i64,
-    ip_address: Option<std::net::IpAddr>, // PG: inet
-}
-```
-
-查询时把入参先 `parse()` 成 `IpAddr` 再 `bind()`：
-
-```rust
-use pgorm::query;
-use std::net::IpAddr;
-
-let ip: IpAddr = "1.2.3.4".parse()?;
-let rows: Vec<AuditLog> = query("SELECT id, ip_address FROM audit_logs WHERE ip_address = $1")
-    .bind(ip)
-    .fetch_all_as(&client)
+let row = query("SELECT id, name FROM users WHERE id = $1")
+    .bind(1_i64)
+    .fetch_one(&client)
     .await?;
+
+let id: i64 = row.try_get_column("id")?;
+let name: String = row.try_get_column("name")?;
 ```
 
-如果你的 API 输入是 `String/Option<String>`，推荐配合 `#[orm(input)]` 使用 `#[orm(ip, input_as = "String")]`，统一校验与错误返回：[`输入校验与 Input`](/zh/guide/validation-and-input)。
+`RowExt::try_get_column` 在类型不匹配或列缺失时返回 `OrmError::Decode`，为你在 pgorm 中提供一致的错误处理。
 
-## 下一步
+---
 
-- 下一章：[`关系声明：has_many / belongs_to`](/zh/guide/relations)
+下一步：[关系与预加载](/zh/guide/relations)

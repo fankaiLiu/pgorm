@@ -6,38 +6,13 @@
   },
   {
     "type": "file",
-    "name": "pooling",
-    "label": "连接池"
+    "name": "installation",
+    "label": "安装与功能标志"
   },
   {
     "type": "file",
-    "name": "query",
-    "label": "手写 SQL：query()"
-  },
-  {
-    "type": "file",
-    "name": "sql-builder",
-    "label": "动态 SQL：sql()"
-  },
-  {
-    "type": "file",
-    "name": "conditions",
-    "label": "动态条件与分页"
-  },
-  {
-    "type": "file",
-    "name": "fetch-semantics",
-    "label": "Fetch 语义"
-  },
-  {
-    "type": "file",
-    "name": "from-row",
-    "label": "行映射：FromRow"
-  },
-  {
-    "type": "file",
-    "name": "type-support",
-    "label": "类型支持"
+    "name": "connection",
+    "label": "连接与连接池"
   },
   {
     "type": "file",
@@ -47,42 +22,47 @@
   {
     "type": "file",
     "name": "relations",
-    "label": "关系声明"
+    "label": "关系与预加载"
   },
   {
     "type": "file",
-    "name": "eager-loading",
-    "label": "预加载"
+    "name": "pg-types",
+    "label": "PostgreSQL 类型"
   },
   {
     "type": "file",
-    "name": "insert-model",
-    "label": "写入：InsertModel"
+    "name": "writes",
+    "label": "写入：插入、更新、Upsert"
   },
   {
     "type": "file",
-    "name": "update-model",
-    "label": "写入：UpdateModel"
+    "name": "query",
+    "label": "SQL 查询：query() 与 sql()"
   },
   {
     "type": "file",
-    "name": "upsert",
-    "label": "写入：Upsert"
+    "name": "conditions",
+    "label": "动态条件与分页"
   },
   {
     "type": "file",
-    "name": "write-graph",
-    "label": "高级写入：Write Graph"
+    "name": "fetch-semantics",
+    "label": "Fetch 语义与流式查询"
+  },
+  {
+    "type": "file",
+    "name": "advanced-queries",
+    "label": "高级查询：CTE 与批量操作"
   },
   {
     "type": "file",
     "name": "transactions",
-    "label": "事务"
+    "label": "事务与保存点"
   },
   {
     "type": "file",
-    "name": "migrations",
-    "label": "迁移"
+    "name": "write-graph",
+    "label": "多表写入图"
   },
   {
     "type": "file",
@@ -91,12 +71,22 @@
   },
   {
     "type": "file",
-    "name": "runtime-sql-check",
-    "label": "运行时 SQL 检查"
+    "name": "safety",
+    "label": "SQL 安全与检查"
   },
   {
     "type": "file",
-    "name": "validation-and-input",
-    "label": "输入校验与 Input"
+    "name": "validation",
+    "label": "输入校验"
+  },
+  {
+    "type": "file",
+    "name": "migrations",
+    "label": "迁移"
+  },
+  {
+    "type": "file",
+    "name": "cli",
+    "label": "CLI 工具：pgorm-cli"
   }
 ]

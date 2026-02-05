@@ -1,104 +1,113 @@
 # Quick Start
 
-pgorm is a PostgreSQL-only ORM library for Rust that keeps SQL explicit.
+pgorm is a **model-definition-first, AI-friendly PostgreSQL ORM** for Rust. It generates queries from your model definitions, provides runtime SQL checking for AI-generated queries, and bundles monitoring, connection pooling, and statement caching into a single `PgClient` wrapper.
+
+- **Version:** 0.2.0
+- **MSRV:** Rust 1.88+
+- **Edition:** 2024
 
 ## Installation
 
-Add pgorm to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-pgorm = "0.1.4"
+pgorm = "0.2.0"
 ```
 
-If you only want the SQL builder (no pool / derive macros / runtime SQL checking):
+## Define a Model
 
-```toml
-[dependencies]
-pgorm = { version = "0.1.4", default-features = false }
-```
-
-## Rust Toolchain
-
-- Edition: 2024
-- MSRV: Rust 1.88+
-
-## Feature Flags
-
-Default features: `pool`, `derive`, `check`, `validate`.
-
-| Feature    | Description                                                        |
-| ---------- | ------------------------------------------------------------------ |
-| `pool`     | deadpool-postgres pool helpers (`create_pool`)                     |
-| `derive`   | proc-macros (`FromRow`, `Model`, `InsertModel`, `UpdateModel`, `ViewModel`) |
-| `check`    | runtime SQL checking + recommended wrappers (`CheckedClient`, `PgClient`)   |
-| `validate` | changeset-style validation helpers (email/url/regex/etc)           |
-| `migrate`  | SQL migrations via `refinery`                                      |
-| `rust_decimal` | `rust_decimal::Decimal` PgType support (for UNNEST casts)      |
-| `time`     | `time` crate type support (enables tokio-postgres `with-time-0_3`) |
-| `cidr`     | `cidr` crate type support (enables tokio-postgres `with-cidr-0_3`) |
-| `geo_types` | `geo-types` crate type support (enables tokio-postgres `with-geo-types-0_7`) |
-| `eui48`    | `eui48` crate type support (enables tokio-postgres `with-eui48-1`) |
-| `bit_vec`  | `bit-vec` crate type support (enables tokio-postgres `with-bit-vec-0_8`) |
-| `extra_types` | Convenience: enables all the above extra scalar types         |
-
-## Basic Usage
-
-pgorm provides two main query APIs:
-
-- Use `query()` when you already have a full SQL string with `$1, $2, ...`
-- Use `sql()` when you want to compose SQL dynamically without manually tracking `$n`
+Use `#[derive(FromRow, Model)]` to define a model. pgorm generates typed constants, CRUD methods, and a query builder for you.
 
 ```rust
-use pgorm::{query, sql, FromRow};
+use pgorm::prelude::*;
 
-#[derive(FromRow)]
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "users")]
 struct User {
+    #[orm(id)]
     id: i64,
-    username: String,
+    name: String,
+    email: String,
+}
+```
+
+## Connect
+
+Create a connection pool with `create_pool`, then wrap it with `PgClient` for monitoring, SQL checking, and statement caching.
+
+```rust
+use pgorm::{PgClient, PgClientConfig, create_pool};
+use std::time::Duration;
+
+let pool = create_pool(&std::env::var("DATABASE_URL")?)?;
+let client = pool.get().await?;
+let pg = PgClient::with_config(&client, PgClientConfig::new()
+    .timeout(Duration::from_secs(30))
+    .slow_threshold(Duration::from_secs(1))
+    .with_logging());
+```
+
+## Query
+
+Use model-generated methods or raw SQL -- both are monitored through `PgClient`.
+
+```rust
+// Model-based query
+let users = User::select_all(&pg).await?;
+
+// Raw SQL query mapped to the model
+let active: Vec<User> = pg.sql_query_as(
+    "SELECT * FROM users WHERE status = $1",
+    &[&"active"],
+).await?;
+
+// Query builder with filters
+let admins = User::query()
+    .eq(UserQuery::COL_EMAIL, "admin@example.com")?
+    .find(&pg)
+    .await?;
+
+// Check query statistics
+let stats = pg.stats();
+println!("total queries: {}, max: {:?}", stats.total_queries, stats.max_duration);
+```
+
+## Insert
+
+Define an insert model with `#[derive(InsertModel)]` and use it for single or batch inserts.
+
+```rust
+use pgorm::InsertModel;
+
+#[derive(InsertModel)]
+#[orm(table = "users", returning = "User")]
+struct NewUser {
+    name: String,
+    email: String,
 }
 
-// Hand-written SQL
-let user: User = query("SELECT id, username FROM users WHERE id = $1")
-    .bind(1_i64)
-    .fetch_one_as(&client)
-    .await?;
+// Single insert with RETURNING
+let user = NewUser {
+    name: "Alice".into(),
+    email: "alice@example.com".into(),
+}.insert_returning(&pg).await?;
 
-// Dynamic SQL composition (placeholders are generated automatically)
-let mut q = sql("SELECT id, username FROM users WHERE 1=1");
-q.push(" AND username ILIKE ").push_bind("%admin%");
-let users: Vec<User> = q.fetch_all_as(&client).await?;
+// Batch insert with UNNEST
+let users = NewUser::insert_many_returning(&pg, vec![
+    NewUser { name: "Bob".into(), email: "bob@example.com".into() },
+    NewUser { name: "Carol".into(), email: "carol@example.com".into() },
+]).await?;
 ```
 
-## Observability Tags
+## What's Next
 
-You can attach an observability tag for tracing:
+Follow these guides to learn more:
 
-```rust
-let user: User = query("SELECT id, username FROM users WHERE id = $1")
-    .tag("users.by_id")
-    .bind(1_i64)
-    .fetch_one_as(&client)
-    .await?;
-```
+1. [Installation & Feature Flags](/en/guide/installation) -- feature flags, MSRV, and minimal builds
+2. [Connection & Pooling](/en/guide/connection) -- `PgClient`, statement cache, TLS
+3. [Models & Derive Macros](/en/guide/models) -- `FromRow`, `Model`, `QueryParams`, `ViewModel`
+4. [Relations & Eager Loading](/en/guide/relations) -- `has_many`, `belongs_to`, `has_one`, `many_to_many`
+5. [PostgreSQL Types](/en/guide/pg-types) -- `PgEnum`, `PgComposite`, `Range<T>`, JSONB
 
-## Suggested Reading Order
+---
 
-If this is your first time using pgorm, this is a good path:
-
-1) Pooling & clients: [`create_pool` / TLS / recommended clients](/en/guide/pooling)  
-2) Hand-written SQL: [`query()`](/en/guide/query)  
-3) Dynamic SQL: [`sql()`](/en/guide/sql-builder)  
-4) Dynamic filters: [`Condition/WhereExpr/OrderBy/Pagination`](/en/guide/conditions)  
-5) Fetch semantics: [`fetch_one` vs `fetch_one_strict` vs `fetch_opt`](/en/guide/fetch-semantics)  
-6) Row mapping: [`FromRow` / `RowExt` / JSONB / INET](/en/guide/from-row)  
-7) Models & derives: [`Model / InsertModel / UpdateModel`](/en/guide/models)  
-8) Relations: [`has_many` / `belongs_to`](/en/guide/relations)  
-9) Eager loading: [`load_*` helpers (avoid N+1)](/en/guide/eager-loading)  
-10) Writes: [`InsertModel`](/en/guide/insert-model) / [`UpdateModel`](/en/guide/update-model) / [`Upsert`](/en/guide/upsert)  
-11) Advanced writes: [`Write Graph`](/en/guide/write-graph)  
-12) Transactions: [`transaction!` / savepoints](/en/guide/transactions)  
-13) Migrations: [`refinery`](/en/guide/migrations)  
-14) Monitoring & hooks: [`InstrumentedClient`](/en/guide/monitoring)  
-15) Runtime SQL checks: [`PgClient / CheckedClient`](/en/guide/runtime-sql-check)  
-16) Input validation: [`#[orm(input)]` changeset style](/en/guide/validation-and-input)  
+Next: [Installation & Feature Flags](/en/guide/installation)
