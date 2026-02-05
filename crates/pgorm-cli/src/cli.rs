@@ -115,7 +115,7 @@ fn parse_gen<'a>(mut it: impl Iterator<Item = &'a str>) -> anyhow::Result<Comman
                     Some(other) => anyhow::bail!("unknown subcommand: {other}"),
                 }));
             }
-            "check" | "init" | "schema" if !token.starts_with('-') && subcmd.is_none() => {
+            "check" | "init" | "schema" if subcmd.is_none() => {
                 subcmd = Some(token);
             }
             "--config" => {
@@ -251,7 +251,7 @@ fn parse_sql<'a>(mut it: impl Iterator<Item = &'a str>) -> anyhow::Result<Comman
                     Some(other) => anyhow::bail!("unknown subcommand: {other}"),
                 }));
             }
-            "check" if !token.starts_with('-') && subcmd.is_none() => {
+            "check" if subcmd.is_none() => {
                 subcmd = Some(token);
             }
             "--config" => {

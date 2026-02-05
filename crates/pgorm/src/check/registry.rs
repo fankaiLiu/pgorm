@@ -154,13 +154,34 @@ impl SchemaRegistry {
     }
 
     /// Find a table by name, searching all schemas.
+    ///
+    /// Looks in the `public` schema first. If not found there, searches other
+    /// schemas. If the same table name exists in multiple non-public schemas,
+    /// the result is deterministic (alphabetically first schema wins) but a
+    /// warning is emitted — prefer `get_table(schema, name)` for unambiguous lookups.
     pub fn find_table(&self, name: &str) -> Option<&TableSchema> {
         // First try public schema
         if let Some(t) = self.get_table("public", name) {
             return Some(t);
         }
-        // Then try any schema
-        self.tables.values().find_map(|by_name| by_name.get(name))
+        // Search remaining schemas in sorted order for deterministic results
+        let mut matches: Vec<_> = self
+            .tables
+            .iter()
+            .filter(|(schema, _)| schema.as_str() != "public")
+            .filter_map(|(schema, by_name)| by_name.get(name).map(|t| (schema.as_str(), t)))
+            .collect();
+        matches.sort_by_key(|(schema, _)| *schema);
+
+        if matches.len() > 1 {
+            let schemas: Vec<_> = matches.iter().map(|(s, _)| *s).collect();
+            crate::error::pgorm_warn(&format!(
+                "Ambiguous table '{}' found in schemas: {:?}. Using '{}'. \
+                 Use get_table(schema, name) for explicit lookup.",
+                name, schemas, schemas[0]
+            ));
+        }
+        matches.into_iter().next().map(|(_, t)| t)
     }
 
     /// Check if a table exists.

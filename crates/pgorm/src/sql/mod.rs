@@ -43,6 +43,10 @@ pub fn sql(initial_sql: impl Into<String>) -> Sql {
 
 /// Strip leading whitespace, SQL comments (`--` and `/* */`), and parentheses
 /// from a SQL string to find the first meaningful keyword.
+///
+/// Returns an empty string if the entire input is comments/whitespace or
+/// contains an unclosed block comment. Callers should treat `""` as
+/// `QueryType::Other`.
 pub(crate) fn strip_sql_prefix(sql: &str) -> &str {
     let mut s = sql;
     loop {

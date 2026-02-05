@@ -71,8 +71,8 @@ impl InstrumentedRowStream {
         let duration = self.start.elapsed();
         let query_result = match err {
             None => QueryResult::Rows(self.rows),
-            Some(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Some(e) => QueryResult::Error(e.to_string()),
+            Some(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Some(e) => QueryResult::error(e.to_string()),
         };
 
         if let Some(hook) = &self.hook {
@@ -177,10 +177,16 @@ impl<C: GenericClient + StreamingClient> super::instrumented::InstrumentedClient
                     return Ok(stream);
                 }
 
-                let timeout_remaining = self
-                    .config
-                    .query_timeout
-                    .map(|t| t.saturating_sub(start.elapsed()));
+                let timeout_remaining = self.config.query_timeout.and_then(|t| {
+                    let remaining = t.saturating_sub(start.elapsed());
+                    // Skip timeout wrapping if remaining time is zero to avoid
+                    // an immediate spurious timeout error.
+                    if remaining.is_zero() {
+                        None
+                    } else {
+                        Some(remaining)
+                    }
+                });
 
                 Ok(RowStream::new(InstrumentedRowStream::new(
                     stream,
@@ -199,8 +205,8 @@ impl<C: GenericClient + StreamingClient> super::instrumented::InstrumentedClient
 
                 let duration = start.elapsed();
                 let query_result = match &e {
-                    OrmError::Timeout(d) => QueryResult::Error(format!("timeout after {d:?}")),
-                    other => QueryResult::Error(other.to_string()),
+                    OrmError::Timeout(d) => QueryResult::error(format!("timeout after {d:?}")),
+                    other => QueryResult::error(other.to_string()),
                 };
                 self.report_result(&ctx, duration, &query_result);
                 Err(e)

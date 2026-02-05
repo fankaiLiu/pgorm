@@ -226,23 +226,37 @@ impl OrmError {
         }
     }
 
-    /// Parse a tokio_postgres error into a more specific OrmError
+    /// Parse a tokio_postgres error into a more specific OrmError.
+    ///
+    /// Maps common PostgreSQL error codes to typed variants for easier matching.
     pub fn from_db_error(err: tokio_postgres::Error) -> Self {
         if let Some(db_err) = err.as_db_error() {
             let constraint = db_err.constraint().unwrap_or("unknown");
             let message = db_err.message();
 
             match db_err.code().code() {
+                // Constraint violations (class 23)
                 "23505" => return Self::UniqueViolation(format!("{constraint}: {message}")),
                 "23503" => {
                     return Self::ForeignKeyViolation(format!("{constraint}: {message}"));
                 }
                 "23514" => return Self::CheckViolation(format!("{constraint}: {message}")),
+                // Transaction rollback (class 40)
                 "40001" => return Self::SerializationFailure(message.to_string()),
                 "40P01" => return Self::DeadlockDetected(message.to_string()),
+                // Connection failure (class 08)
+                "08000" | "08003" | "08006" => {
+                    return Self::Connection(message.to_string());
+                }
                 _ => {}
             }
         }
+
+        // Check for connection-level errors (no db_error, e.g. broken pipe)
+        if err.is_closed() {
+            return Self::Connection(err.to_string());
+        }
+
         Self::Query(err)
     }
 }

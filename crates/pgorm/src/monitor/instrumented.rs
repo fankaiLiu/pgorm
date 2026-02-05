@@ -217,8 +217,8 @@ impl<C: GenericClient> InstrumentedClient<C> {
 
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
 
         self.report_result(&ctx, duration, &query_result);
@@ -251,8 +251,8 @@ impl<C: GenericClient> InstrumentedClient<C> {
         let query_result = match &result {
             Ok(_) => QueryResult::OptionalRow(true),
             Err(OrmError::NotFound { .. }) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
 
         self.report_result(&ctx, duration, &query_result);
@@ -285,8 +285,8 @@ impl<C: GenericClient> InstrumentedClient<C> {
         let query_result = match &result {
             Ok(Some(_)) => QueryResult::OptionalRow(true),
             Ok(None) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
 
         self.report_result(&ctx, duration, &query_result);
@@ -318,8 +318,8 @@ impl<C: GenericClient> InstrumentedClient<C> {
 
         let query_result = match &result {
             Ok(n) => QueryResult::Affected(*n),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
 
         self.report_result(&ctx, duration, &query_result);

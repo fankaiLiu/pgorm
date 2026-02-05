@@ -107,8 +107,8 @@ impl PgClientRowStream {
         let duration = self.start.elapsed();
         let query_result = match err {
             None => QueryResult::Rows(self.rows),
-            Some(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Some(e) => QueryResult::Error(e.to_string()),
+            Some(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Some(e) => QueryResult::error(e.to_string()),
         };
         self.reporter.report(&self.ctx, duration, &query_result);
     }
@@ -238,8 +238,8 @@ where
 
                 let duration = start.elapsed();
                 let query_result = match &e {
-                    OrmError::Timeout(d) => QueryResult::Error(format!("timeout after {d:?}")),
-                    other => QueryResult::Error(other.to_string()),
+                    OrmError::Timeout(d) => QueryResult::error(format!("timeout after {d:?}")),
+                    other => QueryResult::error(other.to_string()),
                 };
                 self.report_result(&ctx, duration, &query_result);
                 Err(e)

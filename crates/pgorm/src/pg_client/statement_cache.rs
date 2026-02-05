@@ -97,7 +97,7 @@ impl StatementCache {
     }
 
     pub(super) fn get(&self, key: &str) -> Option<Statement> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match inner.touch(key) {
             Some(stmt) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
@@ -111,7 +111,7 @@ impl StatementCache {
     }
 
     pub(super) fn insert_if_absent(&self, key: String, stmt: Statement) -> Statement {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(existing) = inner.touch(&key) {
             return existing;
@@ -134,12 +134,12 @@ impl StatementCache {
     }
 
     pub(super) fn remove(&self, key: &str) -> Option<Statement> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.map.remove(key).map(|e| e.stmt)
     }
 
     pub(super) fn stats(&self) -> StmtCacheStats {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         StmtCacheStats {
             hits: self.hits.load(Ordering::Relaxed),
             misses: self.misses.load(Ordering::Relaxed),
@@ -157,6 +157,42 @@ pub(super) enum StmtCacheProbe {
     Miss,
 }
 
+impl StmtCacheProbe {
+    /// Populate query context fields based on the cache probe result.
+    pub(super) fn populate_context(&self, ctx: &mut crate::monitor::QueryContext) {
+        match self {
+            StmtCacheProbe::Disabled => {
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "disabled".to_string());
+                ctx.fields
+                    .insert("prepared".to_string(), "false".to_string());
+            }
+            StmtCacheProbe::Hit(_) => {
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "hit".to_string());
+                ctx.fields
+                    .insert("prepared".to_string(), "true".to_string());
+            }
+            StmtCacheProbe::Miss => {
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "miss".to_string());
+                ctx.fields
+                    .insert("prepared".to_string(), "true".to_string());
+            }
+        }
+    }
+}
+
+/// PostgreSQL SQLSTATE: feature_not_supported (class 0A)
+const SQLSTATE_FEATURE_NOT_SUPPORTED: &str = "0A000";
+/// PostgreSQL SQLSTATE: invalid_sql_statement_name (class 26)
+const SQLSTATE_INVALID_SQL_STATEMENT_NAME: &str = "26000";
+
+/// Check whether a query error is retryable by re-preparing the statement.
+///
+/// This returns `true` for:
+/// - `0A000` with "cached plan must not change result type" (schema changed under a cached plan)
+/// - `26000` invalid_sql_statement_name (stale prepared statement reference)
 pub(super) fn is_retryable_prepared_error(err: &OrmError) -> bool {
     let OrmError::Query(e) = err else {
         return false;
@@ -166,13 +202,11 @@ pub(super) fn is_retryable_prepared_error(err: &OrmError) -> bool {
     };
 
     match db_err.code().code() {
-        // "cached plan must not change result type" (e.g. after schema change)
-        "0A000" => db_err
+        SQLSTATE_FEATURE_NOT_SUPPORTED => db_err
             .message()
             .to_ascii_lowercase()
             .contains("cached plan must not change result type"),
-        // invalid_sql_statement_name
-        "26000" => true,
+        SQLSTATE_INVALID_SQL_STATEMENT_NAME => true,
         _ => false,
     }
 }

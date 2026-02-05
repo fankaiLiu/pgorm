@@ -117,8 +117,7 @@ pub struct StatsMonitor {
     insert_count: std::sync::atomic::AtomicU64,
     update_count: std::sync::atomic::AtomicU64,
     delete_count: std::sync::atomic::AtomicU64,
-    max_duration_nanos: std::sync::atomic::AtomicU64,
-    slowest_query: std::sync::Mutex<Option<String>>,
+    slowest: std::sync::Mutex<(u64, Option<String>)>,
     stmt_cache_hits: std::sync::atomic::AtomicU64,
     stmt_cache_misses: std::sync::atomic::AtomicU64,
     stmt_prepare_count: std::sync::atomic::AtomicU64,
@@ -166,6 +165,10 @@ impl StatsMonitor {
     pub fn stats(&self) -> QueryStats {
         use std::sync::atomic::Ordering;
 
+        let slowest = self.slowest.lock().unwrap_or_else(|e| e.into_inner());
+        let (max_nanos, slowest_query) = (slowest.0, slowest.1.clone());
+        drop(slowest);
+
         QueryStats {
             total_queries: self.total_queries.load(Ordering::Relaxed),
             failed_queries: self.failed_queries.load(Ordering::Relaxed),
@@ -174,8 +177,8 @@ impl StatsMonitor {
             insert_count: self.insert_count.load(Ordering::Relaxed),
             update_count: self.update_count.load(Ordering::Relaxed),
             delete_count: self.delete_count.load(Ordering::Relaxed),
-            max_duration: Duration::from_nanos(self.max_duration_nanos.load(Ordering::Relaxed)),
-            slowest_query: self.slowest_query.lock().unwrap().clone(),
+            max_duration: Duration::from_nanos(max_nanos),
+            slowest_query,
             stmt_cache_hits: self.stmt_cache_hits.load(Ordering::Relaxed),
             stmt_cache_misses: self.stmt_cache_misses.load(Ordering::Relaxed),
             stmt_prepare_count: self.stmt_prepare_count.load(Ordering::Relaxed),
@@ -196,8 +199,7 @@ impl StatsMonitor {
         self.insert_count.store(0, Ordering::Relaxed);
         self.update_count.store(0, Ordering::Relaxed);
         self.delete_count.store(0, Ordering::Relaxed);
-        self.max_duration_nanos.store(0, Ordering::Relaxed);
-        *self.slowest_query.lock().unwrap() = None;
+        *self.slowest.lock().unwrap_or_else(|e| e.into_inner()) = (0, None);
         self.stmt_cache_hits.store(0, Ordering::Relaxed);
         self.stmt_cache_misses.store(0, Ordering::Relaxed);
         self.stmt_prepare_count.store(0, Ordering::Relaxed);
@@ -223,13 +225,12 @@ impl StatsMonitor {
         let nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
         self.stmt_prepare_count.fetch_add(1, Ordering::Relaxed);
 
-        let prev = self
-            .stmt_prepare_duration_nanos
-            .fetch_add(nanos, Ordering::Relaxed);
-        if prev.checked_add(nanos).is_none() {
-            self.stmt_prepare_duration_nanos
-                .store(u64::MAX, Ordering::Relaxed);
-        }
+        // Use saturating_add via fetch_update to avoid wrapping on overflow.
+        self.stmt_prepare_duration_nanos
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |prev| {
+                Some(prev.saturating_add(nanos))
+            })
+            .ok();
     }
 }
 
@@ -243,8 +244,7 @@ impl Default for StatsMonitor {
             insert_count: std::sync::atomic::AtomicU64::new(0),
             update_count: std::sync::atomic::AtomicU64::new(0),
             delete_count: std::sync::atomic::AtomicU64::new(0),
-            max_duration_nanos: std::sync::atomic::AtomicU64::new(0),
-            slowest_query: std::sync::Mutex::new(None),
+            slowest: std::sync::Mutex::new((0, None)),
             stmt_cache_hits: std::sync::atomic::AtomicU64::new(0),
             stmt_cache_misses: std::sync::atomic::AtomicU64::new(0),
             stmt_prepare_count: std::sync::atomic::AtomicU64::new(0),
@@ -260,13 +260,12 @@ impl QueryMonitor for StatsMonitor {
         let duration_nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
 
         self.total_queries.fetch_add(1, Ordering::Relaxed);
-        let prev_total = self
-            .total_duration_nanos
-            .fetch_add(duration_nanos, Ordering::Relaxed);
-        if prev_total.checked_add(duration_nanos).is_none() {
-            // Saturate instead of wrapping on overflow (e.g. long-running, high-QPS services).
-            self.total_duration_nanos.store(u64::MAX, Ordering::Relaxed);
-        }
+        // Use saturating_add via fetch_update to avoid wrapping on overflow.
+        self.total_duration_nanos
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |prev| {
+                Some(prev.saturating_add(duration_nanos))
+            })
+            .ok();
 
         match ctx.query_type {
             QueryType::Select => {
@@ -288,21 +287,11 @@ impl QueryMonitor for StatsMonitor {
             self.failed_queries.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Update max duration + slowest query only when we actually become the new max.
-        let mut current_max = self.max_duration_nanos.load(Ordering::Relaxed);
-        while duration_nanos > current_max {
-            match self.max_duration_nanos.compare_exchange_weak(
-                current_max,
-                duration_nanos,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    *self.slowest_query.lock().unwrap() = Some(ctx.canonical_sql.clone());
-                    break;
-                }
-                Err(updated) => current_max = updated,
-            }
+        // Update max duration + slowest query atomically under a single Mutex.
+        let mut slowest = self.slowest.lock().unwrap_or_else(|e| e.into_inner());
+        if duration_nanos > slowest.0 {
+            slowest.0 = duration_nanos;
+            slowest.1 = Some(ctx.canonical_sql.clone());
         }
     }
 }

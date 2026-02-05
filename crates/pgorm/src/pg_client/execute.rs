@@ -205,14 +205,20 @@ impl<C: GenericClient> super::PgClient<C> {
         F: std::future::Future<Output = OrmResult<T>> + Send,
     {
         match self.config.query_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, future).await.map_err(|_| {
-                if let Some(cancel_token) = self.client.cancel_token() {
-                    tokio::spawn(async move {
-                        let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
-                    });
+            Some(timeout) => {
+                tokio::pin!(future);
+                tokio::select! {
+                    result = &mut future => result,
+                    _ = tokio::time::sleep(timeout) => {
+                        if let Some(cancel_token) = self.client.cancel_token() {
+                            tokio::spawn(async move {
+                                let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+                            });
+                        }
+                        Err(OrmError::Timeout(timeout))
+                    }
                 }
-                OrmError::Timeout(timeout)
-            })?,
+            }
             None => future.await,
         }
     }
@@ -404,26 +410,7 @@ impl<C: GenericClient> super::PgClient<C> {
         self.check_sql(&ctx.canonical_sql)?;
 
         let probe = self.probe_stmt_cache(&ctx);
-        match &probe {
-            StmtCacheProbe::Disabled => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "disabled".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "false".to_string());
-            }
-            StmtCacheProbe::Hit(_) => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "hit".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-            StmtCacheProbe::Miss => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "miss".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-        }
+        probe.populate_context(&mut ctx);
         self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
@@ -501,8 +488,8 @@ impl<C: GenericClient> super::PgClient<C> {
         // Report
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
 
@@ -523,26 +510,7 @@ impl<C: GenericClient> super::PgClient<C> {
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
         let probe = self.probe_stmt_cache(&ctx);
-        match &probe {
-            StmtCacheProbe::Disabled => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "disabled".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "false".to_string());
-            }
-            StmtCacheProbe::Hit(_) => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "hit".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-            StmtCacheProbe::Miss => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "miss".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-        }
+        probe.populate_context(&mut ctx);
         self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
@@ -620,8 +588,8 @@ impl<C: GenericClient> super::PgClient<C> {
         let query_result = match &result {
             Ok(_) => QueryResult::OptionalRow(true),
             Err(OrmError::NotFound(_)) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
 
@@ -642,26 +610,7 @@ impl<C: GenericClient> super::PgClient<C> {
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
         let probe = self.probe_stmt_cache(&ctx);
-        match &probe {
-            StmtCacheProbe::Disabled => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "disabled".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "false".to_string());
-            }
-            StmtCacheProbe::Hit(_) => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "hit".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-            StmtCacheProbe::Miss => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "miss".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-        }
+        probe.populate_context(&mut ctx);
         self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
@@ -739,8 +688,8 @@ impl<C: GenericClient> super::PgClient<C> {
         let query_result = match &result {
             Ok(Some(_)) => QueryResult::OptionalRow(true),
             Ok(None) => QueryResult::OptionalRow(false),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
 
@@ -761,26 +710,7 @@ impl<C: GenericClient> super::PgClient<C> {
         self.apply_sql_policy(&mut ctx)?;
         self.check_sql(&ctx.canonical_sql)?;
         let probe = self.probe_stmt_cache(&ctx);
-        match &probe {
-            StmtCacheProbe::Disabled => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "disabled".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "false".to_string());
-            }
-            StmtCacheProbe::Hit(_) => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "hit".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-            StmtCacheProbe::Miss => {
-                ctx.fields
-                    .insert("stmt_cache".to_string(), "miss".to_string());
-                ctx.fields
-                    .insert("prepared".to_string(), "true".to_string());
-            }
-        }
+        probe.populate_context(&mut ctx);
         self.emit_tracing_sql(&ctx);
 
         let start = Instant::now();
@@ -857,8 +787,8 @@ impl<C: GenericClient> super::PgClient<C> {
 
         let query_result = match &result {
             Ok(n) => QueryResult::Affected(*n),
-            Err(OrmError::Timeout(d)) => QueryResult::Error(format!("timeout after {d:?}")),
-            Err(e) => QueryResult::Error(e.to_string()),
+            Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
+            Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
 
