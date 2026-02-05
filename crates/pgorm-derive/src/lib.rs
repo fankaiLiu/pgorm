@@ -9,6 +9,8 @@ mod common;
 mod from_row;
 mod insert_model;
 mod model;
+mod pg_composite;
+mod pg_enum;
 mod query_params;
 mod sql_ident;
 mod update_model;
@@ -204,6 +206,87 @@ pub fn derive_update_model(input: TokenStream) -> TokenStream {
 pub fn derive_query_params(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     query_params::expand(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derive `PgEnum` helpers to map a Rust enum to a PostgreSQL ENUM type.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::PgEnum;
+///
+/// #[derive(PgEnum, Debug, Clone, PartialEq)]
+/// #[orm(pg_type = "order_status")]
+/// pub enum OrderStatus {
+///     #[orm(rename = "pending")]
+///     Pending,
+///     Processing,   // defaults to "processing" (snake_case)
+///     Shipped,
+///     Delivered,
+///     Cancelled,
+/// }
+/// ```
+///
+/// # Generated
+///
+/// - `impl ToSql for OrderStatus`
+/// - `impl<'a> FromSql<'a> for OrderStatus`
+/// - `impl PgType for OrderStatus` (returns `"{pg_type}[]"`)
+///
+/// # Attributes
+///
+/// Enum-level:
+/// - `#[orm(pg_type = "name")]` - PostgreSQL ENUM type name (required)
+///
+/// Variant-level:
+/// - `#[orm(rename = "name")]` - Override the SQL string for this variant (optional, defaults to snake_case)
+#[proc_macro_derive(PgEnum, attributes(orm))]
+pub fn derive_pg_enum(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    pg_enum::expand(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Derive `PgComposite` helpers to map a Rust struct to a PostgreSQL composite type.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::PgComposite;
+///
+/// #[derive(PgComposite, Debug, Clone)]
+/// #[orm(pg_type = "address")]
+/// pub struct Address {
+///     pub street: String,
+///     pub city: String,
+///     pub zip_code: String,
+///     pub country: String,
+/// }
+/// ```
+///
+/// # Generated
+///
+/// - `impl ToSql for Address`
+/// - `impl<'a> FromSql<'a> for Address`
+/// - `impl PgType for Address` (returns `"{pg_type}[]"`)
+///
+/// # Attributes
+///
+/// Struct-level:
+/// - `#[orm(pg_type = "name")]` - PostgreSQL composite type name (required)
+///
+/// # Limitations
+///
+/// - Only flat structs with named fields are supported.
+/// - Nested composite types are not supported.
+/// - All fields must implement `ToSql` and `FromSql`.
+#[proc_macro_derive(PgComposite, attributes(orm))]
+pub fn derive_pg_composite(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    pg_composite::expand(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }

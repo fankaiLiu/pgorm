@@ -26,9 +26,11 @@
 //! ```
 
 mod builder;
+mod bulk;
 pub mod changeset;
 mod client;
 mod condition;
+mod cte;
 pub mod eager;
 mod error;
 mod ident;
@@ -38,6 +40,7 @@ pub mod qb;
 mod row;
 mod sql;
 mod transaction;
+pub mod types;
 
 #[cfg(feature = "validate")]
 pub mod validate;
@@ -47,6 +50,8 @@ pub mod validate;
 pub mod migrate;
 
 pub use builder::{Cursor, Keyset1, Keyset2, NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr};
+pub use bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};
+pub use cte::WithBuilder;
 pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
 pub use client::{GenericClient, RowStream, StreamingClient};
 pub use condition::{Condition, Op};
@@ -63,6 +68,8 @@ pub use monitor::{
 pub use row::{FromRow, PgType, RowExt};
 pub use sql::{FromRowStream, Query, Sql, query, sql};
 pub use tokio_postgres::types::Json;
+pub use transaction::{Savepoint, TransactionExt, __next_savepoint_name};
+pub use types::{Bound, Range};
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
@@ -81,7 +88,9 @@ pub use pool::{create_pool, create_pool_with_config};
 pub use pool::{create_pool_with_manager_config, create_pool_with_tls};
 
 #[cfg(feature = "derive")]
-pub use pgorm_derive::{FromRow, InsertModel, Model, QueryParams, UpdateModel, ViewModel};
+pub use pgorm_derive::{
+    FromRow, InsertModel, Model, PgComposite, PgEnum, QueryParams, UpdateModel, ViewModel,
+};
 
 // SQL checking and linting
 mod check;
