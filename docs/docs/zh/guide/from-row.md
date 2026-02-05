@@ -1,6 +1,6 @@
 # 行映射：`FromRow` / `RowExt` / JSONB / INET
 
-pgorm 的核心理念是“SQL-first”，因此它把“查询”与“映射”解耦：
+pgorm 的核心理念是"模型定义优先"，同时保持"查询"与"映射"解耦：
 
 - 你可以手写 SQL（`query()` / `sql()`）
 - 再把 `tokio_postgres::Row` 映射成 Rust 类型

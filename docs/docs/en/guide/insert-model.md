@@ -1,6 +1,6 @@
 # Writes: `InsertModel`
 
-`InsertModel` generates “insert helpers” while keeping your project SQL-first:
+`InsertModel` generates insert helpers from your model definitions:
 
 - keep read models (`Model`) and write models (`InsertModel`) separate
 - avoid hand-writing repetitive `INSERT ... RETURNING ...`

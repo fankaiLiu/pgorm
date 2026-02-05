@@ -7,7 +7,7 @@ Write Graph is for “one business operation writes multiple tables”, for exam
 
 Key ideas:
 
-- still SQL-first: you declare the write path explicitly
+- model-definition-first: you declare the write path via derive macros
 - pgorm generates multi-step write logic
 - you usually wrap the whole write in a transaction (atomicity)
 

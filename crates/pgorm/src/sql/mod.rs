@@ -1,4 +1,4 @@
-//! SQL-first dynamic builder.
+//! Dynamic SQL builder.
 //!
 //! This module complements `query()`:
 //! - `query()` is great when you already have a full SQL string with `$1, $2...`.

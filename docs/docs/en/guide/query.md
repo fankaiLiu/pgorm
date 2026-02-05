@@ -2,7 +2,7 @@
 
 Use `pgorm::query()` when you already have a complete SQL string and you’re happy to write `$1, $2, ...` placeholders explicitly:
 
-- you fully control the SQL (SQL-first)
+- you fully control the SQL
 - values are bound via `.bind()` (no string interpolation)
 - you still get consistent `fetch_*` / `execute` APIs
 

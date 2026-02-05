@@ -4,7 +4,7 @@ pageType: home
 hero:
   name: pgorm
   text: Rust PostgreSQL ORM
-  tagline: 一个 SQL 优先、类型安全的 PostgreSQL ORM 库
+  tagline: 一个模型定义优先、AI 友好的 PostgreSQL ORM 库
   actions:
     - theme: brand
       text: 快速开始
@@ -19,8 +19,8 @@ features:
   - title: 快速开发中
     details: 本项目正在快速迭代开发中，API 可能会有变动，暂不建议用于生产环境。
     icon: 🚧
-  - title: SQL 优先
-    details: 保持 SQL 显式化，使用 query() 执行完整 SQL，使用 sql() 进行动态组合。
+  - title: 模型定义优先
+    details: 通过派生宏定义模型，pgorm 自动生成增删改查辅助方法。
     icon: 📝
   - title: 类型安全
     details: 派生宏（FromRow、Model）提供编译时安全性，零运行时开销。

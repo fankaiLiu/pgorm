@@ -4,7 +4,7 @@ pageType: home
 hero:
   name: pgorm
   text: PostgreSQL ORM for Rust
-  tagline: A SQL-first, type-safe ORM library for PostgreSQL
+  tagline: A model-definition-first, AI-friendly ORM library for PostgreSQL
   actions:
     - theme: brand
       text: Quick Start
@@ -19,8 +19,8 @@ features:
   - title: Under Active Development
     details: This project is rapidly evolving. APIs may change. Not recommended for production use yet.
     icon: 🚧
-  - title: SQL-First Approach
-    details: Keep SQL explicit with query() for full SQL strings and sql() for dynamic composition.
+  - title: Model-First Design
+    details: Define models with derive macros, pgorm generates insert/update/query helpers automatically.
     icon: 📝
   - title: Type-Safe Queries
     details: Derive macros (FromRow, Model) provide compile-time safety with zero runtime overhead.

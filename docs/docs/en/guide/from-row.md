@@ -1,6 +1,6 @@
 # Row Mapping: `FromRow` / `RowExt` / JSONB / INET
 
-pgorm is SQL-first, so it keeps “querying” and “mapping” loosely coupled:
+pgorm is model-definition-first, but keeps "querying" and "mapping" loosely coupled:
 
 - you write SQL (`query()` / `sql()`)
 - you map `tokio_postgres::Row` into Rust types

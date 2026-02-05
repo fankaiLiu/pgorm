@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio_postgres::Row;
 use tokio_postgres::types::{FromSql, ToSql};
 
-/// A SQL-first, parameter-safe dynamic SQL builder.
+/// A parameter-safe dynamic SQL builder.
 ///
 /// `Sql` stores SQL pieces and parameters separately and generates `$1, $2, ...`
 /// placeholders automatically in the final SQL string.

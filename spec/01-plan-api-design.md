@@ -4,7 +4,7 @@
 
 ## 设计原则
 
-- **SQL-first**：显式 SQL 是核心；builder 是辅助，不做“魔法生成 SQL”。
+- **模型定义优先**：通过模型定义驱动 CRUD 代码生成；SQL builder 作为灵活补充。
 - **两个层级**：
   - 推荐：`PgClient`（带监控 + SQL 检查 + statement cache + policy）
   - 低层：`GenericClient`/`Sql`（可插拔、最小抽象）

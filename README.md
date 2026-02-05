@@ -5,7 +5,7 @@
 <h1 align="center">pgorm</h1>
 
 <p align="center">
-  <strong>A lightweight, SQL-first PostgreSQL ORM for Rust</strong>
+  <strong>A model-definition-first, AI-friendly PostgreSQL ORM for Rust</strong>
 </p>
 
 <p align="center">
@@ -21,7 +21,8 @@
 
 ## Features
 
-- **SQL-first design** — explicit queries with `query()` / `sql()`, no hidden SQL
+- **Model-definition-first** — define your models with derive macros, pgorm generates queries for you
+- **AI-friendly** — explicit queries with `query()` / `sql()`, runtime SQL checking for AI-generated queries
 - **Derive macros** — `FromRow`, `Model`, `InsertModel`, `UpdateModel`, `ViewModel`, `QueryParams`
 - **Connection pooling** via `deadpool-postgres`
 - **Eager loading** for relations (`has_many`, `belongs_to`, `has_one`, `many_to_many`)
