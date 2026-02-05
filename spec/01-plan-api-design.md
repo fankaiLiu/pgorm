@@ -48,13 +48,10 @@
 - [ ] 如果要改默认 feature：先引入新的 meta-feature（如 `minimal`），再考虑调整 `default`
 
 ### Phase 4：发布与弃用策略
-
-- [ ] 写一份简短的“兼容性承诺”（README/CONTRIBUTING）
-- [ ] 引入 `CHANGELOG.md`（或 release notes 规则），明确 breaking change 的流程
+- [ ] 暂时警告使用者 随时可能改变
 
 ## 验收标准（Definition of Done）
 
 - [ ] README 给出唯一的推荐 Quick Start（不再让用户在多种入口间迷路）
 - [ ] `prelude` 足够覆盖 80% 常见使用（但不会把所有东西都塞进去）
 - [ ] 任何对外路径变更都有弃用过渡（编译期提示清晰）
-
