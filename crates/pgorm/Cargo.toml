@@ -142,3 +142,11 @@ required-features = ["derive"]
 [[example]]
 name = "streaming"
 path = "examples/streaming/main.rs"
+
+[[example]]
+name = "keyset_pagination"
+path = "examples/keyset_pagination/main.rs"
+
+[[example]]
+name = "optimistic_locking"
+path = "examples/optimistic_locking/main.rs"

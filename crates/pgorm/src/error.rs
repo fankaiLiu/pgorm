@@ -62,6 +62,14 @@ pub enum OrmError {
     #[error("Migration error: {0}")]
     Migration(String),
 
+    /// Optimistic locking conflict: record was modified by another transaction
+    #[error("Stale record: {table} with id {id} (expected version {expected_version})")]
+    StaleRecord {
+        table: &'static str,
+        id: String,
+        expected_version: i64,
+    },
+
     /// Other errors
     #[error("{0}")]
     Other(String),
@@ -109,6 +117,20 @@ impl OrmError {
     /// Check if this is a timeout error
     pub fn is_timeout(&self) -> bool {
         matches!(self, Self::Timeout(_))
+    }
+
+    /// Create a stale record error for optimistic locking conflicts
+    pub fn stale_record(table: &'static str, id: impl ToString, expected_version: i64) -> Self {
+        Self::StaleRecord {
+            table,
+            id: id.to_string(),
+            expected_version,
+        }
+    }
+
+    /// Check if this is a stale record (optimistic lock) error
+    pub fn is_stale_record(&self) -> bool {
+        matches!(self, Self::StaleRecord { .. })
     }
 
     /// Parse a tokio_postgres error into a more specific OrmError
