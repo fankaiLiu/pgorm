@@ -48,14 +48,14 @@
 
 ```toml
 [dependencies]
-pgorm = "0.1.6"
+pgorm = "0.2.0"
 ```
 
 Default features (`pool`, `derive`, `check`, `validate`) cover most use cases.
 For a minimal build (SQL builder + row mapping only):
 
 ```toml
-pgorm = { version = "0.1.6", default-features = false }
+pgorm = { version = "0.2.0", default-features = false }
 ```
 
 ## Quick Start
