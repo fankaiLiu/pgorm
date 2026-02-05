@@ -79,8 +79,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-${{ matrix.toolchain }}-
 
-      - name: Cargo test
-        run: cargo test --workspace
+      - name: Cargo test (includes compile-check for examples)
+        run: cargo test --workspace --all-targets
 
   lint:
     name: Lint check

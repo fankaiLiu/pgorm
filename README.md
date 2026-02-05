@@ -51,22 +51,58 @@
 pgorm = "0.1.6"
 ```
 
+Default features (`pool`, `derive`, `check`, `validate`) cover most use cases.
+For a minimal build (SQL builder + row mapping only):
+
+```toml
+pgorm = { version = "0.1.6", default-features = false }
+```
+
 ## Quick Start
 
-Start with the prelude for the most common imports:
+**Recommended:** Use `PgClient` — it bundles monitoring, SQL checking, statement cache, and safety policies in one place.
 
 ```rust
 use pgorm::prelude::*;
+use pgorm::{PgClient, PgClientConfig, create_pool};
+use std::time::Duration;
+
+// 1. Define your models
+#[derive(Debug, Clone, FromRow, Model)]
+#[orm(table = "users")]
+struct User {
+    #[orm(id)]
+    id: i64,
+    name: String,
+    email: String,
+}
+
+// 2. Connect via pool + PgClient
+let pool = create_pool(&std::env::var("DATABASE_URL")?)?;
+let client = pool.get().await?;
+let pg = PgClient::with_config(&client, PgClientConfig::new()
+    .timeout(Duration::from_secs(30))
+    .slow_threshold(Duration::from_secs(1))
+    .with_logging());
+
+// 3. Use model-based or SQL-based queries — both are monitored
+let users = User::select_all(&pg).await?;
+
+let active: Vec<User> = pg.sql_query_as(
+    "SELECT * FROM users WHERE status = $1",
+    &[&"active"],
+).await?;
+
+// 4. Check query statistics
+let stats = pg.stats();
+println!("total queries: {}, max: {:?}", stats.total_queries, stats.max_duration);
 ```
 
-For monitoring and SQL linting, import from the dedicated modules:
+> **Without `PgClient`:** you can also use `query()` / `sql()` directly with a `tokio_postgres::Client` or pool connection. See the [SQL Mode](#sql-mode) section below.
 
-```rust
-use pgorm::monitor::{InstrumentedClient, MonitorConfig, LoggingMonitor};
-use pgorm::check::{lint_sql, LintLevel};
-```
+---
 
-### Model Mode
+## Model Mode
 
 Define models with relations and eager loading support:
 
@@ -104,37 +140,6 @@ for user in &users {
 // Fetch posts with their authors
 let posts = Post::select_all(&client).await?;
 let posts_with_author = Post::load_author(&client, posts).await?;
-```
-
-### SQL Mode
-
-Build complex queries with type-safe condition helpers:
-
-```rust
-use pgorm::prelude::*;
-
-// Dynamic WHERE conditions
-let mut where_expr = WhereExpr::and(vec![
-    Condition::eq("status", "active")?.into(),
-    Condition::ilike("name", "%test%")?.into(),
-    WhereExpr::or(vec![
-        Condition::eq("role", "admin")?.into(),
-        Condition::eq("role", "owner")?.into(),
-    ]),
-    Condition::new("id", Op::between(1_i64, 100_i64))?.into(),
-]);
-
-let mut q = sql("SELECT * FROM users");
-if !where_expr.is_trivially_true() {
-    q.push(" WHERE ");
-    where_expr.append_to_sql(&mut q);
-}
-
-// Safe dynamic ORDER BY + pagination
-OrderBy::new().desc("created_at")?.append_to_sql(&mut q);
-Pagination::page(1, 20)?.append_to_sql(&mut q);
-
-let users: Vec<User> = q.fetch_all_as(&client).await?;
 ```
 
 ### Batch Insert
@@ -244,6 +249,119 @@ match patch.update_by_id_returning(&client, article.id).await {
 }
 ```
 
+### Multi-Table Write Graph
+
+Insert related records across multiple tables in one transaction:
+
+```rust
+#[derive(InsertModel)]
+#[orm(table = "products", returning = "Product")]
+#[orm(graph_root_id_field = "id")]
+#[orm(belongs_to(NewCategory, field = "category", set_fk_field = "category_id", mode = "insert_returning"))]
+#[orm(has_one(NewProductDetail, field = "detail", fk_field = "product_id", mode = "insert"))]
+#[orm(has_many(NewProductTag, field = "tags", fk_field = "product_id", mode = "insert"))]
+struct NewProductGraph {
+    id: uuid::Uuid,
+    name: String,
+    category_id: Option<i64>,
+
+    // Graph fields (auto-inserted into related tables)
+    category: Option<NewCategory>,
+    detail: Option<NewProductDetail>,
+    tags: Option<Vec<NewProductTag>>,
+}
+
+let report = NewProductGraph {
+    id: uuid::Uuid::new_v4(),
+    name: "Product".into(),
+    category_id: None,
+    category: Some(NewCategory { name: "Electronics".into() }),
+    detail: Some(NewProductDetail { product_id: None, description: "...".into() }),
+    tags: Some(vec![
+        NewProductTag { product_id: None, tag: "new".into() },
+        NewProductTag { product_id: None, tag: "sale".into() },
+    ]),
+}.insert_graph_report(&client).await?;
+```
+
+### PostgreSQL Special Types
+
+```rust
+// ENUM types
+use pgorm::PgEnum;
+
+#[derive(PgEnum, Debug, Clone, PartialEq)]
+#[orm(pg_type = "order_status")]
+pub enum OrderStatus {
+    #[orm(rename = "pending")]
+    Pending,
+    #[orm(rename = "shipped")]
+    Shipped,
+    #[orm(rename = "delivered")]
+    Delivered,
+}
+
+// Composite types
+use pgorm::PgComposite;
+
+#[derive(PgComposite, Debug, Clone)]
+#[orm(pg_type = "address")]
+pub struct Address {
+    pub street: String,
+    pub city: String,
+    pub zip_code: String,
+}
+
+// Range types
+use pgorm::types::Range;
+
+Range::<i32>::inclusive(1, 10);   // [1, 10]
+Range::<i32>::exclusive(1, 10);  // (1, 10)
+Range::<i32>::lower_inc(1, 10);  // [1, 10)
+Range::<i32>::empty();           // empty
+Range::<i32>::unbounded();       // (-inf, +inf)
+
+// Range condition operators
+Condition::overlaps("during", range)?;      // &&
+Condition::contains("during", timestamp)?;  // @>
+Condition::range_left_of("r", range)?;      // <<
+Condition::range_right_of("r", range)?;     // >>
+Condition::range_adjacent("r", range)?;     // -|-
+```
+
+---
+
+## SQL Mode
+
+Build complex queries with type-safe condition helpers:
+
+```rust
+use pgorm::prelude::*;
+
+// Dynamic WHERE conditions
+let mut where_expr = WhereExpr::and(vec![
+    Condition::eq("status", "active")?.into(),
+    Condition::ilike("name", "%test%")?.into(),
+    WhereExpr::or(vec![
+        Condition::eq("role", "admin")?.into(),
+        Condition::eq("role", "owner")?.into(),
+    ]),
+    Condition::new("id", Op::between(1_i64, 100_i64))?.into(),
+]);
+
+let mut q = sql("SELECT * FROM users");
+if !where_expr.is_trivially_true() {
+    q.push(" WHERE ");
+    where_expr.append_to_sql(&mut q);
+}
+
+// Safe dynamic ORDER BY + pagination
+OrderBy::new().desc("created_at")?.append_to_sql(&mut q);
+Pagination::page(1, 20)?.append_to_sql(&mut q);
+
+let users: Vec<User> = q.fetch_all_as(&client).await?;
+```
+
 ### Bulk Update & Delete
 
 ```rust
@@ -271,8 +389,10 @@ let deleted = sql("sessions")
 
 ```rust
 // Simple CTE
+let mut cte = sql("SELECT id, name FROM users WHERE status = ");
+cte.push_bind("active");
 let results = sql("")
-    .with("active_users", sql("SELECT id, name FROM users WHERE status = ").push_bind_owned("active"))?
+    .with("active_users", cte)?
     .select(sql("SELECT * FROM active_users"))
     .fetch_all_as::<User>(&client)
     .await?;
@@ -287,122 +407,6 @@ let tree = sql("")
     .select(sql("SELECT * FROM org_tree ORDER BY level"))
     .fetch_all_as::<OrgNode>(&client)
     .await?;
-```
-
-### PostgreSQL ENUM Types
-
-```rust
-use pgorm::PgEnum;
-
-#[derive(PgEnum, Debug, Clone, PartialEq)]
-#[orm(pg_type = "order_status")]
-pub enum OrderStatus {
-    #[orm(rename = "pending")]
-    Pending,
-    #[orm(rename = "shipped")]
-    Shipped,
-    #[orm(rename = "delivered")]
-    Delivered,
-}
-
-// Use directly in queries — automatic ToSql/FromSql
-query("INSERT INTO orders (status) VALUES ($1)")
-    .bind(OrderStatus::Pending)
-    .execute(&client).await?;
-
-let status: OrderStatus = row.try_get_column("status")?;
-```
-
-### PostgreSQL Composite Types
-
-```rust
-use pgorm::PgComposite;
-
-#[derive(PgComposite, Debug, Clone)]
-#[orm(pg_type = "address")]
-pub struct Address {
-    pub street: String,
-    pub city: String,
-    pub zip_code: String,
-}
-
-// Bind and read composite types directly
-query("INSERT INTO contacts (name, home_address) VALUES ($1, $2)")
-    .bind("Alice")
-    .bind(addr)
-    .execute(&client).await?;
-
-let addr: Address = row.try_get_column("home_address")?;
-```
-
-### Range Types
-
-```rust
-use pgorm::types::Range;
-use chrono::{DateTime, Utc, Duration};
-
-let now: DateTime<Utc> = Utc::now();
-
-// Insert a tstzrange
-query("INSERT INTO events (name, during) VALUES ($1, $2)")
-    .bind("Meeting")
-    .bind(Range::lower_inc(now, now + Duration::hours(2)))
-    .execute(&client).await?;
-
-// Read it back
-let during: Range<DateTime<Utc>> = row.try_get_column("during")?;
-
-// Range constructors
-Range::<i32>::inclusive(1, 10);   // [1, 10]
-Range::<i32>::exclusive(1, 10);  // (1, 10)
-Range::<i32>::lower_inc(1, 10);  // [1, 10)
-Range::<i32>::empty();           // empty
-Range::<i32>::unbounded();       // (-inf, +inf)
-
-// Range condition operators
-Condition::overlaps("during", range)?;      // &&
-Condition::contains("during", timestamp)?;  // @>
-Condition::range_left_of("r", range)?;      // <<
-Condition::range_right_of("r", range)?;     // >>
-Condition::range_adjacent("r", range)?;     // -|-
-```
-
-### Transactions & Savepoints
-
-```rust
-use pgorm::prelude::*;
-
-// Top-level transaction
-pgorm::transaction!(&mut client, tx, {
-    query("UPDATE accounts SET balance = balance - $1 WHERE id = $2")
-        .bind(100_i64).bind(1_i64).execute(&tx).await?;
-
-    // Named savepoint (manual control)
-    let sp = tx.pgorm_savepoint("bonus").await?;
-    query("UPDATE accounts SET balance = balance + $1 WHERE id = $2")
-        .bind(100_i64).bind(2_i64).execute(&sp).await?;
-    sp.release().await?;  // or sp.rollback().await?
-
-    Ok::<(), OrmError>(())
-})?;
-
-// savepoint! macro — auto release on Ok, rollback on Err
-pgorm::transaction!(&mut client, tx, {
-    let result: Result<(), OrmError> = pgorm::savepoint!(tx, "bonus", sp, {
-        query("UPDATE ...").execute(&sp).await?;
-        Ok(())
-    });
-    Ok::<(), OrmError>(())
-})?;
-
-// nested_transaction! — anonymous savepoint for nesting
-pgorm::transaction!(&mut client, tx, {
-    pgorm::nested_transaction!(tx, inner, {
-        query("UPDATE ...").execute(&inner).await?;
-        Ok::<(), OrmError>(())
-    })?;
-    Ok::<(), OrmError>(())
-})?;
 ```
 
 ### Keyset (Cursor) Pagination
@@ -446,40 +450,47 @@ while let Some(row) = stream.next().await {
 }
 ```
 
-### Multi-Table Write Graph
-
-Insert related records across multiple tables in one transaction:
+### Transactions & Savepoints
 
 ```rust
-#[derive(InsertModel)]
-#[orm(table = "products", returning = "Product")]
-#[orm(graph_root_id_field = "id")]
-#[orm(belongs_to(NewCategory, field = "category", set_fk_field = "category_id", mode = "insert_returning"))]
-#[orm(has_one(NewProductDetail, field = "detail", fk_field = "product_id", mode = "insert"))]
-#[orm(has_many(NewProductTag, field = "tags", fk_field = "product_id", mode = "insert"))]
-struct NewProductGraph {
-    id: uuid::Uuid,
-    name: String,
-    category_id: Option<i64>,
+use pgorm::prelude::*;
 
-    // Graph fields (auto-inserted into related tables)
-    category: Option<NewCategory>,
-    detail: Option<NewProductDetail>,
-    tags: Option<Vec<NewProductTag>>,
-}
+// Top-level transaction
+pgorm::transaction!(&mut client, tx, {
+    query("UPDATE accounts SET balance = balance - $1 WHERE id = $2")
+        .bind(100_i64).bind(1_i64).execute(&tx).await?;
 
-let report = NewProductGraph {
-    id: uuid::Uuid::new_v4(),
-    name: "Product".into(),
-    category_id: None,
-    category: Some(NewCategory { name: "Electronics".into() }),
-    detail: Some(NewProductDetail { product_id: None, description: "...".into() }),
-    tags: Some(vec![
-        NewProductTag { product_id: None, tag: "new".into() },
-        NewProductTag { product_id: None, tag: "sale".into() },
-    ]),
-}.insert_graph_report(&client).await?;
+    // Named savepoint (manual control)
+    let sp = tx.pgorm_savepoint("bonus").await?;
+    query("UPDATE accounts SET balance = balance + $1 WHERE id = $2")
+        .bind(100_i64).bind(2_i64).execute(&sp).await?;
+    sp.release().await?;  // or sp.rollback().await?
+
+    Ok::<(), OrmError>(())
+})?;
+
+// savepoint! macro — auto release on Ok, rollback on Err
+pgorm::transaction!(&mut client, tx, {
+    let result: Result<(), OrmError> = pgorm::savepoint!(tx, "bonus", sp, {
+        query("UPDATE ...").execute(&sp).await?;
+        Ok(())
+    });
+    Ok::<(), OrmError>(())
+})?;
+
+// nested_transaction! — anonymous savepoint for nesting
+pgorm::transaction!(&mut client, tx, {
+    pgorm::nested_transaction!(tx, inner, {
+        query("UPDATE ...").execute(&inner).await?;
+        Ok::<(), OrmError>(())
+    })?;
+    Ok::<(), OrmError>(())
+})?;
 ```
+
+---
+
+## Monitoring & Checking
 
 ### Query Monitoring
 
@@ -588,33 +599,85 @@ let user: User = new_user.insert_returning(&client).await?;
 | `#[orm(custom = "path::to::fn")]` | Custom validator function |
 | `#[orm(input_as = "Type")]` | Accept different type in Input struct |
 
-## Feature Flags
+---
 
-The default features cover most use cases:
+## Security Boundaries
 
-```toml
-# Recommended (all defaults enabled: pool, derive, check, validate)
-pgorm = "0.1.6"
+pgorm provides several safety layers for handling dynamic and AI-generated SQL:
 
-# Minimal (bare SQL builder + row mapping only)
-pgorm = { version = "0.1.6", default-features = false }
+### Dynamic Identifiers (`Ident`)
+
+Column and table names passed to `Condition`, `OrderBy`, `SetExpr`, etc. are validated through `Ident`. Only `[a-zA-Z0-9_]` and qualified names (`schema.table.column`) are accepted — **SQL injection via identifiers is not possible**.
+
+```rust
+// These are safe — identifiers are validated
+Condition::eq("user_name", value)?;      // OK
+OrderBy::new().asc("created_at")?;       // OK
+
+// These will return Err (invalid characters rejected)
+Condition::eq("name; DROP TABLE", v);    // Err
+OrderBy::new().asc("col -- comment");    // Err
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `pool` | Yes | Connection pooling via `deadpool-postgres` |
-| `derive` | Yes | Derive macros (`FromRow`, `Model`, `InsertModel`, etc.) |
-| `check` | Yes | SQL schema checking, linting, and `PgClient` via `pgorm-check` |
-| `validate` | Yes | Changeset-style validation helpers (email/url/regex) |
-| `migrate` | No | SQL migrations via `refinery` |
-| `tracing` | No | SQL debug logs via `tracing` crate |
-| `rust_decimal` | No | `rust_decimal::Decimal` support |
-| `time` | No | `time` crate date/time support |
-| `cidr` | No | `cidr` network type support |
-| `geo_types` | No | `geo-types` geometry support |
-| `eui48` | No | MAC address support |
-| `bit_vec` | No | Bit vector support |
-| `extra_types` | No | Enable all optional type support above |
+### Raw SQL
+
+Functions like `query("...")`, `sql("...")`, and `SetExpr::raw("...")` accept **raw SQL strings**. These are passed directly to PostgreSQL — always use `$1` parameter placeholders for user input, never string interpolation.
+
+```rust
+// SAFE: parameterized
+query("SELECT * FROM users WHERE id = $1").bind(user_id);
+
+// UNSAFE: string interpolation — DO NOT do this
+query(&format!("SELECT * FROM users WHERE id = {user_id}"));
+```
+
+### SQL Policies (PgClient)
+
+`PgClient` can enforce runtime policies to catch dangerous patterns:
+
+| Policy | Options | Default |
+|--------|---------|---------|
+| `select_without_limit` | `Allow`, `Warn`, `Error`, `AutoLimit(n)` | `Allow` |
+| `delete_without_where` | `Allow`, `Warn`, `Error` | `Allow` |
+| `update_without_where` | `Allow`, `Warn`, `Error` | `Allow` |
+| `truncate` | `Allow`, `Warn`, `Error` | `Allow` |
+| `drop_table` | `Allow`, `Warn`, `Error` | `Allow` |
+
+```rust
+let pg = PgClient::with_config(&client, PgClientConfig::new()
+    .strict()
+    .delete_without_where(DangerousDmlPolicy::Error)
+    .update_without_where(DangerousDmlPolicy::Warn)
+    .select_without_limit(SelectWithoutLimitPolicy::AutoLimit(1000)));
+```
+
+### SQL Schema Checking
+
+With `check` feature (default on), `PgClient` validates SQL against registered `#[derive(Model)]` schemas at runtime. Three modes:
+
+- **`Disabled`** — no checking
+- **`WarnOnly`** (default) — logs warnings for unknown tables/columns but executes the query
+- **`Strict`** — returns an error for unknown tables/columns before executing
+
+---
+
+## Feature Flags
+
+| Flag | Default | Deps | Purpose | Recommended |
+|------|---------|------|---------|-------------|
+| `pool` | Yes | `deadpool-postgres` | Connection pooling | Yes for servers |
+| `derive` | Yes | `pgorm-derive` (proc-macro) | `FromRow`, `Model`, `InsertModel`, etc. | Yes |
+| `check` | Yes | `pgorm-check` + `libpg_query` | SQL schema checking, linting, `PgClient` | Yes for dev/staging |
+| `validate` | Yes | `regex`, `url` | Input validation (email/url/regex) | Yes if accepting user input |
+| `migrate` | No | `refinery` | SQL migrations | Only for migration runner binary |
+| `tracing` | No | `tracing` | Emit SQL via `tracing` (target: `pgorm.sql`) | Yes if using tracing |
+| `rust_decimal` | No | `rust_decimal` | `Decimal` type support | As needed |
+| `time` | No | `time` | `time` crate date/time support | As needed |
+| `cidr` | No | `cidr` | Network type support | As needed |
+| `geo_types` | No | `geo-types` | Geometry support | As needed |
+| `eui48` | No | `eui48` | MAC address support | As needed |
+| `bit_vec` | No | `bit-vec` | Bit vector support | As needed |
+| `extra_types` | No | all of the above | Enable all optional type support | Convenience alias |
 
 ## Examples
 
@@ -630,6 +693,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `update_model` | Partial updates with Option semantics |
 | `write_graph` | Multi-table write graph |
 | `sql_builder` | Dynamic SQL with conditions, ordering, pagination |
+| `bulk_operations` | Bulk update/delete with conditions |
 | `changeset` | Changeset validation |
 | `monitoring` | Query monitoring, logging, hooks |
 | `statement_cache` | Prepared statement cache with LRU eviction |
@@ -638,6 +702,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `query_params` | QueryParams derive for dynamic query building |
 | `streaming` | Streaming large result sets row-by-row |
 | `keyset_pagination` | Cursor-based keyset pagination |
+| `cte_queries` | CTE (WITH) queries including recursive CTEs |
 | `optimistic_locking` | Optimistic locking with version column |
 | `pg_enum` | PostgreSQL ENUM with PgEnum derive |
 | `pg_range` | Range types (tstzrange, daterange, int4range) |
@@ -648,8 +713,12 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 Run any example:
 
 ```bash
+# Most examples need a PostgreSQL connection
 DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example \
   cargo run --example <name> -p pgorm
+
+# Some examples can show SQL generation without a database
+cargo run --example sql_builder -p pgorm
 ```
 
 ## Documentation

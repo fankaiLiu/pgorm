@@ -176,3 +176,11 @@ path = "examples/pg_composite/main.rs"
 [[example]]
 name = "savepoint"
 path = "examples/savepoint/main.rs"
+
+[[example]]
+name = "bulk_operations"
+path = "examples/bulk_operations/main.rs"
+
+[[example]]
+name = "cte_queries"
+path = "examples/cte_queries/main.rs"

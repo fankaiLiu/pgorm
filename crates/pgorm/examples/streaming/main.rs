@@ -1,3 +1,11 @@
+//! Example demonstrating streaming queries for large result sets.
+//!
+//! Run with:
+//!   DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example \
+//!   cargo run --example streaming -p pgorm
+//!
+//! Requires: DATABASE_URL
+
 use futures_util::StreamExt;
 use pgorm::{FromRow, OrmResult, query};
 use std::time::Duration;
