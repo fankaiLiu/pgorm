@@ -10,8 +10,9 @@ struct Item {
 
 #[tokio::main]
 async fn main() -> OrmResult<()> {
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL is required, e.g. postgres://postgres:postgres@localhost:5432/postgres");
+    let database_url = std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required, e.g. postgres://postgres:postgres@localhost:5432/postgres",
+    );
 
     let (client, connection) = tokio_postgres::connect(&database_url, NoTls)
         .await

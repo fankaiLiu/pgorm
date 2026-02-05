@@ -153,7 +153,7 @@ impl SchemaRegistry {
 
         self.tables
             .entry(schema_name)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(table_name, table);
     }
 
@@ -161,10 +161,7 @@ impl SchemaRegistry {
     pub fn register_table(&mut self, table: TableSchema) {
         let schema = table.schema.clone();
         let name = table.name.clone();
-        self.tables
-            .entry(schema)
-            .or_insert_with(HashMap::new)
-            .insert(name, table);
+        self.tables.entry(schema).or_default().insert(name, table);
     }
 
     /// Get a table by schema and name.
@@ -188,7 +185,7 @@ impl SchemaRegistry {
     pub fn has_table(&self, schema: &str, name: &str) -> bool {
         self.tables
             .get(schema)
-            .map_or(false, |by_name| by_name.contains_key(name))
+            .is_some_and(|by_name| by_name.contains_key(name))
     }
 
     /// Get all registered tables.

@@ -95,34 +95,22 @@ impl<T> Range<T> {
 
     /// Creates a closed range `[lower, upper]`.
     pub fn inclusive(lower: T, upper: T) -> Self {
-        Self::new(
-            Some(Bound::Inclusive(lower)),
-            Some(Bound::Inclusive(upper)),
-        )
+        Self::new(Some(Bound::Inclusive(lower)), Some(Bound::Inclusive(upper)))
     }
 
     /// Creates an open range `(lower, upper)`.
     pub fn exclusive(lower: T, upper: T) -> Self {
-        Self::new(
-            Some(Bound::Exclusive(lower)),
-            Some(Bound::Exclusive(upper)),
-        )
+        Self::new(Some(Bound::Exclusive(lower)), Some(Bound::Exclusive(upper)))
     }
 
     /// Creates a half-open range `[lower, upper)`.
     pub fn lower_inc(lower: T, upper: T) -> Self {
-        Self::new(
-            Some(Bound::Inclusive(lower)),
-            Some(Bound::Exclusive(upper)),
-        )
+        Self::new(Some(Bound::Inclusive(lower)), Some(Bound::Exclusive(upper)))
     }
 
     /// Creates a half-open range `(lower, upper]`.
     pub fn upper_inc(lower: T, upper: T) -> Self {
-        Self::new(
-            Some(Bound::Exclusive(lower)),
-            Some(Bound::Inclusive(upper)),
-        )
+        Self::new(Some(Bound::Exclusive(lower)), Some(Bound::Inclusive(upper)))
     }
 
     /// Returns `true` if this is the empty range.
@@ -161,8 +149,8 @@ where
         ty: &Type,
         out: &mut BytesMut,
     ) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
-        let element_type = range_element_type(ty)
-            .ok_or_else(|| format!("unsupported range type: {}", ty))?;
+        let element_type =
+            range_element_type(ty).ok_or_else(|| format!("unsupported range type: {ty}"))?;
 
         if self.empty {
             out.extend_from_slice(&[RANGE_EMPTY]);
@@ -239,16 +227,13 @@ impl<'a, T> FromSql<'a> for Range<T>
 where
     T: FromSql<'a> + 'static,
 {
-    fn from_sql(
-        ty: &Type,
-        raw: &'a [u8],
-    ) -> Result<Self, Box<dyn Error + Sync + Send>> {
+    fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
         if raw.is_empty() {
             return Err("empty range data".into());
         }
 
-        let element_type = range_element_type(ty)
-            .ok_or_else(|| format!("unsupported range type: {}", ty))?;
+        let element_type =
+            range_element_type(ty).ok_or_else(|| format!("unsupported range type: {ty}"))?;
 
         let flags = raw[0];
         let mut pos = 1;

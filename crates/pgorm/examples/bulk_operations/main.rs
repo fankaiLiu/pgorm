@@ -204,7 +204,10 @@ async fn demo_live(client: &tokio_postgres::Client) -> OrmResult<()> {
         updated.len()
     );
     for u in &updated {
-        println!("       id={} name={} status={} login_count={}", u.id, u.name, u.status, u.login_count);
+        println!(
+            "       id={} name={} status={} login_count={}",
+            u.id, u.name, u.status, u.login_count
+        );
     }
 
     // 3. Bulk delete with RETURNING
@@ -213,10 +216,7 @@ async fn demo_live(client: &tokio_postgres::Client) -> OrmResult<()> {
         .filter(Condition::eq("status", "banned")?)
         .returning(client)
         .await?;
-    println!(
-        "[live] Deleted banned users, {} returned:",
-        deleted.len()
-    );
+    println!("[live] Deleted banned users, {} returned:", deleted.len());
     for u in &deleted {
         println!("       id={} name={} status={}", u.id, u.name, u.status);
     }

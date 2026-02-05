@@ -806,10 +806,7 @@ mod tests {
 
     #[test]
     fn keyset1_desc_after_flips_comparator() {
-        let keyset = Keyset1::desc("created_at")
-            .unwrap()
-            .after(123_i64)
-            .limit(5);
+        let keyset = Keyset1::desc("created_at").unwrap().after(123_i64).limit(5);
         let mut sql = Sql::new("SELECT * FROM users");
         keyset.append_to_sql(&mut sql).unwrap();
         assert_eq!(

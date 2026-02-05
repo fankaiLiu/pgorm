@@ -264,7 +264,11 @@ impl<C: GenericClient> GenericClient for CheckedClient<C> {
 
 #[cfg(feature = "check")]
 impl<C: GenericClient + StreamingClient> StreamingClient for CheckedClient<C> {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         self.check_sql(sql)?;
         self.client.query_stream(sql, params).await
     }

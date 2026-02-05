@@ -1239,6 +1239,7 @@ struct InstrumentedRowStream {
 }
 
 impl InstrumentedRowStream {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         inner: RowStream,
         monitor: Arc<dyn QueryMonitor>,
@@ -1311,7 +1312,8 @@ impl Stream for InstrumentedRowStream {
             return Poll::Ready(None);
         }
 
-        if let (Some(timeout), Some(sleep)) = (self.config.query_timeout, self.timeout_sleep.as_mut())
+        if let (Some(timeout), Some(sleep)) =
+            (self.config.query_timeout, self.timeout_sleep.as_mut())
         {
             if Pin::new(sleep).poll(cx).is_ready() {
                 self.timeout_sleep = None;
@@ -1383,7 +1385,8 @@ impl<C: GenericClient + StreamingClient> InstrumentedClient<C> {
 
         match result {
             Ok(stream) => {
-                let needs_wrap = self.config.monitoring_enabled || self.config.query_timeout.is_some();
+                let needs_wrap =
+                    self.config.monitoring_enabled || self.config.query_timeout.is_some();
                 if !needs_wrap {
                     return Ok(stream);
                 }
@@ -1479,7 +1482,11 @@ impl<C: GenericClient> GenericClient for InstrumentedClient<C> {
 }
 
 impl<C: GenericClient + StreamingClient> StreamingClient for InstrumentedClient<C> {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         self.query_stream_inner(sql, params, None).await
     }
 

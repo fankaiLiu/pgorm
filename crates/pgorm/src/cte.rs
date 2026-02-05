@@ -93,12 +93,7 @@ impl WithBuilder {
     }
 
     /// Create a new WithBuilder for recursive CTE.
-    pub(crate) fn new_recursive(
-        name: Ident,
-        base: Sql,
-        recursive: Sql,
-        union_all: bool,
-    ) -> Self {
+    pub(crate) fn new_recursive(name: Ident, base: Sql, recursive: Sql, union_all: bool) -> Self {
         Self {
             ctes: vec![CteDefinition {
                 name,
@@ -259,15 +254,12 @@ impl WithBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::WithBuilder;
-
     #[test]
     fn simple_cte() {
         let sql = crate::sql("")
             .with(
                 "active_users",
-                crate::sql("SELECT id FROM users WHERE status = ")
-                    .bind("active"),
+                crate::sql("SELECT id FROM users WHERE status = ").bind("active"),
             )
             .unwrap()
             .select(crate::sql("SELECT * FROM active_users"));
@@ -284,14 +276,12 @@ mod tests {
         let sql = crate::sql("")
             .with(
                 "cte1",
-                crate::sql("SELECT id FROM users WHERE status = ")
-                    .bind("active"),
+                crate::sql("SELECT id FROM users WHERE status = ").bind("active"),
             )
             .unwrap()
             .with(
                 "cte2",
-                crate::sql("SELECT * FROM orders WHERE amount > ")
-                    .bind(100_i64),
+                crate::sql("SELECT * FROM orders WHERE amount > ").bind(100_i64),
             )
             .unwrap()
             .select(crate::sql(
@@ -360,11 +350,12 @@ mod tests {
             .with_columns(
                 "monthly_sales",
                 ["month", "total"],
-                crate::sql("SELECT DATE_TRUNC('month', created_at), SUM(amount) FROM orders GROUP BY 1"),
+                crate::sql(
+                    "SELECT DATE_TRUNC('month', created_at), SUM(amount) FROM orders GROUP BY 1",
+                ),
             )
             .unwrap()
-            .select(crate::sql("SELECT * FROM monthly_sales WHERE total > ")
-                .bind(10000_i64));
+            .select(crate::sql("SELECT * FROM monthly_sales WHERE total > ").bind(10000_i64));
 
         assert_eq!(
             sql.to_sql(),
@@ -378,10 +369,7 @@ mod tests {
     #[test]
     fn select_from_shorthand() {
         let sql = crate::sql("")
-            .with(
-                "stats",
-                crate::sql("SELECT COUNT(*) as cnt FROM users"),
-            )
+            .with("stats", crate::sql("SELECT COUNT(*) as cnt FROM users"))
             .unwrap()
             .select_from("stats")
             .unwrap();
@@ -400,11 +388,8 @@ mod tests {
 
     #[test]
     fn cte_validates_column_names() {
-        let result = crate::sql("").with_columns(
-            "valid_name",
-            ["bad column!"],
-            crate::sql("SELECT 1"),
-        );
+        let result =
+            crate::sql("").with_columns("valid_name", ["bad column!"], crate::sql("SELECT 1"));
         assert!(result.is_err());
     }
 

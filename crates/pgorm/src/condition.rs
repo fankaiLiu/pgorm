@@ -723,7 +723,10 @@ impl Condition {
                     p1,
                     p2
                 );
-                (sql, vec![&**va as &(dyn ToSql + Sync), &**vb as &(dyn ToSql + Sync)])
+                (
+                    sql,
+                    vec![&**va as &(dyn ToSql + Sync), &**vb as &(dyn ToSql + Sync)],
+                )
             }
         }
     }
@@ -858,11 +861,8 @@ mod tests {
 
     #[test]
     fn condition_has_any_keys() {
-        let cond = Condition::has_any_keys(
-            "metadata",
-            vec!["a".to_string(), "b".to_string()],
-        )
-        .unwrap();
+        let cond =
+            Condition::has_any_keys("metadata", vec!["a".to_string(), "b".to_string()]).unwrap();
         assert_condition_sql(&cond, "metadata ?| $1", 1);
     }
 

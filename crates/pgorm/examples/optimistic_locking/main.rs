@@ -9,7 +9,10 @@ mod common;
 
 use colored::Colorize;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::UTF8_FULL};
-use common::{print_banner, print_done, print_header, print_info, print_success, print_warning, setup_articles_schema};
+use common::{
+    print_banner, print_done, print_header, print_info, print_success, print_warning,
+    setup_articles_schema,
+};
 use pgorm::{FromRow, InsertModel, Model, OrmError, UpdateModel, create_pool};
 use std::env;
 
@@ -122,10 +125,7 @@ async fn main() -> Result<(), OrmError> {
     .insert_returning(&client)
     .await?;
 
-    print_success(&format!(
-        "Inserted 2 articles (IDs: {}, {})",
-        a1.id, a2.id
-    ));
+    print_success(&format!("Inserted 2 articles (IDs: {}, {})", a1.id, a2.id));
     print_info(&format!("Initial version for all articles: {}", a1.version));
 
     println!();
@@ -139,7 +139,9 @@ async fn main() -> Result<(), OrmError> {
     print_header("1. Successful Version-Checked Update");
 
     print_info("Updating article 1 with current version (0)");
-    print_info("Generated SQL: UPDATE articles SET title=$1, version=version+1 WHERE id=$2 AND version=$3");
+    print_info(
+        "Generated SQL: UPDATE articles SET title=$1, version=version+1 WHERE id=$2 AND version=$3",
+    );
 
     let patch = ArticlePatch {
         title: Some("Introduction to Rust (2nd Edition)".to_string()),
@@ -190,8 +192,7 @@ async fn main() -> Result<(), OrmError> {
             ..
         }) => {
             print_warning(&format!(
-                "User A: StaleRecord error! Table '{}', expected version {}",
-                table, expected_version
+                "User A: StaleRecord error! Table '{table}', expected version {expected_version}",
             ));
             print_info("The record was modified by another user. Re-fetch and retry.");
         }
@@ -211,7 +212,9 @@ async fn main() -> Result<(), OrmError> {
 
     let patch = ArticlePatch {
         title: None,
-        body: Some("Rust is a modern systems programming language focused on safety...".to_string()),
+        body: Some(
+            "Rust is a modern systems programming language focused on safety...".to_string(),
+        ),
         version: 2, // current version after User B's update
     };
 
@@ -289,12 +292,12 @@ async fn main() -> Result<(), OrmError> {
             .await?;
 
         print_info(&format!(
-            "Attempt {}: fetched version {}",
-            attempt, current.version
+            "Attempt {attempt}: fetched version {}",
+            current.version
         ));
 
         let patch = ArticlePatch {
-            title: Some(format!("PostgreSQL Tips (attempt {})", attempt)),
+            title: Some(format!("PostgreSQL Tips (attempt {attempt})")),
             body: None,
             version: current.version,
         };
@@ -302,15 +305,14 @@ async fn main() -> Result<(), OrmError> {
         match patch.update_by_id_returning(&client, target_id).await {
             Ok(updated) => {
                 print_success(&format!(
-                    "Success on attempt {}! Version: {} -> {}",
-                    attempt, current.version, updated.version
+                    "Success on attempt {attempt}! Version: {} -> {}",
+                    current.version, updated.version
                 ));
                 break;
             }
             Err(OrmError::StaleRecord { .. }) => {
                 print_warning(&format!(
-                    "Attempt {} failed: version conflict, retrying...",
-                    attempt
+                    "Attempt {attempt} failed: version conflict, retrying..."
                 ));
             }
             Err(e) => return Err(e),

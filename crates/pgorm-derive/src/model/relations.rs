@@ -281,10 +281,16 @@ impl syn::parse::Parse for ManyToManyAttr {
             syn::Error::new(Span::call_site(), "many_to_many requires through = \"...\"")
         })?;
         let self_key = self_key.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "many_to_many requires self_key = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "many_to_many requires self_key = \"...\"",
+            )
         })?;
         let other_key = other_key.ok_or_else(|| {
-            syn::Error::new(Span::call_site(), "many_to_many requires other_key = \"...\"")
+            syn::Error::new(
+                Span::call_site(),
+                "many_to_many requires other_key = \"...\"",
+            )
         })?;
 
         // Default method name: lowercase model name + 's'

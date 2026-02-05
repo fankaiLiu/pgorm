@@ -187,11 +187,20 @@ async fn main() -> OrmResult<()> {
     // ── Range constructors showcase ──────────────────────────────────────────
     println!("\n[7] Range constructors:");
     let r = Range::<i32>::inclusive(1, 10);
-    println!("    inclusive(1,10) lower={:?} upper={:?}", r.lower, r.upper);
+    println!(
+        "    inclusive(1,10) lower={:?} upper={:?}",
+        r.lower, r.upper
+    );
     let r = Range::<i32>::exclusive(1, 10);
-    println!("    exclusive(1,10) lower={:?} upper={:?}", r.lower, r.upper);
+    println!(
+        "    exclusive(1,10) lower={:?} upper={:?}",
+        r.lower, r.upper
+    );
     let r = Range::<i32>::lower_inc(1, 10);
-    println!("    lower_inc(1,10) lower={:?} upper={:?}", r.lower, r.upper);
+    println!(
+        "    lower_inc(1,10) lower={:?} upper={:?}",
+        r.lower, r.upper
+    );
     let r = Range::<i32>::empty();
     println!("    empty()         is_empty={}", r.is_empty());
     let r = Range::<i32>::unbounded();

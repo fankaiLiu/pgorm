@@ -15,19 +15,19 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     &input,
                     "PgComposite requires a struct with named fields",
-                ))
+                ));
             }
         },
         _ => {
             return Err(syn::Error::new_spanned(
                 &input,
                 "PgComposite can only be derived for structs",
-            ))
+            ));
         }
     };
 
     let pg_type = parse_pg_type(&input)?;
-    let pg_type_array = format!("{}[]", pg_type);
+    let pg_type_array = format!("{pg_type}[]");
     let field_count = fields.len() as i32;
 
     // Generate encoding for each field

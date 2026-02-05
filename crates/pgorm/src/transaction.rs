@@ -255,51 +255,54 @@ impl Drop for Savepoint<'_> {
 // GenericClient delegation for Savepoint
 impl crate::GenericClient for Savepoint<'_> {
     async fn query(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::query(tx, sql, params).await
     }
 
     async fn query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::query_one(tx, sql, params).await
     }
 
-    async fn query_opt(
-        &self,
-        sql: &str,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> OrmResult<Option<Row>> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+    async fn query_opt(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::query_opt(tx, sql, params).await
     }
 
     async fn execute(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::execute(tx, sql, params).await
     }
 
     fn cancel_token(&self) -> Option<tokio_postgres::CancelToken> {
-        self.inner.as_ref().and_then(|tx| crate::GenericClient::cancel_token(tx))
+        self.inner
+            .as_ref()
+            .and_then(crate::GenericClient::cancel_token)
     }
 
     fn supports_prepared_statements(&self) -> bool {
         self.inner
             .as_ref()
-            .map_or(false, |tx| crate::GenericClient::supports_prepared_statements(tx))
+            .is_some_and(crate::GenericClient::supports_prepared_statements)
     }
 
     async fn prepare_statement(&self, sql: &str) -> OrmResult<Statement> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::prepare_statement(tx, sql).await
     }
 
@@ -308,9 +311,10 @@ impl crate::GenericClient for Savepoint<'_> {
         stmt: &Statement,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Vec<Row>> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::query_prepared(tx, stmt, params).await
     }
 
@@ -319,9 +323,10 @@ impl crate::GenericClient for Savepoint<'_> {
         stmt: &Statement,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<u64> {
-        let tx = self.inner.as_ref().ok_or_else(|| {
-            OrmError::Other("savepoint already consumed".to_string())
-        })?;
+        let tx = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| OrmError::Other("savepoint already consumed".to_string()))?;
         crate::GenericClient::execute_prepared(tx, stmt, params).await
     }
 }
@@ -379,8 +384,7 @@ impl TransactionExt for deadpool_postgres::Transaction<'_> {
     async fn pgorm_savepoint(&mut self, name: &str) -> OrmResult<Savepoint<'_>> {
         // Access the inner tokio_postgres::Transaction via DerefMut to get a
         // tokio_postgres::Transaction savepoint (not the deadpool wrapper).
-        let inner_tx: &mut tokio_postgres::Transaction<'_> =
-            std::ops::DerefMut::deref_mut(self);
+        let inner_tx: &mut tokio_postgres::Transaction<'_> = std::ops::DerefMut::deref_mut(self);
         let inner = inner_tx
             .savepoint(name)
             .await
@@ -390,8 +394,7 @@ impl TransactionExt for deadpool_postgres::Transaction<'_> {
 
     async fn pgorm_savepoint_anon(&mut self) -> OrmResult<Savepoint<'_>> {
         let name = __next_savepoint_name();
-        let inner_tx: &mut tokio_postgres::Transaction<'_> =
-            std::ops::DerefMut::deref_mut(self);
+        let inner_tx: &mut tokio_postgres::Transaction<'_> = std::ops::DerefMut::deref_mut(self);
         let inner = inner_tx
             .savepoint(&name)
             .await

@@ -3,6 +3,8 @@
 //! These tests verify that the `#[orm(version)]` attribute works correctly
 //! and generates the expected methods.
 
+#![allow(dead_code)]
+
 use chrono::{DateTime, Utc};
 use pgorm::{FromRow, Model, UpdateModel};
 

@@ -6,6 +6,8 @@
 //! Optional (run queries against a real DB):
 //!   DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
+#![allow(dead_code)]
+
 use pgorm::{FromRow, OrmError, OrmResult, query, sql};
 use std::env;
 
@@ -74,12 +76,10 @@ fn demo_multiple_ctes() -> OrmResult<()> {
             "recent_orders",
             sql("SELECT user_id, amount FROM orders WHERE amount > ").bind(100_i64),
         )?
-        .select(sql(
-            "SELECT u.id, u.name, SUM(o.amount) as total \
+        .select(sql("SELECT u.id, u.name, SUM(o.amount) as total \
              FROM active_users u \
              JOIN recent_orders o ON o.user_id = u.id \
-             GROUP BY u.id, u.name",
-        ));
+             GROUP BY u.id, u.name"));
 
     println!("[multiple CTEs]");
     println!("  SQL:    {}", q.to_sql());
@@ -100,10 +100,14 @@ fn demo_recursive_cte() -> OrmResult<()> {
     let q = sql("")
         .with_recursive(
             "org_tree",
-            sql("SELECT id, name, parent_id, 0 as level, name::text as path \
-                 FROM employees WHERE parent_id IS NULL"),
-            sql("SELECT e.id, e.name, e.parent_id, t.level + 1, t.path || ' > ' || e.name \
-                 FROM employees e JOIN org_tree t ON e.parent_id = t.id"),
+            sql(
+                "SELECT id, name, parent_id, 0 as level, name::text as path \
+                 FROM employees WHERE parent_id IS NULL",
+            ),
+            sql(
+                "SELECT e.id, e.name, e.parent_id, t.level + 1, t.path || ' > ' || e.name \
+                 FROM employees e JOIN org_tree t ON e.parent_id = t.id",
+            ),
         )?
         .select(sql("SELECT * FROM org_tree ORDER BY path"));
 
@@ -130,7 +134,7 @@ fn demo_recursive_cte_with_params() -> OrmResult<()> {
             sql("SELECT c.id, c.name, c.parent_id, ct.depth + 1 \
                  FROM categories c JOIN category_tree ct ON c.parent_id = ct.id \
                  WHERE ct.depth < ")
-                .bind(5_i32),
+            .bind(5_i32),
         )?
         .select_from("category_tree")?;
 
@@ -170,11 +174,9 @@ fn demo_cte_data_modification() -> OrmResult<()> {
     delete_sql.push_bind("2024-01-01");
     delete_sql.push(" RETURNING *");
 
-    let q = sql("")
-        .with("deleted_orders", delete_sql)?
-        .select(sql(
-            "INSERT INTO orders_archive SELECT * FROM deleted_orders",
-        ));
+    let q = sql("").with("deleted_orders", delete_sql)?.select(sql(
+        "INSERT INTO orders_archive SELECT * FROM deleted_orders",
+    ));
 
     println!("[CTE data modification — archive deleted orders]");
     println!("  SQL:    {}", q.to_sql());
@@ -244,13 +246,7 @@ async fn demo_live(client: &tokio_postgres::Client) -> OrmResult<()> {
             .execute(client)
             .await?;
     }
-    for (user_id, amount) in [
-        (1_i64, 500_i64),
-        (1, 300),
-        (2, 1200),
-        (2, 800),
-        (3, 50),
-    ] {
+    for (user_id, amount) in [(1_i64, 500_i64), (1, 300), (2, 1200), (2, 800), (3, 50)] {
         query("INSERT INTO orders (user_id, amount) VALUES ($1, $2)")
             .bind(user_id)
             .bind(amount)
@@ -351,10 +347,14 @@ async fn demo_live(client: &tokio_postgres::Client) -> OrmResult<()> {
     let org_tree: Vec<OrgNode> = sql("")
         .with_recursive(
             "org_tree",
-            sql("SELECT id, name, parent_id, 0 as level, name::text as path \
-                 FROM employees WHERE parent_id IS NULL"),
-            sql("SELECT e.id, e.name, e.parent_id, t.level + 1, t.path || ' > ' || e.name \
-                 FROM employees e JOIN org_tree t ON e.parent_id = t.id"),
+            sql(
+                "SELECT id, name, parent_id, 0 as level, name::text as path \
+                 FROM employees WHERE parent_id IS NULL",
+            ),
+            sql(
+                "SELECT e.id, e.name, e.parent_id, t.level + 1, t.path || ' > ' || e.name \
+                 FROM employees e JOIN org_tree t ON e.parent_id = t.id",
+            ),
         )?
         .select(sql("SELECT * FROM org_tree ORDER BY path"))
         .fetch_all_as(client)
@@ -404,7 +404,7 @@ async fn demo_live(client: &tokio_postgres::Client) -> OrmResult<()> {
             sql("SELECT c.id, c.name, ct.depth + 1 \
                  FROM categories c JOIN category_tree ct ON c.parent_id = ct.id \
                  WHERE ct.depth < ")
-                .bind(2_i32),
+            .bind(2_i32),
         )?
         .select_from("category_tree")?
         .fetch_all_as(client)

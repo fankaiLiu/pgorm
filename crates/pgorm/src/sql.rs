@@ -29,8 +29,8 @@ use crate::row::FromRow;
 use futures_core::Stream;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio_postgres::Row;
 use tokio_postgres::types::{FromSql, ToSql};
 
@@ -1139,7 +1139,6 @@ impl Sql {
         let name = name.into_ident()?;
         Ok(WithBuilder::new_recursive(name, base, recursive, false))
     }
-
 }
 
 #[cfg(test)]

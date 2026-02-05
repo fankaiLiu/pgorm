@@ -347,8 +347,7 @@ where
         let Some(fk) = fk else { continue };
         if out.contains_key(&fk) {
             return Err(OrmError::validation(format!(
-                "has_one strict violation: duplicate rows for {}.{}",
-                table, fk_col
+                "has_one strict violation: duplicate rows for {table}.{fk_col}",
             )));
         }
         let child = Child::from_row(&row)?;
@@ -357,6 +356,7 @@ where
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn load_many_to_many_map<Child, Id>(
     conn: &impl GenericClient,
     parent_ids: Vec<Id>,
@@ -387,6 +387,7 @@ where
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn load_many_to_many_map_with<Child, Id, F>(
     conn: &impl GenericClient,
     parent_ids: Vec<Id>,

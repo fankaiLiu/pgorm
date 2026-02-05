@@ -414,7 +414,6 @@ pub trait StreamingClient: GenericClient {
         let _ = tag;
         self.query_stream(sql, params)
     }
-
 }
 
 struct MapDbRowStream<S> {
@@ -446,8 +445,12 @@ where
 }
 
 impl StreamingClient for tokio_postgres::Client {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
-        let stream = tokio_postgres::Client::query_raw(self, sql, params.iter().map(|p| *p))
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
+        let stream = tokio_postgres::Client::query_raw(self, sql, params.iter().copied())
             .await
             .map_err(OrmError::from_db_error)?;
         Ok(RowStream::new(MapDbRowStream::new(stream)))
@@ -455,11 +458,14 @@ impl StreamingClient for tokio_postgres::Client {
 }
 
 impl StreamingClient for tokio_postgres::Transaction<'_> {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
-        let stream =
-            tokio_postgres::Transaction::query_raw(self, sql, params.iter().map(|p| *p))
-                .await
-                .map_err(OrmError::from_db_error)?;
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
+        let stream = tokio_postgres::Transaction::query_raw(self, sql, params.iter().copied())
+            .await
+            .map_err(OrmError::from_db_error)?;
         Ok(RowStream::new(MapDbRowStream::new(stream)))
     }
 }
@@ -622,21 +628,33 @@ impl GenericClient for deadpool_postgres::Transaction<'_> {
 
 #[cfg(feature = "pool")]
 impl StreamingClient for deadpool_postgres::Client {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         StreamingClient::query_stream(&**self, sql, params).await
     }
 }
 
 #[cfg(feature = "pool")]
 impl StreamingClient for deadpool_postgres::ClientWrapper {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         StreamingClient::query_stream(&**self, sql, params).await
     }
 }
 
 #[cfg(feature = "pool")]
 impl StreamingClient for deadpool_postgres::Transaction<'_> {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         StreamingClient::query_stream(&**self, sql, params).await
     }
 }
@@ -721,7 +739,11 @@ impl GenericClient for PoolClient {
 
 #[cfg(feature = "pool")]
 impl StreamingClient for PoolClient {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         StreamingClient::query_stream(&self.0, sql, params).await
     }
 }
@@ -831,7 +853,11 @@ impl<C: GenericClient> GenericClient for &C {
 }
 
 impl<C: StreamingClient> StreamingClient for &C {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         (*self).query_stream(sql, params).await
     }
 

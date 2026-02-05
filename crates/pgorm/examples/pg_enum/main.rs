@@ -63,12 +63,14 @@ async fn main() -> OrmResult<()> {
     .await?;
 
     // ── Insert with enum value ───────────────────────────────────────────────
-    let row = query("INSERT INTO orders (user_id, status, total) VALUES ($1, $2, $3) RETURNING id, status")
-        .bind(1_i64)
-        .bind(OrderStatus::Pending)
-        .bind(99.99_f64)
-        .fetch_one(&client)
-        .await?;
+    let row = query(
+        "INSERT INTO orders (user_id, status, total) VALUES ($1, $2, $3) RETURNING id, status",
+    )
+    .bind(1_i64)
+    .bind(OrderStatus::Pending)
+    .bind(99.99_f64)
+    .fetch_one(&client)
+    .await?;
     let id: i64 = row.try_get_column("id")?;
     let status: OrderStatus = row.try_get_column("status")?;
     println!("[1] Inserted order id={id}, status={status:?}");

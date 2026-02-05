@@ -21,6 +21,7 @@ struct User {
     name: String,
 }
 
+#[allow(clippy::duplicated_attributes)]
 #[derive(Debug, Clone, FromRow, Model)]
 #[orm(table = "posts")]
 #[orm(belongs_to(User, foreign_key = "user_id", as = "author"))]

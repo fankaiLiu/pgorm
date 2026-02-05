@@ -248,7 +248,7 @@ impl<T: PgType> PgType for Vec<T> {
 
         // Store (best-effort); if another thread won the race, return the stored value.
         let mut map = cache.lock().unwrap();
-        *map.entry(key).or_insert(computed)
+        map.entry(key).or_insert(computed)
     }
 }
 

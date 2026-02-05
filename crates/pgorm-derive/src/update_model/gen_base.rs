@@ -330,7 +330,10 @@ pub(super) fn generate_update_returning_methods(
         };
         (capture, check)
     } else {
-        (quote! {}, quote! { q.fetch_one_as::<#returning_ty>(conn).await })
+        (
+            quote! {},
+            quote! { q.fetch_one_as::<#returning_ty>(conn).await },
+        )
     };
 
     // Generate force returning method if version field exists

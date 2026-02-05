@@ -22,7 +22,9 @@ mod graph_parse;
 mod types;
 
 use attrs::{get_field_attrs, get_struct_attrs};
-use gen_base::{generate_update_by_id_methods, generate_update_force_methods, generate_update_returning_methods};
+use gen_base::{
+    generate_update_by_id_methods, generate_update_force_methods, generate_update_returning_methods,
+};
 use gen_graph::generate_update_graph_methods;
 use types::{AutoTimestampKind, detect_auto_timestamp_type, option_inner};
 
@@ -766,7 +768,8 @@ fn is_ipaddr_type(ty: &syn::Type) -> bool {
 
 fn is_integer_type(ty: &syn::Type) -> bool {
     let syn::Type::Path(p) = ty else { return false };
-    p.path.segments.last().is_some_and(|s| {
-        matches!(s.ident.to_string().as_str(), "i16" | "i32" | "i64")
-    })
+    p.path
+        .segments
+        .last()
+        .is_some_and(|s| matches!(s.ident.to_string().as_str(), "i16" | "i32" | "i64"))
 }

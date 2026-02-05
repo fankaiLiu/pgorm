@@ -15,7 +15,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             return Err(syn::Error::new_spanned(
                 &input,
                 "PgEnum can only be derived for enums",
-            ))
+            ));
         }
     };
 
@@ -36,8 +36,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
 
         let variant_ident = &variant.ident;
-        let sql_name = parse_rename(variant)?
-            .unwrap_or_else(|| variant_ident.to_string().to_snake_case());
+        let sql_name =
+            parse_rename(variant)?.unwrap_or_else(|| variant_ident.to_string().to_snake_case());
 
         to_sql_arms.push(quote! {
             #name::#variant_ident => #sql_name,
@@ -47,7 +47,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         });
     }
 
-    let pg_type_array = format!("{}[]", pg_type);
+    let pg_type_array = format!("{pg_type}[]");
 
     let expanded = quote! {
         impl ::tokio_postgres::types::ToSql for #name {

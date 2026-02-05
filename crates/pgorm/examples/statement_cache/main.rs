@@ -10,8 +10,9 @@ use tokio_postgres::NoTls;
 
 #[tokio::main]
 async fn main() -> OrmResult<()> {
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL is required, e.g. postgres://postgres:postgres@localhost:5432/postgres");
+    let database_url = std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required, e.g. postgres://postgres:postgres@localhost:5432/postgres",
+    );
 
     let (client, connection) = tokio_postgres::connect(&database_url, NoTls)
         .await
@@ -21,12 +22,7 @@ async fn main() -> OrmResult<()> {
     });
 
     // Prepared statements are per-connection, so the cache also lives per connection.
-    let pg = PgClient::with_config(
-        client,
-        PgClientConfig::new()
-            .no_check()
-            .statement_cache(64),
-    );
+    let pg = PgClient::with_config(client, PgClientConfig::new().no_check().statement_cache(64));
 
     let sql = "SELECT $1::bigint + $2::bigint";
     let tag = "examples.statement_cache.add";
@@ -65,4 +61,3 @@ async fn main() -> OrmResult<()> {
 
     Ok(())
 }
-

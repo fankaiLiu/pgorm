@@ -251,7 +251,9 @@ async fn main() -> OrmResult<()> {
             // Each record gets its own savepoint
             let result: Result<(), OrmError> = pgorm::savepoint!(tx, sp, {
                 if value < 0 {
-                    return Err(OrmError::validation(format!("invalid value {value} for item {id}")));
+                    return Err(OrmError::validation(format!(
+                        "invalid value {value} for item {id}"
+                    )));
                 }
                 query("UPDATE items SET processed = TRUE WHERE id = $1")
                     .bind(id)

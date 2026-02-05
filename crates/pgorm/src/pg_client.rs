@@ -48,7 +48,6 @@
 //! println!("Stats: {:?}", pg.stats());
 //! ```
 
-use crate::{GenericClient, RowStream, StreamingClient};
 use crate::check::{DbSchema, SchemaRegistry, TableMeta};
 use crate::checked_client::ModelRegistration;
 use crate::error::{OrmError, OrmResult};
@@ -59,17 +58,18 @@ use crate::monitor::{
     QueryType, StatsMonitor,
 };
 use crate::row::FromRow;
+use crate::{GenericClient, RowStream, StreamingClient};
 
 // Re-export CheckMode from checked_client for public API
 pub use crate::checked_client::CheckMode;
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use futures_core::Stream;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 use tokio_postgres::Row;
 use tokio_postgres::Statement;
 use tokio_postgres::types::ToSql;
@@ -304,19 +304,10 @@ pub struct PgClientConfig {
 }
 
 /// Prepared statement cache configuration (per-connection).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StatementCacheConfig {
     pub enabled: bool,
     pub capacity: usize,
-}
-
-impl Default for StatementCacheConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            capacity: 0,
-        }
-    }
 }
 
 impl Default for PgClientConfig {
@@ -556,7 +547,8 @@ impl<C> PgClient<C> {
             None
         };
 
-        let statement_cache = (config.statement_cache.enabled && config.statement_cache.capacity > 0)
+        let statement_cache = (config.statement_cache.enabled
+            && config.statement_cache.capacity > 0)
             .then(|| StatementCache::new(config.statement_cache.capacity));
 
         Self {
@@ -1260,12 +1252,14 @@ impl<C: GenericClient> PgClient<C> {
                     .insert("prepared".to_string(), "false".to_string());
             }
             StmtCacheProbe::Hit(_) => {
-                ctx.fields.insert("stmt_cache".to_string(), "hit".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "hit".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
             StmtCacheProbe::Miss => {
-                ctx.fields.insert("stmt_cache".to_string(), "miss".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "miss".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
@@ -1335,9 +1329,10 @@ impl<C: GenericClient> PgClient<C> {
                         self.execute_with_timeout(self.client.query_prepared(&stmt, params))
                             .await
                     }
-                    None => self
-                        .execute_with_timeout(self.client.query(&ctx.exec_sql, params))
-                        .await,
+                    None => {
+                        self.execute_with_timeout(self.client.query(&ctx.exec_sql, params))
+                            .await
+                    }
                 }
             }
         };
@@ -1376,12 +1371,14 @@ impl<C: GenericClient> PgClient<C> {
                     .insert("prepared".to_string(), "false".to_string());
             }
             StmtCacheProbe::Hit(_) => {
-                ctx.fields.insert("stmt_cache".to_string(), "hit".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "hit".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
             StmtCacheProbe::Miss => {
-                ctx.fields.insert("stmt_cache".to_string(), "miss".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "miss".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
@@ -1451,9 +1448,10 @@ impl<C: GenericClient> PgClient<C> {
                         self.execute_with_timeout(self.client.query_one_prepared(&stmt, params))
                             .await
                     }
-                    None => self
-                        .execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
-                        .await,
+                    None => {
+                        self.execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
+                            .await
+                    }
                 }
             }
         };
@@ -1492,12 +1490,14 @@ impl<C: GenericClient> PgClient<C> {
                     .insert("prepared".to_string(), "false".to_string());
             }
             StmtCacheProbe::Hit(_) => {
-                ctx.fields.insert("stmt_cache".to_string(), "hit".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "hit".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
             StmtCacheProbe::Miss => {
-                ctx.fields.insert("stmt_cache".to_string(), "miss".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "miss".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
@@ -1539,9 +1539,7 @@ impl<C: GenericClient> PgClient<C> {
 
                             let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
                             result = self
-                                .execute_with_timeout(
-                                    self.client.query_opt_prepared(&stmt, params),
-                                )
+                                .execute_with_timeout(self.client.query_opt_prepared(&stmt, params))
                                 .await;
                         }
                     }
@@ -1569,9 +1567,10 @@ impl<C: GenericClient> PgClient<C> {
                         self.execute_with_timeout(self.client.query_opt_prepared(&stmt, params))
                             .await
                     }
-                    None => self
-                        .execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
-                        .await,
+                    None => {
+                        self.execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
+                            .await
+                    }
                 }
             }
         };
@@ -1610,12 +1609,14 @@ impl<C: GenericClient> PgClient<C> {
                     .insert("prepared".to_string(), "false".to_string());
             }
             StmtCacheProbe::Hit(_) => {
-                ctx.fields.insert("stmt_cache".to_string(), "hit".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "hit".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
             StmtCacheProbe::Miss => {
-                ctx.fields.insert("stmt_cache".to_string(), "miss".to_string());
+                ctx.fields
+                    .insert("stmt_cache".to_string(), "miss".to_string());
                 ctx.fields
                     .insert("prepared".to_string(), "true".to_string());
             }
@@ -1685,9 +1686,10 @@ impl<C: GenericClient> PgClient<C> {
                         self.execute_with_timeout(self.client.execute_prepared(&stmt, params))
                             .await
                     }
-                    None => self
-                        .execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
-                        .await,
+                    None => {
+                        self.execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
+                            .await
+                    }
                 }
             }
         };
@@ -1814,8 +1816,10 @@ impl Stream for PgClientRowStream {
             return Poll::Ready(None);
         }
 
-        if let (Some(timeout), Some(sleep)) = (self.reporter.config.query_timeout, self.timeout_sleep.as_mut())
-        {
+        if let (Some(timeout), Some(sleep)) = (
+            self.reporter.config.query_timeout,
+            self.timeout_sleep.as_mut(),
+        ) {
             if Pin::new(sleep).poll(cx).is_ready() {
                 self.timeout_sleep = None;
                 self.terminated = true;
@@ -1939,7 +1943,11 @@ where
 }
 
 impl<C: GenericClient + StreamingClient> StreamingClient for PgClient<C> {
-    async fn query_stream(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<RowStream> {
+    async fn query_stream(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<RowStream> {
         self.query_stream_impl(None, sql, params).await
     }
 
@@ -1998,7 +2006,9 @@ mod tests {
 
     #[test]
     fn test_config_no_statement_cache() {
-        let config = PgClientConfig::new().statement_cache(16).no_statement_cache();
+        let config = PgClientConfig::new()
+            .statement_cache(16)
+            .no_statement_cache();
         assert!(!config.statement_cache.enabled);
     }
 
