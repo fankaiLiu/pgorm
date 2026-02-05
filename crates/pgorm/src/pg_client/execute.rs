@@ -24,7 +24,7 @@ impl<C: GenericClient> super::PgClient<C> {
     }
 
     pub(super) fn apply_sql_policy(&self, ctx: &mut QueryContext) -> OrmResult<()> {
-        use crate::StatementKind;
+        use crate::check::StatementKind;
 
         let policy = &self.config.sql_policy;
         // Fast path: default policy is "Allow" everywhere, so avoid parsing/analyzing SQL.
@@ -143,7 +143,7 @@ impl<C: GenericClient> super::PgClient<C> {
                 let issues = self.registry.check_sql(sql);
                 let errors: Vec<_> = issues
                     .iter()
-                    .filter(|i| i.level == crate::SchemaIssueLevel::Error)
+                    .filter(|i| i.level == crate::check::SchemaIssueLevel::Error)
                     .collect();
                 if errors.is_empty() {
                     Ok(())

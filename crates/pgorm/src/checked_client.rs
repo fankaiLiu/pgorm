@@ -7,7 +7,8 @@
 //! # Example
 //!
 //! ```ignore
-//! use pgorm::{create_pool, CheckedClient, Model, FromRow};
+//! use pgorm::check::CheckedClient;
+//! use pgorm::prelude::*;
 //!
 //! #[derive(Debug, FromRow, Model)]
 //! #[orm(table = "products")]
@@ -27,16 +28,20 @@
 //! let products = Product::select_all(&checked).await?;
 //! ```
 
+#[cfg(feature = "check")]
 use crate::GenericClient;
+#[cfg(feature = "check")]
+use crate::check::SchemaRegistry;
+#[cfg(feature = "check")]
 use crate::error::{OrmError, OrmResult};
 #[cfg(feature = "check")]
 use crate::{RowStream, StreamingClient};
-use std::sync::Arc;
-use tokio_postgres::Row;
-use tokio_postgres::types::ToSql;
-
 #[cfg(feature = "check")]
-use crate::check::SchemaRegistry;
+use std::sync::Arc;
+#[cfg(feature = "check")]
+use tokio_postgres::Row;
+#[cfg(feature = "check")]
+use tokio_postgres::types::ToSql;
 
 /// Registration entry for auto-registering models.
 ///
@@ -50,6 +55,7 @@ pub struct ModelRegistration {
 inventory::collect!(ModelRegistration);
 
 /// Check mode configuration for `CheckedClient`.
+#[cfg(feature = "check")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CheckMode {
     /// Disable all SQL checking.
@@ -179,7 +185,7 @@ impl<C> CheckedClient<C> {
                 let issues = self.registry.check_sql(sql);
                 let errors: Vec<_> = issues
                     .iter()
-                    .filter(|i| i.level == crate::SchemaIssueLevel::Error)
+                    .filter(|i| i.level == crate::check::SchemaIssueLevel::Error)
                     .collect();
                 if errors.is_empty() {
                     Ok(())

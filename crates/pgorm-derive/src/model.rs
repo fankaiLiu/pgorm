@@ -1421,7 +1421,7 @@ fn generate_generated_sql_method(id_column: &Option<String>) -> TokenStream {
             /// Check all generated SQL against the provided registry.
             ///
             /// Returns a map of SQL name to issues found.
-            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> ::std::collections::HashMap<&'static str, ::std::vec::Vec<pgorm::SchemaIssue>> {
+            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> ::std::collections::HashMap<&'static str, ::std::vec::Vec<pgorm::check::SchemaIssue>> {
                 let mut results = ::std::collections::HashMap::new();
                 for (name, sql) in Self::generated_sql() {
                     let issues = registry.check_sql(&sql);
@@ -1451,7 +1451,7 @@ fn generate_generated_sql_method(id_column: &Option<String>) -> TokenStream {
             }
 
             /// Check all generated SQL against the provided registry.
-            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> ::std::collections::HashMap<&'static str, ::std::vec::Vec<pgorm::SchemaIssue>> {
+            pub fn check_schema(registry: &pgorm::SchemaRegistry) -> ::std::collections::HashMap<&'static str, ::std::vec::Vec<pgorm::check::SchemaIssue>> {
                 let mut results = ::std::collections::HashMap::new();
                 for (name, sql) in Self::generated_sql() {
                     let issues = registry.check_sql(&sql);

@@ -78,7 +78,9 @@ fn create_registry_table(pg: &PgClient<impl pgorm::GenericClient>) -> Table {
 }
 
 /// Create a styled table for SQL check results
-fn create_check_results_table(results: &[(String, String, Vec<pgorm::SchemaIssue>)]) -> Table {
+fn create_check_results_table(
+    results: &[(String, String, Vec<pgorm::check::SchemaIssue>)],
+) -> Table {
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
@@ -129,7 +131,7 @@ fn create_check_results_table(results: &[(String, String, Vec<pgorm::SchemaIssue
 }
 
 /// Create a styled table for query statistics
-fn create_stats_table(stats: &pgorm::QueryStats) -> Table {
+fn create_stats_table(stats: &pgorm::monitor::QueryStats) -> Table {
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)

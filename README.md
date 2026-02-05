@@ -15,7 +15,9 @@
   <img src="https://img.shields.io/crates/l/pgorm.svg" alt="license">
 </p>
 
-> **Note:** This project is under active development and iterating rapidly. APIs may change between versions.
+> **Note:** This project is pre-1.0 and iterating rapidly. APIs may change between minor versions.
+> Deprecated items will have at least one minor version of transition period.
+> MSRV: **1.88+** · Follows [semver](https://semver.org/) for 0.x releases.
 
 ---
 
@@ -51,12 +53,25 @@ pgorm = "0.1.6"
 
 ## Quick Start
 
+Start with the prelude for the most common imports:
+
+```rust
+use pgorm::prelude::*;
+```
+
+For monitoring and SQL linting, import from the dedicated modules:
+
+```rust
+use pgorm::monitor::{InstrumentedClient, MonitorConfig, LoggingMonitor};
+use pgorm::check::{lint_sql, LintLevel};
+```
+
 ### Model Mode
 
 Define models with relations and eager loading support:
 
 ```rust
-use pgorm::{FromRow, Model, ModelPk as _};
+use pgorm::prelude::*;
 
 #[derive(Debug, Clone, FromRow, Model)]
 #[orm(table = "users")]
@@ -96,7 +111,7 @@ let posts_with_author = Post::load_author(&client, posts).await?;
 Build complex queries with type-safe condition helpers:
 
 ```rust
-use pgorm::{sql, Condition, WhereExpr, Op, OrderBy, Pagination};
+use pgorm::prelude::*;
 
 // Dynamic WHERE conditions
 let mut where_expr = WhereExpr::and(vec![
@@ -232,7 +247,7 @@ match patch.update_by_id_returning(&client, article.id).await {
 ### Bulk Update & Delete
 
 ```rust
-use pgorm::{SetExpr, Condition, sql};
+use pgorm::prelude::*;
 
 // Bulk update with conditions
 let affected = sql("users")
@@ -355,7 +370,7 @@ Condition::range_adjacent("r", range)?;     // -|-
 ### Transactions & Savepoints
 
 ```rust
-use pgorm::{OrmError, TransactionExt};
+use pgorm::prelude::*;
 
 // Top-level transaction
 pgorm::transaction!(&mut client, tx, {
@@ -393,7 +408,7 @@ pgorm::transaction!(&mut client, tx, {
 ### Keyset (Cursor) Pagination
 
 ```rust
-use pgorm::{Keyset2, WhereExpr, Condition, sql};
+use pgorm::prelude::*;
 
 let mut where_expr = WhereExpr::and(Vec::new());
 
@@ -471,10 +486,11 @@ let report = NewProductGraph {
 Monitor query performance with built-in metrics, logging, and custom hooks:
 
 ```rust
-use pgorm::{
+use pgorm::monitor::{
     CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor,
-    MonitorConfig, QueryContext, QueryHook, StatsMonitor, query,
+    MonitorConfig, QueryContext, QueryHook, QueryType, StatsMonitor,
 };
+use pgorm::{query, OrmError, OrmResult};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -483,7 +499,7 @@ struct BlockDangerousDeleteHook;
 
 impl QueryHook for BlockDangerousDeleteHook {
     fn before_query(&self, ctx: &QueryContext) -> HookAction {
-        if ctx.query_type == pgorm::QueryType::Delete {
+        if ctx.query_type == QueryType::Delete {
             let s = ctx.canonical_sql.to_ascii_lowercase();
             if !s.contains(" where ") {
                 return HookAction::Abort("blocked: DELETE without WHERE".into());
@@ -574,11 +590,21 @@ let user: User = new_user.insert_returning(&client).await?;
 
 ## Feature Flags
 
+The default features cover most use cases:
+
+```toml
+# Recommended (all defaults enabled: pool, derive, check, validate)
+pgorm = "0.1.6"
+
+# Minimal (bare SQL builder + row mapping only)
+pgorm = { version = "0.1.6", default-features = false }
+```
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `pool` | Yes | Connection pooling via `deadpool-postgres` |
 | `derive` | Yes | Derive macros (`FromRow`, `Model`, `InsertModel`, etc.) |
-| `check` | Yes | SQL schema checking and linting via `pgorm-check` |
+| `check` | Yes | SQL schema checking, linting, and `PgClient` via `pgorm-check` |
 | `validate` | Yes | Changeset-style validation helpers (email/url/regex) |
 | `migrate` | No | SQL migrations via `refinery` |
 | `tracing` | No | SQL debug logs via `tracing` crate |

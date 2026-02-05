@@ -1,29 +1,27 @@
 //! # pgorm
 //!
-//! A lightweight Postgres-only ORM for Rust.
+//! A model-definition-first, AI-friendly PostgreSQL ORM for Rust.
 //!
-//! ## Features
-//!
-//! - **SQL explicit**: SQL is a first-class citizen (use `query()` / `sql()`; `qb::query()` is an alias)
-//! - **Type-safe mapping**: Row → Struct via `FromRow` trait
-//! - **Minimal magic**: Traits and macros only for boilerplate reduction
-//! - **Transaction-friendly**: pass a transaction anywhere a `GenericClient` is expected
-//! - **Query monitoring**: Built-in support for timing, logging, and hooking SQL execution
-//! - **SQL checking**: Validate SQL against registered schemas and lint for common issues
-//! - **Migrations**: Optional SQL migrations via `refinery` (feature: `migrate`)
-//!
-//! ## SQL fallback (qb)
-//!
-//! The `qb` module is a thin wrapper around `query()` for running hand-written SQL:
+//! ## Quick Start
 //!
 //! ```ignore
-//! use pgorm::qb;
-//!
-//! let users: Vec<User> = qb::query("SELECT * FROM users WHERE status = $1")
-//!     .bind("active")
-//!     .fetch_all_as(&client)
-//!     .await?;
+//! use pgorm::prelude::*;
 //! ```
+//!
+//! ## Two-level API
+//!
+//! - **Recommended**: [`PgClient`] — monitoring + SQL checking + statement cache + policy
+//! - **Low-level**: [`GenericClient`] / [`Sql`] — pluggable, minimal abstraction
+//!
+//! ## Modules
+//!
+//! - [`monitor`] — query monitoring, hooks, [`InstrumentedClient`]
+//! - [`check`] — SQL schema checking, linting, [`SchemaRegistry`]
+//! - [`prelude`] — convenient `use pgorm::prelude::*` for daily use
+//! - [`qb`] — thin wrapper around `query()` for hand-written SQL
+//!
+//! > **Stability:** pgorm is pre-1.0. APIs may change between minor versions.
+//! > MSRV: 1.88+
 
 mod builder;
 mod bulk;
@@ -34,7 +32,7 @@ mod cte;
 pub mod eager;
 mod error;
 mod ident;
-mod monitor;
+pub mod monitor;
 pub mod prelude;
 pub mod qb;
 mod row;
@@ -49,34 +47,49 @@ pub mod validate;
 #[cfg(feature = "migrate")]
 pub mod migrate;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Core stable exports (pgorm::*)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// SQL building
 pub use builder::{
     Cursor, Keyset1, Keyset2, NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr,
 };
-pub use bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};
-pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
-pub use client::{GenericClient, RowStream, StreamingClient};
 pub use condition::{Condition, Op};
 pub use cte::WithBuilder;
-pub use eager::{BelongsToMap, HasManyMap, HasOneMap, Loaded};
-pub use error::{OrmError, OrmResult};
-pub use ident::{Ident, IdentPart, IntoIdent};
-#[cfg(feature = "tracing")]
-pub use monitor::TracingSqlHook;
-pub use monitor::{
-    CompositeHook, CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig,
-    NoopMonitor, QueryContext, QueryHook, QueryMonitor, QueryResult, QueryStats, QueryType,
-    StatsMonitor,
-};
-pub use row::{FromRow, PgType, RowExt};
 pub use sql::{FromRowStream, Query, Sql, query, sql};
+
+// Row mapping & types
+pub use row::{FromRow, PgType, RowExt};
 pub use tokio_postgres::types::Json;
-pub use transaction::{__next_savepoint_name, Savepoint, TransactionExt};
 pub use types::{Bound, Range};
+
+// Client
+pub use client::{GenericClient, RowStream, StreamingClient};
+
+// Bulk operations
+pub use bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};
+
+// Identifiers
+pub use ident::{Ident, IdentPart, IntoIdent};
+
+// Eager loading
+pub use eager::{BelongsToMap, HasManyMap, HasOneMap, Loaded};
+
+// Transactions
+pub use transaction::{__next_savepoint_name, Savepoint, TransactionExt};
+
+// Validation
+pub use changeset::{ValidationCode, ValidationError, ValidationErrors};
+
+// Errors
+pub use error::{OrmError, OrmResult};
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
 pub use migrate::{Migration, Report, Runner, Target, embed_migrations};
 
+// Connection pooling
 #[cfg(feature = "pool")]
 mod pool;
 
@@ -89,13 +102,17 @@ pub use pool::{create_pool, create_pool_with_config};
 #[cfg(feature = "pool")]
 pub use pool::{create_pool_with_manager_config, create_pool_with_tls};
 
+// Derive macros
 #[cfg(feature = "derive")]
 pub use pgorm_derive::{
     FromRow, InsertModel, Model, PgComposite, PgEnum, QueryParams, UpdateModel, ViewModel,
 };
 
-// SQL checking and linting
-mod check;
+// ─────────────────────────────────────────────────────────────────────────────
+// SQL checking and linting (public module: pgorm::check)
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub mod check;
 
 // Checked client with auto-registration (lower-level)
 mod checked_client;
@@ -104,10 +121,8 @@ mod checked_client;
 #[cfg(feature = "check")]
 mod pg_client;
 
-pub use check::{
-    ColumnMeta, SchemaIssue, SchemaIssueKind, SchemaIssueLevel, SchemaRegistry, TableMeta,
-    TableSchema,
-};
+// Core schema types stay at top level
+pub use check::{ColumnMeta, SchemaRegistry, TableMeta, TableSchema};
 
 // Re-export inventory for use by derive macros
 #[doc(hidden)]
@@ -121,53 +136,11 @@ pub use serde;
 #[doc(hidden)]
 pub use checked_client::ModelRegistration;
 
-#[cfg(feature = "check")]
-pub use checked_client::CheckedClient;
-
-// Re-export PgClient (recommended API)
+// Re-export PgClient (recommended API) — core stable
 #[cfg(feature = "check")]
 pub use pg_client::{
     CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig,
     SelectWithoutLimitPolicy, SqlPolicy, StatementCacheConfig,
-};
-
-#[cfg(feature = "check")]
-pub use check::{
-    CheckClient,
-    CheckError,
-    CheckResult,
-    ColumnInfo,
-    // Lint types and functions
-    ColumnRef,
-    DbSchema,
-    LintIssue,
-    LintLevel,
-    LintResult,
-    ParseResult,
-    RelationKind,
-    SchemaCache,
-    SchemaCacheConfig,
-    SchemaCacheLoad,
-    SqlCheckIssue,
-    SqlCheckIssueKind,
-    SqlCheckLevel,
-    StatementKind,
-    TableInfo,
-    // Database schema check
-    check_sql,
-    check_sql_cached,
-    delete_has_where,
-    detect_statement_kind,
-    get_column_refs,
-    get_table_names,
-    is_valid_sql,
-    lint_select_many,
-    lint_sql,
-    // Schema introspection
-    load_schema_from_db,
-    select_has_limit,
-    select_has_star,
-    update_has_where,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

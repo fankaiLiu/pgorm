@@ -1,22 +1,66 @@
 //! Error types for pgorm
+//!
+//! ## Error classification
+//!
+//! `OrmError` variants fall into two categories:
+//!
+//! **Recoverable** — the caller should match on these and handle them:
+//! [`NotFound`](OrmError::NotFound), [`TooManyRows`](OrmError::TooManyRows),
+//! [`UniqueViolation`](OrmError::UniqueViolation), [`ForeignKeyViolation`](OrmError::ForeignKeyViolation),
+//! [`CheckViolation`](OrmError::CheckViolation), [`StaleRecord`](OrmError::StaleRecord),
+//! [`Timeout`](OrmError::Timeout), [`Validation`](OrmError::Validation).
+//!
+//! **Configuration / programming errors** — typically propagated with `?`:
+//! [`Connection`](OrmError::Connection), [`Query`](OrmError::Query),
+//! [`Decode`](OrmError::Decode), [`Serialization`](OrmError::Serialization),
+//! [`Pool`](OrmError::Pool), [`Migration`](OrmError::Migration),
+//! [`Other`](OrmError::Other).
 
 use thiserror::Error;
 
 /// Result type alias for pgorm operations
 pub type OrmResult<T> = Result<T, OrmError>;
 
-/// Error types for database operations
+/// Error types for database operations.
+///
+/// Variants are grouped into **recoverable** (match and handle) and
+/// **configuration/programming** errors (propagate with `?`).
+/// Use [`is_recoverable`](Self::is_recoverable) to check programmatically.
 #[derive(Debug, Error)]
 pub enum OrmError {
-    /// Database connection error
+    // ── Configuration / programming errors ──────────────────────────────────
+    /// Database connection error (configuration or network).
     #[error("Connection error: {0}")]
     Connection(String),
 
-    /// Query execution error
+    /// Query execution error (SQL syntax, runtime DB error).
     #[error("Query error: {0}")]
     Query(#[from] tokio_postgres::Error),
 
-    /// Row not found
+    /// Row decode/mapping error (schema drift or type mismatch).
+    #[error("Decode error on column '{column}': {message}")]
+    Decode { column: String, message: String },
+
+    /// Serialization error (programming error).
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    /// Pool error (exhaustion or misconfiguration).
+    #[cfg(feature = "pool")]
+    #[error("Pool error: {0}")]
+    Pool(String),
+
+    /// Migration error (feature: `migrate`).
+    #[cfg(feature = "migrate")]
+    #[error("Migration error: {0}")]
+    Migration(String),
+
+    /// Other / catch-all error.
+    #[error("{0}")]
+    Other(String),
+
+    // ── Recoverable errors (match and handle) ───────────────────────────────
+    /// Row not found (`fetch_one` returned no rows).
     #[error("Not found: {0}")]
     NotFound(String),
 
@@ -24,55 +68,33 @@ pub enum OrmError {
     #[error("Too many rows: expected {expected}, got {got}")]
     TooManyRows { expected: usize, got: usize },
 
-    /// Unique constraint violation
+    /// Unique constraint violation (DB error code 23505).
     #[error("Unique constraint violation: {0}")]
     UniqueViolation(String),
 
-    /// Foreign key constraint violation
+    /// Foreign key constraint violation (DB error code 23503).
     #[error("Foreign key violation: {0}")]
     ForeignKeyViolation(String),
 
-    /// Check constraint violation
+    /// Check constraint violation (DB error code 23514).
     #[error("Check constraint violation: {0}")]
     CheckViolation(String),
 
-    /// Row decode/mapping error
-    #[error("Decode error on column '{column}': {message}")]
-    Decode { column: String, message: String },
-
-    /// Validation error
+    /// Input validation error.
     #[error("Validation error: {0}")]
     Validation(String),
 
-    /// Serialization error
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    /// Pool error
-    #[cfg(feature = "pool")]
-    #[error("Pool error: {0}")]
-    Pool(String),
-
-    /// Query timeout error
+    /// Query timeout.
     #[error("Query timeout after {0:?}")]
     Timeout(std::time::Duration),
 
-    /// Migration error
-    #[cfg(feature = "migrate")]
-    #[error("Migration error: {0}")]
-    Migration(String),
-
-    /// Optimistic locking conflict: record was modified by another transaction
+    /// Optimistic locking conflict: record was modified by another transaction.
     #[error("Stale record: {table} with id {id} (expected version {expected_version})")]
     StaleRecord {
         table: &'static str,
         id: String,
         expected_version: i64,
     },
-
-    /// Other errors
-    #[error("{0}")]
-    Other(String),
 }
 
 impl OrmError {
@@ -99,6 +121,33 @@ impl OrmError {
         Self::Validation(message.into())
     }
 
+    /// Create a stale record error for optimistic locking conflicts
+    pub fn stale_record(table: &'static str, id: impl ToString, expected_version: i64) -> Self {
+        Self::StaleRecord {
+            table,
+            id: id.to_string(),
+            expected_version,
+        }
+    }
+
+    /// Returns `true` if this error is recoverable (the caller should handle it).
+    ///
+    /// Recoverable errors include: `NotFound`, `TooManyRows`, `UniqueViolation`,
+    /// `ForeignKeyViolation`, `CheckViolation`, `StaleRecord`, `Timeout`, `Validation`.
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Self::NotFound(_)
+                | Self::TooManyRows { .. }
+                | Self::UniqueViolation(_)
+                | Self::ForeignKeyViolation(_)
+                | Self::CheckViolation(_)
+                | Self::StaleRecord { .. }
+                | Self::Timeout(_)
+                | Self::Validation(_)
+        )
+    }
+
     /// Check if this is a unique violation error
     pub fn is_unique_violation(&self) -> bool {
         matches!(self, Self::UniqueViolation(_))
@@ -117,15 +166,6 @@ impl OrmError {
     /// Check if this is a timeout error
     pub fn is_timeout(&self) -> bool {
         matches!(self, Self::Timeout(_))
-    }
-
-    /// Create a stale record error for optimistic locking conflicts
-    pub fn stale_record(table: &'static str, id: impl ToString, expected_version: i64) -> Self {
-        Self::StaleRecord {
-            table,
-            id: id.to_string(),
-            expected_version,
-        }
     }
 
     /// Check if this is a stale record (optimistic lock) error

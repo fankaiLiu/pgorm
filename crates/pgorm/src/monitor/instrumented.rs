@@ -77,18 +77,6 @@ impl<C: GenericClient> InstrumentedClient<C> {
         self
     }
 
-    /// Set the slow query threshold.
-    ///
-    /// Queries taking longer than this will trigger `on_slow_query`.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use `with_config(MonitorConfig::new().with_slow_query_threshold(...))` instead"
-    )]
-    pub fn with_slow_query_threshold(mut self, threshold: Duration) -> Self {
-        self.config.slow_query_threshold = Some(threshold);
-        self
-    }
-
     /// Set the query timeout.
     ///
     /// Queries exceeding this duration will be cancelled.

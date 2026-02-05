@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use pgorm::{SchemaRegistry, TableMeta, lint_sql, LintLevel};
+//! use pgorm::check::{SchemaRegistry, TableMeta, lint_sql, LintLevel};
 //!
 //! // Register tables
 //! let mut registry = SchemaRegistry::new();
@@ -25,6 +25,7 @@
 //! assert!(result.has_errors()); // Missing WHERE clause
 //! ```
 
+#[cfg(feature = "check")]
 mod lint;
 mod registry;
 
@@ -38,6 +39,10 @@ pub use registry::{
 
 #[cfg(feature = "check")]
 pub use lint::*;
+
+// Re-export CheckedClient here so it's available at pgorm::check::CheckedClient
+#[cfg(feature = "check")]
+pub use crate::checked_client::CheckedClient;
 
 /// Check multiple models against a schema registry and return results.
 ///
@@ -73,7 +78,7 @@ pub use lint::*;
 #[macro_export]
 macro_rules! check_models {
     ($registry:expr, $($model:ty),+ $(,)?) => {{
-        let mut results: Vec<(&'static str, std::collections::HashMap<&'static str, Vec<$crate::SchemaIssue>>)> = Vec::new();
+        let mut results: Vec<(&'static str, std::collections::HashMap<&'static str, Vec<$crate::check::SchemaIssue>>)> = Vec::new();
         $(
             results.push((stringify!($model), <$model>::check_schema(&$registry)));
         )+

@@ -6,10 +6,11 @@
 //! Requires:
 //!   DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example
 
-use pgorm::{
-    CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig, OrmError,
-    OrmResult, QueryContext, QueryHook, StatsMonitor, query,
+use pgorm::monitor::{
+    CompositeMonitor, HookAction, InstrumentedClient, LoggingMonitor, MonitorConfig, QueryContext,
+    QueryHook, StatsMonitor,
 };
+use pgorm::{OrmError, OrmResult, query};
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +31,7 @@ struct BlockDangerousDeleteHook;
 
 impl QueryHook for BlockDangerousDeleteHook {
     fn before_query(&self, ctx: &QueryContext) -> HookAction {
-        if ctx.query_type != pgorm::QueryType::Delete {
+        if ctx.query_type != pgorm::monitor::QueryType::Delete {
             return HookAction::Continue;
         }
         let s = ctx.canonical_sql.to_ascii_lowercase();

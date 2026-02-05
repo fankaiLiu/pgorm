@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use pgorm::monitor::{QueryMonitor, QueryHook, QueryContext, HookAction, InstrumentedClient, MonitorConfig};
+//! use pgorm::monitor::{InstrumentedClient, MonitorConfig, QueryContext, QueryMonitor, QueryResult};
 //! use std::time::Duration;
 //!
 //! // Simple logging monitor
