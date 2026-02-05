@@ -192,35 +192,41 @@ impl<C: GenericClient> InstrumentedClient<C> {
         }
     }
 
+    /// Common pre-execution setup: create context, apply hook, notify monitors.
+    fn prepare_ctx(
+        &self,
+        sql: &str,
+        param_count: usize,
+        tag: Option<&str>,
+    ) -> Result<QueryContext, OrmError> {
+        let mut ctx = QueryContext::new(sql, param_count);
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
+        self.apply_hook(&mut ctx)?;
+        if self.config.monitoring_enabled {
+            self.monitor.on_query_start(&ctx);
+        }
+        Ok(ctx)
+    }
+
     pub(super) async fn query_inner(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
         tag: Option<&str>,
     ) -> OrmResult<Vec<Row>> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-
-        self.apply_hook(&mut ctx)?;
-
-        if self.config.monitoring_enabled {
-            self.monitor.on_query_start(&ctx);
-        }
-
+        let ctx = self.prepare_ctx(sql, params.len(), tag)?;
         let start = Instant::now();
         let result = self
             .execute_with_timeout(self.client.query(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
-
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
             Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::error(e.to_string()),
         };
-
         self.report_result(&ctx, duration, &query_result);
         result
     }
@@ -231,30 +237,18 @@ impl<C: GenericClient> InstrumentedClient<C> {
         params: &[&(dyn ToSql + Sync)],
         tag: Option<&str>,
     ) -> OrmResult<Row> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-
-        self.apply_hook(&mut ctx)?;
-
-        if self.config.monitoring_enabled {
-            self.monitor.on_query_start(&ctx);
-        }
-
+        let ctx = self.prepare_ctx(sql, params.len(), tag)?;
         let start = Instant::now();
         let result = self
             .execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
-
         let query_result = match &result {
             Ok(_) => QueryResult::OptionalRow(true),
             Err(OrmError::NotFound { .. }) => QueryResult::OptionalRow(false),
             Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::error(e.to_string()),
         };
-
         self.report_result(&ctx, duration, &query_result);
         result
     }
@@ -265,30 +259,18 @@ impl<C: GenericClient> InstrumentedClient<C> {
         params: &[&(dyn ToSql + Sync)],
         tag: Option<&str>,
     ) -> OrmResult<Option<Row>> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-
-        self.apply_hook(&mut ctx)?;
-
-        if self.config.monitoring_enabled {
-            self.monitor.on_query_start(&ctx);
-        }
-
+        let ctx = self.prepare_ctx(sql, params.len(), tag)?;
         let start = Instant::now();
         let result = self
             .execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
-
         let query_result = match &result {
             Ok(Some(_)) => QueryResult::OptionalRow(true),
             Ok(None) => QueryResult::OptionalRow(false),
             Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::error(e.to_string()),
         };
-
         self.report_result(&ctx, duration, &query_result);
         result
     }
@@ -299,29 +281,17 @@ impl<C: GenericClient> InstrumentedClient<C> {
         params: &[&(dyn ToSql + Sync)],
         tag: Option<&str>,
     ) -> OrmResult<u64> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-
-        self.apply_hook(&mut ctx)?;
-
-        if self.config.monitoring_enabled {
-            self.monitor.on_query_start(&ctx);
-        }
-
+        let ctx = self.prepare_ctx(sql, params.len(), tag)?;
         let start = Instant::now();
         let result = self
             .execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
             .await;
         let duration = start.elapsed();
-
         let query_result = match &result {
             Ok(n) => QueryResult::Affected(*n),
             Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::error(e.to_string()),
         };
-
         self.report_result(&ctx, duration, &query_result);
         result
     }

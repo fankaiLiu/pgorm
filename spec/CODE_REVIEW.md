@@ -235,7 +235,7 @@ let timeout_remaining = self.config.query_timeout
 
 ## 重要改进 (Important)
 
-### I-01. 四个 `*_impl` 执行方法的大量代码重复
+### ~~I-01. 四个 `*_impl` 执行方法的大量代码重复~~ ✅
 
 **模块**: pg_client | **文件**: `pg_client/execute.rs:390-866`
 
@@ -245,7 +245,7 @@ let timeout_remaining = self.config.query_timeout
 
 ---
 
-### I-02. InstrumentedClient 中同样的执行逻辑重复
+### ~~I-02. InstrumentedClient 中同样的执行逻辑重复~~ ✅
 
 **模块**: monitor | **文件**: `monitor/instrumented.rs:195-327`
 
@@ -255,7 +255,7 @@ let timeout_remaining = self.config.query_timeout
 
 ---
 
-### I-03. TracingSqlHook 的 10 个重复 tracing 调用
+### ~~I-03. TracingSqlHook 的 10 个重复 tracing 调用~~ ✅
 
 **模块**: monitor | **文件**: `monitor/tracing_hook.rs:59-153`
 
@@ -291,7 +291,7 @@ pub fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
 
 ---
 
-### I-06. CompositeHook 每次深度克隆 QueryContext
+### ~~I-06. CompositeHook 每次深度克隆 QueryContext~~ ✅
 
 **模块**: monitor | **文件**: `monitor/monitors.rs:394-422`
 
@@ -319,7 +319,7 @@ let mut current_ctx = ctx.clone();  // 完整克隆（包含 BTreeMap）
 
 ---
 
-### I-08. LoggingMonitor 使用 `eprintln!`
+### ~~I-08. LoggingMonitor 使用 `eprintln!`~~ ✅
 
 **模块**: monitor | **文件**: `monitor/monitors.rs:68-107`
 

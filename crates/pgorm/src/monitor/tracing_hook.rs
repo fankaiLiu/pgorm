@@ -57,98 +57,41 @@ impl TracingSqlHook {
     }
 
     fn emit(&self, ctx: &QueryContext, exec_sql: &str, canonical_sql: Option<&str>) {
+        /// Dispatch a tracing event at a runtime-determined level.
+        macro_rules! emit_at_level {
+            ($level:expr, $($field:tt)*) => {
+                match $level {
+                    Level::ERROR => tracing::error!($($field)*),
+                    Level::WARN  => tracing::warn!($($field)*),
+                    Level::INFO  => tracing::info!($($field)*),
+                    Level::DEBUG => tracing::debug!($($field)*),
+                    Level::TRACE => tracing::trace!($($field)*),
+                }
+            };
+        }
+
         let tag = ctx.tag.as_deref().unwrap_or("-");
         let fields = tracing::field::debug(&ctx.fields);
         match canonical_sql {
-            Some(canonical_sql) => match self.level {
-                Level::ERROR => tracing::error!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    canonical_sql = %canonical_sql,
-                    fields = fields,
-                ),
-                Level::WARN => tracing::warn!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    canonical_sql = %canonical_sql,
-                    fields = fields,
-                ),
-                Level::INFO => tracing::info!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    canonical_sql = %canonical_sql,
-                    fields = fields,
-                ),
-                Level::DEBUG => tracing::debug!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    canonical_sql = %canonical_sql,
-                    fields = fields,
-                ),
-                Level::TRACE => tracing::trace!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    canonical_sql = %canonical_sql,
-                    fields = fields,
-                ),
-            },
-            None => match self.level {
-                Level::ERROR => tracing::error!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    fields = fields,
-                ),
-                Level::WARN => tracing::warn!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    fields = fields,
-                ),
-                Level::INFO => tracing::info!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    fields = fields,
-                ),
-                Level::DEBUG => tracing::debug!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    fields = fields,
-                ),
-                Level::TRACE => tracing::trace!(
-                    target: "pgorm.sql",
-                    query_type = ?ctx.query_type,
-                    tag,
-                    param_count = ctx.param_count,
-                    sql = %exec_sql,
-                    fields = fields,
-                ),
-            },
+            Some(canonical_sql) => emit_at_level!(
+                self.level,
+                target: "pgorm.sql",
+                query_type = ?ctx.query_type,
+                tag,
+                param_count = ctx.param_count,
+                sql = %exec_sql,
+                canonical_sql = %canonical_sql,
+                fields = fields,
+            ),
+            None => emit_at_level!(
+                self.level,
+                target: "pgorm.sql",
+                query_type = ?ctx.query_type,
+                tag,
+                param_count = ctx.param_count,
+                sql = %exec_sql,
+                fields = fields,
+            ),
         }
     }
 }

@@ -392,107 +392,125 @@ impl<C: GenericClient> GenericClient for super::PgClient<C> {
 // Core query implementations
 // ============================================================================
 
+/// Expands the statement-cache dispatch (disabled / hit+retry / miss+prepare)
+/// for a given pair of unprepared and prepared client methods.
+///
+/// `$unprepared` — method on `GenericClient` taking `(sql, params)`.
+/// `$prepared`  — method on `GenericClient` taking `(stmt, params)`.
+macro_rules! stmt_cache_dispatch {
+    ($self:expr, $ctx:expr, $params:expr, $probe:expr,
+     $unprepared:ident, $prepared:ident) => {
+        match $probe {
+            StmtCacheProbe::Disabled => {
+                $self
+                    .execute_with_timeout($self.client.$unprepared(&$ctx.exec_sql, $params))
+                    .await
+            }
+            StmtCacheProbe::Hit(stmt) => {
+                if $self.config.stats_enabled {
+                    $self.stats.on_stmt_cache_hit();
+                }
+
+                let mut result = $self
+                    .execute_with_timeout($self.client.$prepared(&stmt, $params))
+                    .await;
+
+                if let Err(ref err) = result {
+                    if is_retryable_prepared_error(err) {
+                        if let Some(cache) = &$self.statement_cache {
+                            let _ = cache.remove(&$ctx.canonical_sql);
+                        }
+                        if let Some(cache) = &$self.statement_cache {
+                            let prep_start = Instant::now();
+                            let stmt = $self
+                                .execute_with_timeout(
+                                    $self.client.prepare_statement(&$ctx.canonical_sql),
+                                )
+                                .await;
+                            let prep_dur = prep_start.elapsed();
+                            if $self.config.stats_enabled {
+                                $self.stats.on_stmt_prepare(prep_dur);
+                            }
+                            let stmt = cache.insert_if_absent($ctx.canonical_sql.clone(), stmt?);
+                            result = $self
+                                .execute_with_timeout($self.client.$prepared(&stmt, $params))
+                                .await;
+                        }
+                    }
+                }
+                result
+            }
+            StmtCacheProbe::Miss => {
+                if $self.config.stats_enabled {
+                    $self.stats.on_stmt_cache_miss();
+                }
+
+                match &$self.statement_cache {
+                    Some(cache) => {
+                        let prep_start = Instant::now();
+                        let stmt = $self
+                            .execute_with_timeout(
+                                $self.client.prepare_statement(&$ctx.canonical_sql),
+                            )
+                            .await;
+                        let prep_dur = prep_start.elapsed();
+                        if $self.config.stats_enabled {
+                            $self.stats.on_stmt_prepare(prep_dur);
+                        }
+                        let stmt = cache.insert_if_absent($ctx.canonical_sql.clone(), stmt?);
+                        $self
+                            .execute_with_timeout($self.client.$prepared(&stmt, $params))
+                            .await
+                    }
+                    None => {
+                        $self
+                            .execute_with_timeout($self.client.$unprepared(&$ctx.exec_sql, $params))
+                            .await
+                    }
+                }
+            }
+        }
+    };
+}
+
 impl<C: GenericClient> super::PgClient<C> {
+    /// Common pre-execution setup: create context, apply hook/policy/check, probe cache.
+    fn prepare_ctx(
+        &self,
+        tag: Option<&str>,
+        sql: &str,
+        param_count: usize,
+    ) -> OrmResult<(QueryContext, StmtCacheProbe)> {
+        let mut ctx = QueryContext::new(sql, param_count);
+        if let Some(tag) = tag {
+            ctx.tag = Some(tag.to_string());
+        }
+        self.apply_hook(&mut ctx)?;
+        self.apply_sql_policy(&mut ctx)?;
+        self.check_sql(&ctx.canonical_sql)?;
+        let probe = self.probe_stmt_cache(&ctx);
+        probe.populate_context(&mut ctx);
+        self.emit_tracing_sql(&ctx);
+        Ok((ctx, probe))
+    }
+
     pub(super) async fn query_impl(
         &self,
         tag: Option<&str>,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Vec<Row>> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-
-        // Process hook first, then check the canonical SQL.
-        self.apply_hook(&mut ctx)?;
-        self.apply_sql_policy(&mut ctx)?;
-        self.check_sql(&ctx.canonical_sql)?;
-
-        let probe = self.probe_stmt_cache(&ctx);
-        probe.populate_context(&mut ctx);
-        self.emit_tracing_sql(&ctx);
-
+        let (ctx, probe) = self.prepare_ctx(tag, sql, params.len())?;
         let start = Instant::now();
-        let result = match probe {
-            StmtCacheProbe::Disabled => {
-                self.execute_with_timeout(self.client.query(&ctx.exec_sql, params))
-                    .await
-            }
-            StmtCacheProbe::Hit(stmt) => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_hit();
-                }
-
-                let mut result = self
-                    .execute_with_timeout(self.client.query_prepared(&stmt, params))
-                    .await;
-
-                if let Err(ref err) = result {
-                    if is_retryable_prepared_error(err) {
-                        if let Some(cache) = &self.statement_cache {
-                            let _ = cache.remove(&ctx.canonical_sql);
-                        }
-
-                        if let Some(cache) = &self.statement_cache {
-                            let prep_start = Instant::now();
-                            let stmt = self
-                                .execute_with_timeout(
-                                    self.client.prepare_statement(&ctx.canonical_sql),
-                                )
-                                .await;
-                            let prep_dur = prep_start.elapsed();
-                            if self.config.stats_enabled {
-                                self.stats.on_stmt_prepare(prep_dur);
-                            }
-
-                            let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                            result = self
-                                .execute_with_timeout(self.client.query_prepared(&stmt, params))
-                                .await;
-                        }
-                    }
-                }
-
-                result
-            }
-            StmtCacheProbe::Miss => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_miss();
-                }
-
-                match &self.statement_cache {
-                    Some(cache) => {
-                        let prep_start = Instant::now();
-                        let stmt = self
-                            .execute_with_timeout(self.client.prepare_statement(&ctx.canonical_sql))
-                            .await;
-                        let prep_dur = prep_start.elapsed();
-                        if self.config.stats_enabled {
-                            self.stats.on_stmt_prepare(prep_dur);
-                        }
-
-                        let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                        self.execute_with_timeout(self.client.query_prepared(&stmt, params))
-                            .await
-                    }
-                    None => {
-                        self.execute_with_timeout(self.client.query(&ctx.exec_sql, params))
-                            .await
-                    }
-                }
-            }
-        };
+        let result = stmt_cache_dispatch!(self, ctx, params, probe, query, query_prepared);
         let duration = start.elapsed();
 
-        // Report
         let query_result = match &result {
             Ok(rows) => QueryResult::Rows(rows.len()),
             Err(OrmError::Timeout(d)) => QueryResult::error(format!("timeout after {d:?}")),
             Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
-
         result
     }
 
@@ -502,87 +520,9 @@ impl<C: GenericClient> super::PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Row> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-        self.apply_hook(&mut ctx)?;
-        self.apply_sql_policy(&mut ctx)?;
-        self.check_sql(&ctx.canonical_sql)?;
-        let probe = self.probe_stmt_cache(&ctx);
-        probe.populate_context(&mut ctx);
-        self.emit_tracing_sql(&ctx);
-
+        let (ctx, probe) = self.prepare_ctx(tag, sql, params.len())?;
         let start = Instant::now();
-        let result = match probe {
-            StmtCacheProbe::Disabled => {
-                self.execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
-                    .await
-            }
-            StmtCacheProbe::Hit(stmt) => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_hit();
-                }
-
-                let mut result = self
-                    .execute_with_timeout(self.client.query_one_prepared(&stmt, params))
-                    .await;
-
-                if let Err(ref err) = result {
-                    if is_retryable_prepared_error(err) {
-                        if let Some(cache) = &self.statement_cache {
-                            let _ = cache.remove(&ctx.canonical_sql);
-                        }
-
-                        if let Some(cache) = &self.statement_cache {
-                            let prep_start = Instant::now();
-                            let stmt = self
-                                .execute_with_timeout(
-                                    self.client.prepare_statement(&ctx.canonical_sql),
-                                )
-                                .await;
-                            let prep_dur = prep_start.elapsed();
-                            if self.config.stats_enabled {
-                                self.stats.on_stmt_prepare(prep_dur);
-                            }
-
-                            let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                            result = self
-                                .execute_with_timeout(self.client.query_one_prepared(&stmt, params))
-                                .await;
-                        }
-                    }
-                }
-
-                result
-            }
-            StmtCacheProbe::Miss => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_miss();
-                }
-
-                match &self.statement_cache {
-                    Some(cache) => {
-                        let prep_start = Instant::now();
-                        let stmt = self
-                            .execute_with_timeout(self.client.prepare_statement(&ctx.canonical_sql))
-                            .await;
-                        let prep_dur = prep_start.elapsed();
-                        if self.config.stats_enabled {
-                            self.stats.on_stmt_prepare(prep_dur);
-                        }
-
-                        let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                        self.execute_with_timeout(self.client.query_one_prepared(&stmt, params))
-                            .await
-                    }
-                    None => {
-                        self.execute_with_timeout(self.client.query_one(&ctx.exec_sql, params))
-                            .await
-                    }
-                }
-            }
-        };
+        let result = stmt_cache_dispatch!(self, ctx, params, probe, query_one, query_one_prepared);
         let duration = start.elapsed();
 
         let query_result = match &result {
@@ -592,7 +532,6 @@ impl<C: GenericClient> super::PgClient<C> {
             Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
-
         result
     }
 
@@ -602,87 +541,9 @@ impl<C: GenericClient> super::PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<Option<Row>> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-        self.apply_hook(&mut ctx)?;
-        self.apply_sql_policy(&mut ctx)?;
-        self.check_sql(&ctx.canonical_sql)?;
-        let probe = self.probe_stmt_cache(&ctx);
-        probe.populate_context(&mut ctx);
-        self.emit_tracing_sql(&ctx);
-
+        let (ctx, probe) = self.prepare_ctx(tag, sql, params.len())?;
         let start = Instant::now();
-        let result = match probe {
-            StmtCacheProbe::Disabled => {
-                self.execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
-                    .await
-            }
-            StmtCacheProbe::Hit(stmt) => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_hit();
-                }
-
-                let mut result = self
-                    .execute_with_timeout(self.client.query_opt_prepared(&stmt, params))
-                    .await;
-
-                if let Err(ref err) = result {
-                    if is_retryable_prepared_error(err) {
-                        if let Some(cache) = &self.statement_cache {
-                            let _ = cache.remove(&ctx.canonical_sql);
-                        }
-
-                        if let Some(cache) = &self.statement_cache {
-                            let prep_start = Instant::now();
-                            let stmt = self
-                                .execute_with_timeout(
-                                    self.client.prepare_statement(&ctx.canonical_sql),
-                                )
-                                .await;
-                            let prep_dur = prep_start.elapsed();
-                            if self.config.stats_enabled {
-                                self.stats.on_stmt_prepare(prep_dur);
-                            }
-
-                            let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                            result = self
-                                .execute_with_timeout(self.client.query_opt_prepared(&stmt, params))
-                                .await;
-                        }
-                    }
-                }
-
-                result
-            }
-            StmtCacheProbe::Miss => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_miss();
-                }
-
-                match &self.statement_cache {
-                    Some(cache) => {
-                        let prep_start = Instant::now();
-                        let stmt = self
-                            .execute_with_timeout(self.client.prepare_statement(&ctx.canonical_sql))
-                            .await;
-                        let prep_dur = prep_start.elapsed();
-                        if self.config.stats_enabled {
-                            self.stats.on_stmt_prepare(prep_dur);
-                        }
-
-                        let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                        self.execute_with_timeout(self.client.query_opt_prepared(&stmt, params))
-                            .await
-                    }
-                    None => {
-                        self.execute_with_timeout(self.client.query_opt(&ctx.exec_sql, params))
-                            .await
-                    }
-                }
-            }
-        };
+        let result = stmt_cache_dispatch!(self, ctx, params, probe, query_opt, query_opt_prepared);
         let duration = start.elapsed();
 
         let query_result = match &result {
@@ -692,7 +553,6 @@ impl<C: GenericClient> super::PgClient<C> {
             Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
-
         result
     }
 
@@ -702,87 +562,9 @@ impl<C: GenericClient> super::PgClient<C> {
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<u64> {
-        let mut ctx = QueryContext::new(sql, params.len());
-        if let Some(tag) = tag {
-            ctx.tag = Some(tag.to_string());
-        }
-        self.apply_hook(&mut ctx)?;
-        self.apply_sql_policy(&mut ctx)?;
-        self.check_sql(&ctx.canonical_sql)?;
-        let probe = self.probe_stmt_cache(&ctx);
-        probe.populate_context(&mut ctx);
-        self.emit_tracing_sql(&ctx);
-
+        let (ctx, probe) = self.prepare_ctx(tag, sql, params.len())?;
         let start = Instant::now();
-        let result = match probe {
-            StmtCacheProbe::Disabled => {
-                self.execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
-                    .await
-            }
-            StmtCacheProbe::Hit(stmt) => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_hit();
-                }
-
-                let mut result = self
-                    .execute_with_timeout(self.client.execute_prepared(&stmt, params))
-                    .await;
-
-                if let Err(ref err) = result {
-                    if is_retryable_prepared_error(err) {
-                        if let Some(cache) = &self.statement_cache {
-                            let _ = cache.remove(&ctx.canonical_sql);
-                        }
-
-                        if let Some(cache) = &self.statement_cache {
-                            let prep_start = Instant::now();
-                            let stmt = self
-                                .execute_with_timeout(
-                                    self.client.prepare_statement(&ctx.canonical_sql),
-                                )
-                                .await;
-                            let prep_dur = prep_start.elapsed();
-                            if self.config.stats_enabled {
-                                self.stats.on_stmt_prepare(prep_dur);
-                            }
-
-                            let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                            result = self
-                                .execute_with_timeout(self.client.execute_prepared(&stmt, params))
-                                .await;
-                        }
-                    }
-                }
-
-                result
-            }
-            StmtCacheProbe::Miss => {
-                if self.config.stats_enabled {
-                    self.stats.on_stmt_cache_miss();
-                }
-
-                match &self.statement_cache {
-                    Some(cache) => {
-                        let prep_start = Instant::now();
-                        let stmt = self
-                            .execute_with_timeout(self.client.prepare_statement(&ctx.canonical_sql))
-                            .await;
-                        let prep_dur = prep_start.elapsed();
-                        if self.config.stats_enabled {
-                            self.stats.on_stmt_prepare(prep_dur);
-                        }
-
-                        let stmt = cache.insert_if_absent(ctx.canonical_sql.clone(), stmt?);
-                        self.execute_with_timeout(self.client.execute_prepared(&stmt, params))
-                            .await
-                    }
-                    None => {
-                        self.execute_with_timeout(self.client.execute(&ctx.exec_sql, params))
-                            .await
-                    }
-                }
-            }
-        };
+        let result = stmt_cache_dispatch!(self, ctx, params, probe, execute, execute_prepared);
         let duration = start.elapsed();
 
         let query_result = match &result {
@@ -791,7 +573,6 @@ impl<C: GenericClient> super::PgClient<C> {
             Err(e) => QueryResult::error(e.to_string()),
         };
         self.report_result(&ctx, duration, &query_result);
-
         result
     }
 }

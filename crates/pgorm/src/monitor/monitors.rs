@@ -64,6 +64,21 @@ impl LoggingMonitor {
     }
 }
 
+impl LoggingMonitor {
+    fn format_sql(&self, ctx: &QueryContext) -> String {
+        let canonical = self.truncate_sql(&ctx.canonical_sql);
+        if ctx.exec_sql != ctx.canonical_sql {
+            format!(
+                "canonical: {} | exec: {}",
+                canonical,
+                self.truncate_sql(&ctx.exec_sql)
+            )
+        } else {
+            canonical
+        }
+    }
+}
+
 impl QueryMonitor for LoggingMonitor {
     fn on_query_complete(&self, ctx: &QueryContext, duration: Duration, result: &QueryResult) {
         if let Some(min) = self.min_duration {
@@ -72,38 +87,20 @@ impl QueryMonitor for LoggingMonitor {
             }
         }
 
-        let canonical = self.truncate_sql(&ctx.canonical_sql);
-        let sql = if ctx.exec_sql != ctx.canonical_sql {
-            format!(
-                "canonical: {} | exec: {}",
-                canonical,
-                self.truncate_sql(&ctx.exec_sql)
-            )
-        } else {
-            canonical
-        };
+        let sql = self.format_sql(ctx);
         let tag = ctx.tag.as_deref().unwrap_or("-");
-        eprintln!(
+        crate::error::pgorm_warn(&format!(
             "{} [{:?}] [{}] {:?} | {} | {}",
             self.prefix, ctx.query_type, tag, duration, result, sql
-        );
+        ));
     }
 
     fn on_slow_query(&self, ctx: &QueryContext, duration: Duration) {
-        let canonical = self.truncate_sql(&ctx.canonical_sql);
-        let sql = if ctx.exec_sql != ctx.canonical_sql {
-            format!(
-                "canonical: {} | exec: {}",
-                canonical,
-                self.truncate_sql(&ctx.exec_sql)
-            )
-        } else {
-            canonical
-        };
-        eprintln!(
+        let sql = self.format_sql(ctx);
+        crate::error::pgorm_warn(&format!(
             "{} SLOW QUERY [{:?}]: {:?} | {}",
             self.prefix, ctx.query_type, duration, sql
-        );
+        ));
     }
 }
 
@@ -382,31 +379,32 @@ impl Default for CompositeHook {
 
 impl QueryHook for CompositeHook {
     fn before_query(&self, ctx: &QueryContext) -> HookAction {
-        let mut current_ctx = ctx.clone();
+        // Lazily clone: only allocate when a hook actually modifies the SQL.
+        let mut owned: Option<QueryContext> = None;
         for hook in &self.hooks {
-            match hook.before_query(&current_ctx) {
+            let current = owned.as_ref().unwrap_or(ctx);
+            match hook.before_query(current) {
                 HookAction::Continue => {}
                 HookAction::ModifySql {
                     exec_sql,
                     canonical_sql,
                 } => {
-                    current_ctx.exec_sql = exec_sql;
+                    let c = owned.get_or_insert_with(|| ctx.clone());
+                    c.exec_sql = exec_sql;
                     if let Some(canonical_sql) = canonical_sql {
-                        current_ctx.canonical_sql = canonical_sql;
+                        c.canonical_sql = canonical_sql;
                     }
-                    current_ctx.query_type = QueryType::from_sql(&current_ctx.canonical_sql);
+                    c.query_type = QueryType::from_sql(&c.canonical_sql);
                 }
                 action @ HookAction::Abort(_) => return action,
             }
         }
-        if current_ctx.exec_sql != ctx.exec_sql || current_ctx.canonical_sql != ctx.canonical_sql {
-            HookAction::ModifySql {
-                exec_sql: current_ctx.exec_sql,
-                canonical_sql: (current_ctx.canonical_sql != ctx.canonical_sql)
-                    .then_some(current_ctx.canonical_sql),
-            }
-        } else {
-            HookAction::Continue
+        match owned {
+            Some(c) => HookAction::ModifySql {
+                canonical_sql: (c.canonical_sql != ctx.canonical_sql).then_some(c.canonical_sql),
+                exec_sql: c.exec_sql,
+            },
+            None => HookAction::Continue,
         }
     }
 
