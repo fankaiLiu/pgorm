@@ -1131,6 +1131,7 @@ name = "pgorm"
 version = "0.1.5"
 dependencies = [
  "bit-vec",
+ "bytes",
  "chrono",
  "cidr",
  "colored",
@@ -1196,6 +1197,7 @@ dependencies = [
 name = "pgorm-derive"
 version = "0.1.5"
 dependencies = [
+ "heck",
  "proc-macro2",
  "quote",
  "syn 2.0.114",

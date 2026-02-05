@@ -501,6 +501,33 @@ impl Condition {
         Ok(Self::cmp_dyn(column.into_ident()?, "&&", Arc::new(value)))
     }
 
+    /// Create a "strictly left of" condition for ranges: column << value
+    pub fn range_left_of<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "<<", Arc::new(value)))
+    }
+
+    /// Create a "strictly right of" condition for ranges: column >> value
+    pub fn range_right_of<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, ">>", Arc::new(value)))
+    }
+
+    /// Create an "adjacent to" condition for ranges: column -|- value
+    pub fn range_adjacent<I, T>(column: I, value: T) -> OrmResult<Self>
+    where
+        I: IntoIdent,
+        T: ToSql + Send + Sync + 'static,
+    {
+        Ok(Self::cmp_dyn(column.into_ident()?, "-|-", Arc::new(value)))
+    }
+
     /// Create a jsonb key existence condition: column ? key
     pub fn has_key<I>(column: I, key: impl Into<String>) -> OrmResult<Self>
     where
@@ -865,6 +892,24 @@ mod tests {
             "to_tsvector($1::regconfig, content) @@ plainto_tsquery($2::regconfig, $3)",
             3,
         );
+    }
+
+    #[test]
+    fn condition_range_left_of() {
+        let cond = Condition::range_left_of("during", 1_i32).unwrap();
+        assert_condition_sql(&cond, "during << $1", 1);
+    }
+
+    #[test]
+    fn condition_range_right_of() {
+        let cond = Condition::range_right_of("during", 1_i32).unwrap();
+        assert_condition_sql(&cond, "during >> $1", 1);
+    }
+
+    #[test]
+    fn condition_range_adjacent() {
+        let cond = Condition::range_adjacent("during", 1_i32).unwrap();
+        assert_condition_sql(&cond, "during -|- $1", 1);
     }
 
     #[test]

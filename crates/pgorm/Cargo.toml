@@ -28,6 +28,7 @@ url = { workspace = true, optional = true }
 pgorm-derive = { workspace = true, optional = true }
 pgorm-check = { workspace = true, features = ["sql"], optional = true }
 inventory.workspace = true
+bytes.workspace = true
 refinery = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -150,3 +151,19 @@ path = "examples/keyset_pagination/main.rs"
 [[example]]
 name = "optimistic_locking"
 path = "examples/optimistic_locking/main.rs"
+
+[[example]]
+name = "pg_enum"
+path = "examples/pg_enum/main.rs"
+
+[[example]]
+name = "pg_range"
+path = "examples/pg_range/main.rs"
+
+[[example]]
+name = "pg_composite"
+path = "examples/pg_composite/main.rs"
+
+[[example]]
+name = "savepoint"
+path = "examples/savepoint/main.rs"
