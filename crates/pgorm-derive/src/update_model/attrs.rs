@@ -122,6 +122,7 @@ pub(super) struct FieldAttrs {
     pub(super) skip_update: bool,
     pub(super) default: bool,
     pub(super) auto_now: bool,
+    pub(super) version: bool,
     pub(super) table: Option<String>,
     pub(super) column: Option<String>,
     pub(super) skip_input: bool,
@@ -145,6 +146,7 @@ impl syn::parse::Parse for FieldAttrs {
             skip_update: false,
             default: false,
             auto_now: false,
+            version: false,
             table: None,
             column: None,
             skip_input: false,
@@ -173,6 +175,7 @@ impl syn::parse::Parse for FieldAttrs {
                 "skip_update" => attrs.skip_update = true,
                 "default" => attrs.default = true,
                 "auto_now" => attrs.auto_now = true,
+                "version" => attrs.version = true,
                 "skip_input" => attrs.skip_input = true,
                 "required" => attrs.required = true,
                 "email" => attrs.email = true,
@@ -228,6 +231,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
         skip_update: false,
         default: false,
         auto_now: false,
+        version: false,
         table: None,
         column: None,
         skip_input: false,
@@ -253,6 +257,7 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
             merged.skip_update |= parsed.skip_update;
             merged.default |= parsed.default;
             merged.auto_now |= parsed.auto_now;
+            merged.version |= parsed.version;
             merged.skip_input |= parsed.skip_input;
             merged.required |= parsed.required;
             merged.email |= parsed.email;
@@ -315,6 +320,18 @@ pub(super) fn get_field_attrs(field: &syn::Field) -> Result<FieldAttrs> {
         return Err(syn::Error::new_spanned(
             field,
             "auto_now and default are mutually exclusive",
+        ));
+    }
+    if merged.version && merged.skip_update {
+        return Err(syn::Error::new_spanned(
+            field,
+            "version and skip_update are mutually exclusive",
+        ));
+    }
+    if merged.version && merged.default {
+        return Err(syn::Error::new_spanned(
+            field,
+            "version and default are mutually exclusive",
         ));
     }
 

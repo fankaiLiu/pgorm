@@ -22,7 +22,7 @@ mod graph_parse;
 mod types;
 
 use attrs::{get_field_attrs, get_struct_attrs};
-use gen_base::{generate_update_by_id_methods, generate_update_returning_methods};
+use gen_base::{generate_update_by_id_methods, generate_update_force_methods, generate_update_returning_methods};
 use gen_graph::generate_update_graph_methods;
 use types::{AutoTimestampKind, detect_auto_timestamp_type, option_inner};
 
@@ -71,6 +71,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let mut destructure_idents: Vec<syn::Ident> = Vec::new();
     let mut set_stmts: Vec<TokenStream> = Vec::new();
     let mut has_auto_now = false;
+    let mut version_field: Option<(syn::Ident, String)> = None; // (field_ident, column_name)
 
     // Get field names used by graph declarations
     let graph_field_names = attrs.graph.graph_field_names();
@@ -97,6 +98,28 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
 
         if field_attrs.skip_update {
+            continue;
+        }
+
+        // Handle version field for optimistic locking
+        if field_attrs.version {
+            if version_field.is_some() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "Only one #[orm(version)] field is allowed per struct",
+                ));
+            }
+            if !is_integer_type(field_ty) {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "#[orm(version)] field must be an integer type (i16, i32, or i64)",
+                ));
+            }
+            let col = field_attrs.column.clone().unwrap_or(field_name.clone());
+            version_field = Some((field_ident.clone(), col));
+            destructure_idents.push(field_ident.clone());
+            // Version field does NOT generate a regular SET statement
+            // It will be handled specially as `version = version + 1`
             continue;
         }
 
@@ -221,6 +244,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         &destructure,
         &set_stmts,
         has_auto_now,
+        version_field.as_ref(),
     );
 
     let update_returning_methods = generate_update_returning_methods(
@@ -230,9 +254,25 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         &destructure,
         &set_stmts,
         has_auto_now,
+        version_field.as_ref(),
     );
 
     let update_graph_methods = generate_update_graph_methods(&attrs, &id_col_expr)?;
+
+    // Generate force methods only when version field exists
+    let update_force_methods = if let Some((version_ident, version_col)) = version_field.as_ref() {
+        generate_update_force_methods(
+            table_name,
+            &id_col_expr,
+            &destructure,
+            &set_stmts,
+            has_auto_now,
+            version_col,
+            version_ident,
+        )
+    } else {
+        quote! {}
+    };
 
     let input_struct = if let Some(cfg) = &attrs.input {
         generate_input_struct(&input, fields, cfg)?
@@ -247,6 +287,8 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             #update_by_id_methods
 
             #update_returning_methods
+
+            #update_force_methods
 
             #update_graph_methods
         }
@@ -720,4 +762,11 @@ fn is_ipaddr_type(ty: &syn::Type) -> bool {
     let ty = option_inner(ty).unwrap_or(ty);
     let syn::Type::Path(p) = ty else { return false };
     p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "IpAddr")
+}
+
+fn is_integer_type(ty: &syn::Type) -> bool {
+    let syn::Type::Path(p) = ty else { return false };
+    p.path.segments.last().is_some_and(|s| {
+        matches!(s.ident.to_string().as_str(), "i16" | "i32" | "i64")
+    })
 }
