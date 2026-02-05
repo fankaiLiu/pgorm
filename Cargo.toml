@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -11,8 +11,8 @@ license = "MIT"
 [workspace.dependencies]
 # Internal crates
 pgorm = { path = "crates/pgorm" }
-pgorm-derive = { path = "crates/pgorm-derive", version = "0.1.5" }
-pgorm-check = { path = "crates/pgorm-check", version = "0.1.5" }
+pgorm-derive = { path = "crates/pgorm-derive", version = "0.1.6" }
+pgorm-check = { path = "crates/pgorm-check", version = "0.1.6" }
 
 # External dependencies
 futures-core = "0.3.31"

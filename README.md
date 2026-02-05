@@ -21,21 +21,31 @@
 
 ## Features
 
-- SQL-first design with explicit queries
-- Derive macros: `FromRow`, `Model`, `InsertModel`, `UpdateModel`, `ViewModel`
-- Connection pooling via `deadpool-postgres`
-- Eager loading for relations (`has_many`, `belongs_to`)
-- JSONB support out of the box
-- SQL migrations via `refinery`
-- Runtime SQL checking for AI-generated queries
-- Query monitoring with metrics, hooks, and slow query detection
-- Input validation macros with automatic Input struct generation
+- **SQL-first design** — explicit queries with `query()` / `sql()`, no hidden SQL
+- **Derive macros** — `FromRow`, `Model`, `InsertModel`, `UpdateModel`, `ViewModel`, `QueryParams`
+- **Connection pooling** via `deadpool-postgres`
+- **Eager loading** for relations (`has_many`, `belongs_to`, `has_one`, `many_to_many`)
+- **Batch insert / upsert** with UNNEST for maximum throughput
+- **Bulk update / delete** with type-safe conditions
+- **Multi-table write graphs** — insert related records across tables in one transaction
+- **Optimistic locking** with `#[orm(version)]`
+- **PostgreSQL special types** — `PgEnum`, `PgComposite`, `Range<T>` with derive macros
+- **Transactions & savepoints** — `transaction!`, `savepoint!`, `nested_transaction!` macros
+- **CTE (WITH) queries** — including recursive CTEs
+- **Keyset (cursor) pagination** — `Keyset1`, `Keyset2` for stable, index-friendly paging
+- **Streaming queries** — row-by-row `Stream` for large result sets
+- **Prepared statement cache** with LRU eviction
+- **Query monitoring** — metrics, logging, hooks, and slow query detection
+- **Runtime SQL checking** for AI-generated queries
+- **SQL migrations** via `refinery`
+- **Input validation** macros with automatic Input struct generation
+- **JSONB** support out of the box
 
 ## Installation
 
 ```toml
 [dependencies]
-pgorm = "0.1.1"
+pgorm = "0.1.6"
 ```
 
 ## Quick Start
@@ -191,6 +201,235 @@ let tag = TagUpsert { name: "rust".into(), color: Some("orange".into()) }
 let tags = TagUpsert::upsert_many_returning(&client, vec![...]).await?;
 ```
 
+### Optimistic Locking
+
+Prevent lost updates with `#[orm(version)]`:
+
+```rust
+#[derive(UpdateModel)]
+#[orm(table = "articles", model = "Article", returning = "Article")]
+struct ArticlePatch {
+    title: Option<String>,
+    body: Option<String>,
+    #[orm(version)]        // auto-checked in WHERE, auto-incremented in SET
+    version: i32,
+}
+
+let patch = ArticlePatch {
+    title: Some("Updated Title".into()),
+    body: None,
+    version: article.version,  // pass current version
+};
+
+match patch.update_by_id_returning(&client, article.id).await {
+    Ok(updated) => println!("Updated to version {}", updated.version),
+    Err(OrmError::StaleRecord) => println!("Conflict! Someone else modified this record"),
+    Err(e) => return Err(e),
+}
+```
+
+### Bulk Update & Delete
+
+```rust
+use pgorm::{SetExpr, Condition, sql};
+
+// Bulk update with conditions
+let affected = sql("users")
+    .update_many([
+        SetExpr::set("status", "inactive")?,
+        SetExpr::raw("updated_at = NOW()"),
+    ])
+    .filter(Condition::lt("last_login", one_year_ago)?)
+    .execute(&client)
+    .await?;
+
+// Bulk delete
+let deleted = sql("sessions")
+    .delete_many()
+    .filter(Condition::lt("expires_at", now)?)
+    .execute(&client)
+    .await?;
+```
+
+### CTE (WITH) Queries
+
+```rust
+// Simple CTE
+let results = sql("")
+    .with("active_users", sql("SELECT id, name FROM users WHERE status = ").push_bind_owned("active"))?
+    .select(sql("SELECT * FROM active_users"))
+    .fetch_all_as::<User>(&client)
+    .await?;
+
+// Recursive CTE (e.g., org chart)
+let tree = sql("")
+    .with_recursive(
+        "org_tree",
+        sql("SELECT id, name, parent_id, 0 as level FROM employees WHERE parent_id IS NULL"),
+        sql("SELECT e.id, e.name, e.parent_id, t.level + 1 FROM employees e JOIN org_tree t ON e.parent_id = t.id"),
+    )?
+    .select(sql("SELECT * FROM org_tree ORDER BY level"))
+    .fetch_all_as::<OrgNode>(&client)
+    .await?;
+```
+
+### PostgreSQL ENUM Types
+
+```rust
+use pgorm::PgEnum;
+
+#[derive(PgEnum, Debug, Clone, PartialEq)]
+#[orm(pg_type = "order_status")]
+pub enum OrderStatus {
+    #[orm(rename = "pending")]
+    Pending,
+    #[orm(rename = "shipped")]
+    Shipped,
+    #[orm(rename = "delivered")]
+    Delivered,
+}
+
+// Use directly in queries — automatic ToSql/FromSql
+query("INSERT INTO orders (status) VALUES ($1)")
+    .bind(OrderStatus::Pending)
+    .execute(&client).await?;
+
+let status: OrderStatus = row.try_get_column("status")?;
+```
+
+### PostgreSQL Composite Types
+
+```rust
+use pgorm::PgComposite;
+
+#[derive(PgComposite, Debug, Clone)]
+#[orm(pg_type = "address")]
+pub struct Address {
+    pub street: String,
+    pub city: String,
+    pub zip_code: String,
+}
+
+// Bind and read composite types directly
+query("INSERT INTO contacts (name, home_address) VALUES ($1, $2)")
+    .bind("Alice")
+    .bind(addr)
+    .execute(&client).await?;
+
+let addr: Address = row.try_get_column("home_address")?;
+```
+
+### Range Types
+
+```rust
+use pgorm::types::Range;
+use chrono::{DateTime, Utc, Duration};
+
+let now: DateTime<Utc> = Utc::now();
+
+// Insert a tstzrange
+query("INSERT INTO events (name, during) VALUES ($1, $2)")
+    .bind("Meeting")
+    .bind(Range::lower_inc(now, now + Duration::hours(2)))
+    .execute(&client).await?;
+
+// Read it back
+let during: Range<DateTime<Utc>> = row.try_get_column("during")?;
+
+// Range constructors
+Range::<i32>::inclusive(1, 10);   // [1, 10]
+Range::<i32>::exclusive(1, 10);  // (1, 10)
+Range::<i32>::lower_inc(1, 10);  // [1, 10)
+Range::<i32>::empty();           // empty
+Range::<i32>::unbounded();       // (-inf, +inf)
+
+// Range condition operators
+Condition::overlaps("during", range)?;      // &&
+Condition::contains("during", timestamp)?;  // @>
+Condition::range_left_of("r", range)?;      // <<
+Condition::range_right_of("r", range)?;     // >>
+Condition::range_adjacent("r", range)?;     // -|-
+```
+
+### Transactions & Savepoints
+
+```rust
+use pgorm::{OrmError, TransactionExt};
+
+// Top-level transaction
+pgorm::transaction!(&mut client, tx, {
+    query("UPDATE accounts SET balance = balance - $1 WHERE id = $2")
+        .bind(100_i64).bind(1_i64).execute(&tx).await?;
+
+    // Named savepoint (manual control)
+    let sp = tx.pgorm_savepoint("bonus").await?;
+    query("UPDATE accounts SET balance = balance + $1 WHERE id = $2")
+        .bind(100_i64).bind(2_i64).execute(&sp).await?;
+    sp.release().await?;  // or sp.rollback().await?
+
+    Ok::<(), OrmError>(())
+})?;
+
+// savepoint! macro — auto release on Ok, rollback on Err
+pgorm::transaction!(&mut client, tx, {
+    let result: Result<(), OrmError> = pgorm::savepoint!(tx, "bonus", sp, {
+        query("UPDATE ...").execute(&sp).await?;
+        Ok(())
+    });
+    Ok::<(), OrmError>(())
+})?;
+
+// nested_transaction! — anonymous savepoint for nesting
+pgorm::transaction!(&mut client, tx, {
+    pgorm::nested_transaction!(tx, inner, {
+        query("UPDATE ...").execute(&inner).await?;
+        Ok::<(), OrmError>(())
+    })?;
+    Ok::<(), OrmError>(())
+})?;
+```
+
+### Keyset (Cursor) Pagination
+
+```rust
+use pgorm::{Keyset2, WhereExpr, Condition, sql};
+
+let mut where_expr = WhereExpr::and(Vec::new());
+
+// Stable order: created_at DESC, id DESC
+let mut keyset = Keyset2::desc("created_at", "id")?.limit(20);
+
+// For subsequent pages, pass the last row's values
+if let (Some(last_ts), Some(last_id)) = (after_created_at, after_id) {
+    keyset = keyset.after(last_ts, last_id);
+    where_expr = where_expr.and_with(keyset.into_where_expr()?);
+}
+
+let mut q = sql("SELECT * FROM users");
+if !where_expr.is_trivially_true() {
+    q.push(" WHERE ");
+    where_expr.append_to_sql(&mut q);
+}
+keyset.append_order_by_limit_to_sql(&mut q)?;
+```
+
+### Streaming Queries
+
+Process large result sets row-by-row without loading everything into memory:
+
+```rust
+use futures_util::StreamExt;
+
+let mut stream = query("SELECT * FROM large_table")
+    .stream_as::<MyRow>(&client)
+    .await?;
+
+while let Some(row) = stream.next().await {
+    let row = row?;
+    // process each row as it arrives
+}
+```
+
 ### Multi-Table Write Graph
 
 Insert related records across multiple tables in one transaction:
@@ -253,40 +492,28 @@ impl QueryHook for BlockDangerousDeleteHook {
     }
 }
 
-// Create monitors
 let stats = Arc::new(StatsMonitor::new());
 let monitor = CompositeMonitor::new()
     .add(LoggingMonitor::new()
         .prefix("[pgorm]")
-        .min_duration(Duration::from_millis(10)))  // Log queries > 10ms
+        .min_duration(Duration::from_millis(10)))
     .add_arc(stats.clone());
 
-// Configure monitoring
 let config = MonitorConfig::new()
     .with_query_timeout(Duration::from_secs(30))
     .with_slow_query_threshold(Duration::from_millis(100))
     .enable_monitoring();
 
-// Wrap client with instrumentation
 let pg = InstrumentedClient::new(client)
     .with_config(config)
     .with_monitor(monitor)
     .with_hook(BlockDangerousDeleteHook);
 
-// If you use `tracing`, enable feature `tracing` and add `TracingSqlHook::new()`
-// to emit the actual executed SQL (target: `pgorm.sql`).
-
-// Use normally - all queries are monitored
+// All queries are now monitored
 let count: i64 = query("SELECT COUNT(*) FROM users")
-    .tag("users.count")  // Optional tag for metrics grouping
+    .tag("users.count")
     .fetch_scalar_one(&pg)
     .await?;
-
-// Access collected metrics
-let metrics = stats.stats();
-println!("Total queries: {}", metrics.total_queries);
-println!("Failed queries: {}", metrics.failed_queries);
-println!("Max duration: {:?}", metrics.max_duration);
 ```
 
 ### Input Validation
@@ -295,18 +522,6 @@ Generate validated Input structs with `#[orm(input)]`:
 
 ```rust
 use pgorm::{FromRow, InsertModel, Model, UpdateModel};
-
-#[derive(Debug, FromRow, Model)]
-#[orm(table = "users")]
-struct User {
-    #[orm(id)]
-    id: i64,
-    name: String,
-    email: String,
-    age: Option<i32>,
-    external_id: uuid::Uuid,
-    homepage: Option<String>,
-}
 
 #[derive(Debug, InsertModel)]
 #[orm(table = "users", returning = "User")]
@@ -334,14 +549,11 @@ let input: NewUserInput = serde_json::from_str(json_body)?;
 // Validate all fields at once
 let errors = input.validate();
 if !errors.is_empty() {
-    // Return validation errors as JSON
     return Err(serde_json::to_string(&errors)?);
 }
 
 // Convert to model (validates + converts input_as types)
 let new_user: NewUser = input.try_into_model()?;
-
-// Insert into database
 let user: User = new_user.insert_returning(&client).await?;
 ```
 
@@ -359,34 +571,63 @@ let user: User = new_user.insert_returning(&client).await?;
 | `#[orm(custom = "path::to::fn")]` | Custom validator function |
 | `#[orm(input_as = "Type")]` | Accept different type in Input struct |
 
-**Update validation with tri-state semantics:**
+## Feature Flags
 
-```rust
-#[derive(Debug, UpdateModel)]
-#[orm(table = "users", model = "User", returning = "User")]
-#[orm(input)]  // Generates UserPatchInput struct
-struct UserPatch {
-    #[orm(len = "2..=100")]
-    name: Option<String>,              // None = skip, Some(v) = update
+| Flag | Default | Description |
+|------|---------|-------------|
+| `pool` | Yes | Connection pooling via `deadpool-postgres` |
+| `derive` | Yes | Derive macros (`FromRow`, `Model`, `InsertModel`, etc.) |
+| `check` | Yes | SQL schema checking and linting via `pgorm-check` |
+| `validate` | Yes | Changeset-style validation helpers (email/url/regex) |
+| `migrate` | No | SQL migrations via `refinery` |
+| `tracing` | No | SQL debug logs via `tracing` crate |
+| `rust_decimal` | No | `rust_decimal::Decimal` support |
+| `time` | No | `time` crate date/time support |
+| `cidr` | No | `cidr` network type support |
+| `geo_types` | No | `geo-types` geometry support |
+| `eui48` | No | MAC address support |
+| `bit_vec` | No | Bit vector support |
+| `extra_types` | No | Enable all optional type support above |
 
-    #[orm(email)]
-    email: Option<String>,
+## Examples
 
-    #[orm(url)]
-    homepage: Option<Option<String>>,  // None = skip, Some(None) = NULL, Some(Some(v)) = value
-}
+The `crates/pgorm/examples/` directory contains runnable examples for every feature:
 
-// Patch from JSON (missing fields are skipped)
-let patch_input: UserPatchInput = serde_json::from_str(r#"{"email": "new@example.com"}"#)?;
-let patch = patch_input.try_into_patch()?;
+| Example | Description |
+|---------|-------------|
+| `pg_client` | PgClient with SQL checking and statement cache |
+| `eager_loading` | Eager loading relations (has_many, belongs_to) |
+| `insert_many` | Batch insert with UNNEST |
+| `insert_many_array` | Batch insert with array columns |
+| `upsert` | ON CONFLICT upsert (single & batch) |
+| `update_model` | Partial updates with Option semantics |
+| `write_graph` | Multi-table write graph |
+| `sql_builder` | Dynamic SQL with conditions, ordering, pagination |
+| `changeset` | Changeset validation |
+| `monitoring` | Query monitoring, logging, hooks |
+| `statement_cache` | Prepared statement cache with LRU eviction |
+| `jsonb` | JSONB column support |
+| `fetch_semantics` | fetch_one / fetch_optional / fetch_all / fetch_scalar |
+| `query_params` | QueryParams derive for dynamic query building |
+| `streaming` | Streaming large result sets row-by-row |
+| `keyset_pagination` | Cursor-based keyset pagination |
+| `optimistic_locking` | Optimistic locking with version column |
+| `pg_enum` | PostgreSQL ENUM with PgEnum derive |
+| `pg_range` | Range types (tstzrange, daterange, int4range) |
+| `pg_composite` | PostgreSQL composite types with PgComposite derive |
+| `savepoint` | Savepoints and nested transactions |
+| `migrate` | SQL migrations with refinery |
 
-// Update only the email field
-let updated: User = patch.update_by_id_returning(&client, user_id).await?;
+Run any example:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example \
+  cargo run --example <name> -p pgorm
 ```
 
 ## Documentation
 
-See the [full documentation](https://docs.rs/pgorm) for detailed usage.
+See the [full documentation](https://docs.rs/pgorm) for detailed API reference.
 
 ## Acknowledgements
 
