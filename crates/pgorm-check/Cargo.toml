@@ -30,6 +30,12 @@ dotenvy.workspace = true
 colored.workspace = true
 deadpool-postgres.workspace = true
 async-trait.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "sql_parse_cache"
+harness = false
+required-features = ["sql"]
 
 [[example]]
 name = "sql_check"

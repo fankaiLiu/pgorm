@@ -111,6 +111,15 @@ impl SchemaRegistry {
         Self::default()
     }
 
+    /// Create a new schema registry with a custom SQL parse cache capacity.
+    #[cfg(feature = "check")]
+    pub fn with_parse_cache_capacity(capacity: usize) -> Self {
+        Self {
+            tables: HashMap::new(),
+            parse_cache: std::sync::Arc::new(pgorm_check::SqlParseCache::new(capacity)),
+        }
+    }
+
     /// Register a table from a type that implements `TableMeta`.
     pub fn register<T: TableMeta>(&mut self) {
         let schema_name = T::schema_name().to_string();

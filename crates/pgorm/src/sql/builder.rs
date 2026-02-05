@@ -143,13 +143,40 @@ impl Sql {
 
     /// Render SQL with `$1, $2, ...` placeholders.
     pub fn to_sql(&self) -> String {
-        fn decimal_digits(mut n: usize) -> usize {
-            let mut digits = 1;
-            while n >= 10 {
-                n /= 10;
-                digits += 1;
+        // Fast integer digit count (avoids division loop for common cases).
+        #[inline]
+        fn decimal_digits(n: usize) -> usize {
+            if n < 10 {
+                1
+            } else if n < 100 {
+                2
+            } else if n < 1000 {
+                3
+            } else if n < 10000 {
+                4
+            } else {
+                // Fallback for very large parameter counts (unlikely in practice).
+                (n.ilog10() as usize) + 1
             }
-            digits
+        }
+
+        // Write a usize as decimal digits into `out` without going through fmt.
+        #[inline]
+        fn push_usize(out: &mut String, mut n: usize) {
+            if n < 10 {
+                out.push((b'0' + n as u8) as char);
+                return;
+            }
+            // Stack buffer for up to 20 digits (u64::MAX).
+            let mut buf = [0u8; 20];
+            let mut pos = buf.len();
+            while n > 0 {
+                pos -= 1;
+                buf[pos] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+            // SAFETY: buf[pos..] only contains ASCII digits.
+            out.push_str(unsafe { std::str::from_utf8_unchecked(&buf[pos..]) });
         }
 
         // Pre-size to avoid repeated reallocations (hot path).
@@ -173,8 +200,7 @@ impl Sql {
                 SqlPart::Param => {
                     idx += 1;
                     out.push('$');
-                    use std::fmt::Write;
-                    let _ = write!(&mut out, "{idx}");
+                    push_usize(&mut out, idx);
                 }
             }
         }

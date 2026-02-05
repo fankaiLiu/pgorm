@@ -1,5 +1,5 @@
 use crate::sql_lint::{ParseResult, StatementKind};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,8 +387,64 @@ fn extract_error_location(error: &str) -> Option<usize> {
 
 #[derive(Debug)]
 struct SqlParseCacheInner {
-    map: HashMap<String, Arc<SqlAnalysis>>,
-    order: VecDeque<String>,
+    map: HashMap<String, ParseCacheEntry>,
+    generation: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ParseCacheEntry {
+    analysis: Arc<SqlAnalysis>,
+    last_access: u64,
+}
+
+impl SqlParseCacheInner {
+    fn touch(&mut self, key: &str) -> Option<Arc<SqlAnalysis>> {
+        let entry = self.map.get_mut(key)?;
+        self.generation += 1;
+        entry.last_access = self.generation;
+        Some(Arc::clone(&entry.analysis))
+    }
+
+    fn evict_lru(&mut self, capacity: usize) -> u64 {
+        let mut evicted = 0u64;
+        while self.map.len() > capacity {
+            let oldest_key = self
+                .map
+                .iter()
+                .min_by_key(|(_, e)| e.last_access)
+                .map(|(k, _)| k.clone());
+
+            if let Some(key) = oldest_key {
+                self.map.remove(&key);
+                evicted += 1;
+            } else {
+                break;
+            }
+        }
+        evicted
+    }
+}
+
+/// SQL parse cache statistics.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ParseCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub size: usize,
+    pub capacity: usize,
+}
+
+impl ParseCacheStats {
+    /// Cache hit ratio (0.0 – 1.0). Returns 0.0 if no lookups have occurred.
+    pub fn hit_ratio(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
+    }
 }
 
 /// Thread-safe SQL parse cache (simple LRU).
@@ -396,6 +452,9 @@ struct SqlParseCacheInner {
 pub struct SqlParseCache {
     capacity: usize,
     inner: Mutex<SqlParseCacheInner>,
+    hits: std::sync::atomic::AtomicU64,
+    misses: std::sync::atomic::AtomicU64,
+    evictions: std::sync::atomic::AtomicU64,
 }
 
 impl Default for SqlParseCache {
@@ -409,9 +468,12 @@ impl SqlParseCache {
         Self {
             capacity,
             inner: Mutex::new(SqlParseCacheInner {
-                map: HashMap::new(),
-                order: VecDeque::new(),
+                map: HashMap::with_capacity(capacity),
+                generation: 0,
             }),
+            hits: std::sync::atomic::AtomicU64::new(0),
+            misses: std::sync::atomic::AtomicU64::new(0),
+            evictions: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -420,50 +482,60 @@ impl SqlParseCache {
     }
 
     pub fn analyze(&self, sql: &str) -> Arc<SqlAnalysis> {
+        use std::sync::atomic::Ordering;
+
         if self.capacity == 0 {
             return Arc::new(analyze_sql(sql));
         }
 
         {
             let mut inner = self.inner.lock().expect("sql parse cache mutex poisoned");
-            if let Some(found) = inner.map.get(sql) {
-                let found = Arc::clone(found);
-                touch_key(&mut inner.order, sql);
+            if let Some(found) = inner.touch(sql) {
+                self.hits.fetch_add(1, Ordering::Relaxed);
                 return found;
             }
         }
+
+        self.misses.fetch_add(1, Ordering::Relaxed);
 
         // Parse outside the lock to reduce contention.
         let analysis = Arc::new(analyze_sql(sql));
 
         let mut inner = self.inner.lock().expect("sql parse cache mutex poisoned");
-        if let Some(found) = inner.map.get(sql) {
-            let found = Arc::clone(found);
-            touch_key(&mut inner.order, sql);
+        // Double-check: another thread may have inserted while we parsed.
+        if let Some(found) = inner.touch(sql) {
             return found;
         }
 
-        inner.map.insert(sql.to_string(), Arc::clone(&analysis));
-        inner.order.push_back(sql.to_string());
-
-        // Evict least-recently used.
-        while inner.map.len() > self.capacity {
-            if let Some(oldest) = inner.order.pop_front() {
-                inner.map.remove(&oldest);
-            } else {
-                break;
-            }
+        inner.generation += 1;
+        let access = inner.generation;
+        inner.map.insert(
+            sql.to_string(),
+            ParseCacheEntry {
+                analysis: Arc::clone(&analysis),
+                last_access: access,
+            },
+        );
+        let evicted = inner.evict_lru(self.capacity);
+        if evicted > 0 {
+            self.evictions.fetch_add(evicted, Ordering::Relaxed);
         }
 
         analysis
     }
-}
 
-fn touch_key(order: &mut VecDeque<String>, key: &str) {
-    if let Some(pos) = order.iter().position(|k| k == key) {
-        order.remove(pos);
+    /// Get cache statistics.
+    pub fn stats(&self) -> ParseCacheStats {
+        use std::sync::atomic::Ordering;
+        let inner = self.inner.lock().expect("sql parse cache mutex poisoned");
+        ParseCacheStats {
+            hits: self.hits.load(Ordering::Relaxed),
+            misses: self.misses.load(Ordering::Relaxed),
+            evictions: self.evictions.load(Ordering::Relaxed),
+            size: inner.map.len(),
+            capacity: self.capacity,
+        }
     }
-    order.push_back(key.to_string());
 }
 
 #[cfg(test)]

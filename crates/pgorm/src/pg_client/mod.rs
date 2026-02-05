@@ -59,6 +59,7 @@ pub use config::{
     CheckMode, DangerousDmlPolicy, PgClientConfig, SelectWithoutLimitPolicy, SqlPolicy,
     StatementCacheConfig,
 };
+pub use statement_cache::StmtCacheStats;
 
 use crate::check::SchemaRegistry;
 use crate::checked_client::ModelRegistration;
@@ -122,7 +123,11 @@ impl<C> PgClient<C> {
 
     /// Create a new `PgClient` with custom configuration.
     pub fn with_config(client: C, config: PgClientConfig) -> Self {
+        #[cfg(feature = "check")]
+        let mut registry = SchemaRegistry::with_parse_cache_capacity(config.parse_cache_capacity);
+        #[cfg(not(feature = "check"))]
         let mut registry = SchemaRegistry::new();
+
         for reg in inventory::iter::<ModelRegistration> {
             (reg.register_fn)(&mut registry);
         }
@@ -226,6 +231,13 @@ impl<C> PgClient<C> {
     /// Reset query statistics.
     pub fn reset_stats(&self) {
         self.stats.reset();
+    }
+
+    /// Get prepared statement cache statistics.
+    ///
+    /// Returns `None` if the statement cache is disabled.
+    pub fn stmt_cache_stats(&self) -> Option<StmtCacheStats> {
+        self.statement_cache.as_ref().map(|c| c.stats())
     }
 
     /// Get a reference to the inner client.

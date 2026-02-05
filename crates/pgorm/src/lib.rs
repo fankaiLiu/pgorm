@@ -140,7 +140,7 @@ pub use checked_client::ModelRegistration;
 #[cfg(feature = "check")]
 pub use pg_client::{
     CheckMode, DangerousDmlPolicy, ModelCheckResult, PgClient, PgClientConfig,
-    SelectWithoutLimitPolicy, SqlPolicy, StatementCacheConfig,
+    SelectWithoutLimitPolicy, SqlPolicy, StatementCacheConfig, StmtCacheStats,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

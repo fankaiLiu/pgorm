@@ -17,6 +17,11 @@ pub struct PgClientConfig {
     pub slow_query_threshold: Option<Duration>,
     /// Prepared statement cache configuration (per-connection).
     pub statement_cache: StatementCacheConfig,
+    /// SQL parse cache capacity (shared across all PgClient instances using the same registry).
+    ///
+    /// Default: 256. Set to 0 to disable caching (every SQL will be re-parsed).
+    /// Larger values use more memory but improve hit rates for diverse query sets.
+    pub parse_cache_capacity: usize,
     /// Whether to collect query statistics.
     pub stats_enabled: bool,
     /// Whether to log queries.
@@ -40,6 +45,7 @@ impl Default for PgClientConfig {
             query_timeout: None,
             slow_query_threshold: None,
             statement_cache: StatementCacheConfig::default(),
+            parse_cache_capacity: 256,
             stats_enabled: true,
             logging_enabled: false,
             log_min_duration: None,
@@ -138,6 +144,15 @@ impl PgClientConfig {
     /// Disable prepared statement caching.
     pub fn no_statement_cache(mut self) -> Self {
         self.statement_cache.enabled = false;
+        self
+    }
+
+    /// Set the SQL parse cache capacity (default: 256).
+    ///
+    /// The parse cache is used by the SQL checker to avoid re-parsing identical SQL.
+    /// Set to 0 to disable. Larger values improve hit rates for diverse query sets.
+    pub fn parse_cache_capacity(mut self, capacity: usize) -> Self {
+        self.parse_cache_capacity = capacity;
         self
     }
 

@@ -59,14 +59,6 @@ impl SchemaRegistry {
         self.parse_cache.analyze(sql)
     }
 
-    /// Replace the internal SQL parse cache with a new capacity.
-    ///
-    /// Set `capacity` to 0 to disable caching (always re-parse).
-    pub fn with_parse_cache_capacity(mut self, capacity: usize) -> Self {
-        self.parse_cache = std::sync::Arc::new(SqlParseCache::new(capacity));
-        self
-    }
-
     /// Check SQL against this registry's schema.
     ///
     /// Validates:

@@ -37,6 +37,15 @@ dotenvy.workspace = true
 colored.workspace = true
 comfy-table.workspace = true
 futures-util.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "sql_builder"
+harness = false
+
+[[bench]]
+name = "lru_cache"
+harness = false
 
 [features]
 default = ["pool", "derive", "check", "validate"]

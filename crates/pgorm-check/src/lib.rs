@@ -57,8 +57,8 @@ pub use schema_introspect::{ColumnInfo, DbSchema, RelationKind, TableInfo};
 
 #[cfg(feature = "sql")]
 pub use sql_analysis::{
-    ColumnRefFull, InsertAnalysis, OnConflictAnalysis, RangeVarRef, SqlAnalysis, SqlParseCache,
-    TargetColumn, UpdateAnalysis, analyze_sql,
+    ColumnRefFull, InsertAnalysis, OnConflictAnalysis, ParseCacheStats, RangeVarRef, SqlAnalysis,
+    SqlParseCache, TargetColumn, UpdateAnalysis, analyze_sql,
 };
 
 #[cfg(feature = "sql")]
