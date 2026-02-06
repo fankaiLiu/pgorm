@@ -71,6 +71,47 @@ fn test_table_schema_builder() {
     assert_eq!(pk_col.name, "id");
 }
 
+#[test]
+fn test_multi_schema_table_lookup() {
+    let mut registry = SchemaRegistry::new();
+
+    // Register same table name in two different schemas
+    registry.register_table(TableSchema::new("public", "items").with_columns(&["id", "name"]));
+    registry.register_table(TableSchema::new("archive", "items").with_columns(&[
+        "id",
+        "name",
+        "archived_at",
+    ]));
+
+    // Qualified lookup should return the correct schema
+    let public_items = registry.get_table("public", "items").unwrap();
+    assert!(!public_items.has_column("archived_at"));
+
+    let archive_items = registry.get_table("archive", "items").unwrap();
+    assert!(archive_items.has_column("archived_at"));
+
+    // Unqualified lookup should prefer public schema
+    let found = registry.find_table("items").unwrap();
+    assert_eq!(found.schema, "public");
+}
+
+#[test]
+fn test_stmt_cache_stats_hit_ratio() {
+    use crate::pg_client::StmtCacheStats;
+
+    let empty = StmtCacheStats::default();
+    assert_eq!(empty.hit_ratio(), 0.0);
+
+    let stats = StmtCacheStats {
+        hits: 75,
+        misses: 25,
+        evictions: 0,
+        size: 10,
+        capacity: 100,
+    };
+    assert!((stats.hit_ratio() - 0.75).abs() < f64::EPSILON);
+}
+
 #[cfg(feature = "check")]
 mod check_tests {
     use super::*;

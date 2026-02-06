@@ -157,6 +157,87 @@ async fn sql_policy_delete_without_where_errors() {
     assert!(capture.0.lock().unwrap().is_none());
 }
 
+// ── I-12: SQL policy combination tests ──
+
+#[tokio::test]
+async fn sql_policy_update_without_where_errors() {
+    struct DummyClient;
+    impl GenericClient for DummyClient {
+        async fn query(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+            Ok(vec![])
+        }
+        async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+            Err(OrmError::not_found("no rows"))
+        }
+        async fn query_opt(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+            Ok(None)
+        }
+        async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+            Ok(0)
+        }
+    }
+
+    let config = PgClientConfig::new()
+        .no_check()
+        .update_without_where(DangerousDmlPolicy::Error);
+    let pg = PgClient::with_config(DummyClient, config);
+
+    let err = pg
+        .execute("UPDATE users SET status = 'inactive'", &[])
+        .await
+        .unwrap_err();
+    assert!(matches!(err, OrmError::Validation(_)));
+
+    // With WHERE should succeed
+    let result = pg
+        .execute("UPDATE users SET status = 'inactive' WHERE id = 1", &[])
+        .await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn sql_policy_multiple_policies_all_enforced() {
+    struct DummyClient;
+    impl GenericClient for DummyClient {
+        async fn query(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Vec<Row>> {
+            Ok(vec![])
+        }
+        async fn query_one(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
+            Err(OrmError::not_found("no rows"))
+        }
+        async fn query_opt(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<Option<Row>> {
+            Ok(None)
+        }
+        async fn execute(&self, _: &str, _: &[&(dyn ToSql + Sync)]) -> OrmResult<u64> {
+            Ok(0)
+        }
+    }
+
+    // Enable multiple policies at once
+    let config = PgClientConfig::new()
+        .no_check()
+        .select_without_limit(SelectWithoutLimitPolicy::Error)
+        .delete_without_where(DangerousDmlPolicy::Error)
+        .update_without_where(DangerousDmlPolicy::Error);
+    let pg = PgClient::with_config(DummyClient, config);
+
+    // SELECT without LIMIT should error
+    let err = pg.query("SELECT * FROM users", &[]).await.unwrap_err();
+    assert!(matches!(err, OrmError::Validation(_)));
+
+    // DELETE without WHERE should error
+    let err = pg.execute("DELETE FROM users", &[]).await.unwrap_err();
+    assert!(matches!(err, OrmError::Validation(_)));
+
+    // UPDATE without WHERE should error
+    let err = pg.execute("UPDATE users SET x = 1", &[]).await.unwrap_err();
+    assert!(matches!(err, OrmError::Validation(_)));
+
+    // SELECT with LIMIT should succeed
+    let result = pg.query("SELECT * FROM users LIMIT 10", &[]).await;
+    assert!(result.is_ok());
+}
+
 #[tokio::test]
 async fn tagged_queries_propagate_to_custom_monitor() {
     #[derive(Default)]

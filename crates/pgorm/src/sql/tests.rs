@@ -164,6 +164,50 @@ fn pagination_composes_with_conditions() {
     assert_eq!(q.params_ref().len(), 3);
 }
 
+// ── I-12: Additional SQL builder test coverage ──
+
+#[test]
+fn large_parameter_count() {
+    let mut q = sql("INSERT INTO t VALUES (");
+    for i in 0..1000 {
+        if i > 0 {
+            q.push(", ");
+        }
+        q.push_bind(i as i64);
+    }
+    q.push(")");
+
+    let rendered = q.to_sql();
+    assert!(rendered.contains("$1,"));
+    assert!(rendered.contains("$999"));
+    assert!(rendered.contains("$1000"));
+    assert_eq!(q.params_ref().len(), 1000);
+}
+
+#[test]
+fn push_ident_ref_public_api() {
+    use crate::ident::IntoIdent;
+    let ident = "users".into_ident().unwrap();
+    let mut q = sql("SELECT * FROM ");
+    q.push_ident_ref(&ident).push(" WHERE id = ").push_bind(1);
+    assert_eq!(q.to_sql(), "SELECT * FROM users WHERE id = $1");
+}
+
+#[test]
+fn bind_list_single_element() {
+    let mut q = sql("SELECT * FROM users WHERE id IN (");
+    q.push_bind_list(vec![42]).push(")");
+    assert_eq!(q.to_sql(), "SELECT * FROM users WHERE id IN ($1)");
+    assert_eq!(q.params_ref().len(), 1);
+}
+
+#[test]
+fn tagged_builder_api() {
+    let q = sql("SELECT 1").tagged("my-tag");
+    // tag is set, to_sql still works
+    assert_eq!(q.to_sql(), "SELECT 1");
+}
+
 #[tokio::test]
 async fn fetch_one_multi_rows_returns_first_row() {
     let Some(client) = try_connect().await else {

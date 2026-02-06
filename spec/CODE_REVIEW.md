@@ -376,7 +376,7 @@ pgorm-check = { path = "crates/pgorm-check", features = ["sql"], optional = true
 
 ---
 
-### I-12. 测试覆盖率不均匀 (P1 — 需要集成测试环境)
+### ~~I-12. 测试覆盖率不均匀~~ ✅ (已补充 25+ 单元测试)
 
 **模块**: 项目结构
 
