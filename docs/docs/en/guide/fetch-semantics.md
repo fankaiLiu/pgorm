@@ -104,9 +104,14 @@ let maybe_user: Option<User> = query("SELECT id, username FROM users WHERE id = 
 When you only care about the first column of the result (COUNT, MAX, etc.), use scalar methods:
 
 ```rust
-// Single scalar value (errors if 0 rows)
+// Single scalar value from the first row (errors if 0 rows)
 let count: i64 = query("SELECT COUNT(*) FROM users")
     .fetch_scalar_one(&client)
+    .await?;
+
+// Strict scalar value: requires exactly one row.
+let strict_count: i64 = query("SELECT COUNT(*) FROM users")
+    .fetch_scalar_one_strict(&client)
     .await?;
 
 // Optional scalar (0 rows = None)
@@ -140,6 +145,7 @@ let has_active: bool = query("SELECT 1 FROM users WHERE status = $1")
 | A row that might not exist | `fetch_opt` |
 | All matching rows | `fetch_all` |
 | Just a number (COUNT, MAX, ...) | `fetch_scalar_one` |
+| Exactly one-row scalar | `fetch_scalar_one_strict` |
 | A number that might be NULL | `fetch_scalar_opt` |
 | To check existence | `exists()` |
 | To map rows into a struct | Add `_as::<T>` to any fetch method |

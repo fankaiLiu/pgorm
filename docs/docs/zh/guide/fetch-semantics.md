@@ -104,9 +104,14 @@ let maybe_user: Option<User> = query("SELECT id, username FROM users WHERE id = 
 当你只关心结果的第一列（COUNT、MAX 等）时，使用标量方法：
 
 ```rust
-// 单个标量值（0 行时报错）
+// 第一行的单个标量值（0 行时报错）
 let count: i64 = query("SELECT COUNT(*) FROM users")
     .fetch_scalar_one(&client)
+    .await?;
+
+// 严格标量值：要求恰好一行。
+let strict_count: i64 = query("SELECT COUNT(*) FROM users")
+    .fetch_scalar_one_strict(&client)
     .await?;
 
 // 可选标量（0 行 = None）
@@ -140,6 +145,7 @@ let has_active: bool = query("SELECT 1 FROM users WHERE status = $1")
 | 可能不存在的行 | `fetch_opt` |
 | 所有匹配的行 | `fetch_all` |
 | 只要一个数字（COUNT、MAX、...） | `fetch_scalar_one` |
+| 恰好一行的数字 | `fetch_scalar_one_strict` |
 | 可能为 NULL 的数字 | `fetch_scalar_opt` |
 | 检查是否存在 | `exists()` |
 | 将行映射为结构体 | 在任何 fetch 方法后加 `_as::<T>` |

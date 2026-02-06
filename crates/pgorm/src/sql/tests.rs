@@ -258,3 +258,53 @@ async fn fetch_one_strict_multi_rows_is_too_many_rows() {
         }
     ));
 }
+
+#[tokio::test]
+async fn fetch_scalar_one_multi_rows_returns_first_scalar() {
+    let Some(client) = try_connect().await else {
+        eprintln!("DATABASE_URL not set; skipping");
+        return;
+    };
+
+    let n: i32 = query("SELECT n FROM (VALUES (1), (2)) AS t(n) ORDER BY n")
+        .fetch_scalar_one(&client)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn fetch_scalar_one_strict_zero_rows_is_not_found() {
+    let Some(client) = try_connect().await else {
+        eprintln!("DATABASE_URL not set; skipping");
+        return;
+    };
+
+    let err = query("SELECT 1 WHERE FALSE")
+        .fetch_scalar_one_strict::<i32>(&client)
+        .await
+        .unwrap_err();
+    assert!(err.is_not_found());
+}
+
+#[tokio::test]
+async fn fetch_scalar_one_strict_multi_rows_is_too_many_rows() {
+    use crate::error::OrmError;
+
+    let Some(client) = try_connect().await else {
+        eprintln!("DATABASE_URL not set; skipping");
+        return;
+    };
+
+    let err = query("SELECT n FROM (VALUES (1), (2)) AS t(n)")
+        .fetch_scalar_one_strict::<i32>(&client)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        OrmError::TooManyRows {
+            expected: 1,
+            got: 2
+        }
+    ));
+}

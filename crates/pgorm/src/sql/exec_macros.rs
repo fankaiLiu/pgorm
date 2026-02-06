@@ -162,12 +162,44 @@ macro_rules! impl_query_exec {
 
         // ── Scalar convenience ──
 
-        /// Execute and return exactly one scalar value from column 0.
+        /// Execute and return the first scalar value from column 0.
+        ///
+        /// Semantics match [`Self::fetch_one`]:
+        /// - 0 rows: returns `NotFound`
+        /// - 1 row: returns that scalar
+        /// - multiple rows: returns the first row's scalar
+        ///
+        /// Use [`Self::fetch_scalar_one_strict`] when you need "exactly one row".
         pub async fn fetch_scalar_one<'__a, T>(&$this, conn: &impl $crate::client::GenericClient) -> $crate::error::OrmResult<T>
         where
             T: for<'__b> tokio_postgres::types::FromSql<'__b> + Send + Sync,
         {
             let row = $this.fetch_one(conn).await?;
+            row.try_get(0)
+                .map_err(|e| $crate::error::OrmError::decode("0", e.to_string()))
+        }
+
+        /// Execute and require exactly one row, then return column 0 as a scalar.
+        ///
+        /// Semantics match [`Self::fetch_one_strict`]:
+        /// - 0 rows: returns `NotFound`
+        /// - 1 row: returns that scalar
+        /// - multiple rows: returns `TooManyRows`
+        pub async fn fetch_scalar_one_strict<'__a, T>(&$this, conn: &impl $crate::client::GenericClient) -> $crate::error::OrmResult<T>
+        where
+            T: for<'__b> tokio_postgres::types::FromSql<'__b> + Send + Sync,
+        {
+            let row = $this.fetch_one_strict(conn).await?;
+            row.try_get(0)
+                .map_err(|e| $crate::error::OrmError::decode("0", e.to_string()))
+        }
+
+        /// Execute and require exactly one row with an explicit tag, then return column 0.
+        pub async fn fetch_scalar_one_strict_tagged<'__a, T>(&$this, conn: &impl $crate::client::GenericClient, tag: &str) -> $crate::error::OrmResult<T>
+        where
+            T: for<'__b> tokio_postgres::types::FromSql<'__b> + Send + Sync,
+        {
+            let row = $this.fetch_one_strict_tagged(conn, tag).await?;
             row.try_get(0)
                 .map_err(|e| $crate::error::OrmError::decode("0", e.to_string()))
         }

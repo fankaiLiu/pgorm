@@ -44,6 +44,7 @@ let user: User = query("SELECT id, username FROM users WHERE id = $1")
 | `fetch_opt(&client)` | 0 rows = `None`, 1+ = `Some(first)` |
 | `fetch_opt_as::<T>(&client)` | Optional row mapped to `T` |
 | `fetch_scalar_one(&client)` | First column of first row |
+| `fetch_scalar_one_strict(&client)` | Column 0 from exactly 1 row; 0 = `NotFound`, 2+ = `TooManyRows` |
 | `fetch_scalar_opt(&client)` | First column, optional |
 | `fetch_scalar_all(&client)` | First column of all rows |
 | `exists(&client)` | Returns `true` if any row matches |
@@ -72,7 +73,7 @@ let users: Vec<User> = query("SELECT id, username FROM users ORDER BY id")
     .await?;
 ```
 
-### Scalar helpers: `fetch_scalar_one`, `fetch_scalar_opt`, `exists()`
+### Scalar helpers: `fetch_scalar_one`, `fetch_scalar_one_strict`, `fetch_scalar_opt`, `exists()`
 
 When you only care about the first column:
 
@@ -80,6 +81,11 @@ When you only care about the first column:
 let count: i64 = query("SELECT COUNT(*) FROM users WHERE status = $1")
     .bind("active")
     .fetch_scalar_one(&client)
+    .await?;
+
+let strict_count: i64 = query("SELECT COUNT(*) FROM users WHERE status = $1")
+    .bind("active")
+    .fetch_scalar_one_strict(&client)
     .await?;
 
 let maybe_max: Option<i64> = query("SELECT MAX(id) FROM users")

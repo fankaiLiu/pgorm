@@ -271,15 +271,35 @@ impl<C: GenericClient> super::PgClient<C> {
         rows.iter().map(T::from_row).collect()
     }
 
-    /// Execute a dynamic SQL query and return exactly one row mapped to type T.
+    /// Execute a dynamic SQL query and return the **first** row mapped to type `T`.
     ///
-    /// Returns an error if zero or more than one row is returned.
+    /// Semantics:
+    /// - 0 rows: returns [`OrmError::NotFound`]
+    /// - 1 row: returns that row
+    /// - multiple rows: returns the first row (does **not** error)
+    ///
+    /// Use [`PgClient::sql_query_one_strict_as`] when you need "exactly one row".
     pub async fn sql_query_one_as<T: FromRow>(
         &self,
         sql: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> OrmResult<T> {
         let row = self.query_one(sql, params).await?;
+        T::from_row(&row)
+    }
+
+    /// Execute a dynamic SQL query and require exactly one row mapped to type `T`.
+    ///
+    /// Semantics:
+    /// - 0 rows: returns [`OrmError::NotFound`]
+    /// - 1 row: returns that row
+    /// - multiple rows: returns [`OrmError::TooManyRows`]
+    pub async fn sql_query_one_strict_as<T: FromRow>(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<T> {
+        let row = self.query_one_strict(sql, params).await?;
         T::from_row(&row)
     }
 
@@ -311,9 +331,26 @@ impl<C: GenericClient> super::PgClient<C> {
         self.query(sql, params).await
     }
 
-    /// Execute a dynamic SQL query and return exactly one raw row.
+    /// Execute a dynamic SQL query and return the **first** raw row.
+    ///
+    /// Semantics match [`GenericClient::query_one`]. Use
+    /// [`PgClient::sql_query_one_strict`] when you need "exactly one row".
     pub async fn sql_query_one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> OrmResult<Row> {
         self.query_one(sql, params).await
+    }
+
+    /// Execute a dynamic SQL query and require exactly one raw row.
+    ///
+    /// Semantics:
+    /// - 0 rows: returns [`OrmError::NotFound`]
+    /// - 1 row: returns that row
+    /// - multiple rows: returns [`OrmError::TooManyRows`]
+    pub async fn sql_query_one_strict(
+        &self,
+        sql: &str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> OrmResult<Row> {
+        self.query_one_strict(sql, params).await
     }
 
     /// Execute a dynamic SQL query and return at most one raw row.

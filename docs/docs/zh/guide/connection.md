@@ -31,7 +31,7 @@ use pgorm::{PgClient, PgClientConfig, create_pool};
 let pool = create_pool(&database_url)?;
 let client = pool.get().await?;
 
-// 默认配置：WarnOnly 检查模式、无统计、无缓存
+// 默认配置：WarnOnly 检查模式、开启统计、无缓存
 let pg = PgClient::new(&client);
 ```
 

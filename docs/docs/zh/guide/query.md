@@ -44,6 +44,7 @@ let user: User = query("SELECT id, username FROM users WHERE id = $1")
 | `fetch_opt(&client)` | 0 行 = `None`，1+ 行 = `Some(第一行)` |
 | `fetch_opt_as::<T>(&client)` | 可选行映射为 `T` |
 | `fetch_scalar_one(&client)` | 第一行的第一列 |
+| `fetch_scalar_one_strict(&client)` | 恰好 1 行的第 1 列；0 行 = `NotFound`，2+ 行 = `TooManyRows` |
 | `fetch_scalar_opt(&client)` | 第一列，可选 |
 | `fetch_scalar_all(&client)` | 所有行的第一列 |
 | `exists(&client)` | 如果有匹配的行则返回 `true` |
@@ -72,7 +73,7 @@ let users: Vec<User> = query("SELECT id, username FROM users ORDER BY id")
     .await?;
 ```
 
-### 标量辅助方法：`fetch_scalar_one`、`fetch_scalar_opt`、`exists()`
+### 标量辅助方法：`fetch_scalar_one`、`fetch_scalar_one_strict`、`fetch_scalar_opt`、`exists()`
 
 当你只关心第一列时：
 
@@ -80,6 +81,11 @@ let users: Vec<User> = query("SELECT id, username FROM users ORDER BY id")
 let count: i64 = query("SELECT COUNT(*) FROM users WHERE status = $1")
     .bind("active")
     .fetch_scalar_one(&client)
+    .await?;
+
+let strict_count: i64 = query("SELECT COUNT(*) FROM users WHERE status = $1")
+    .bind("active")
+    .fetch_scalar_one_strict(&client)
     .await?;
 
 let maybe_max: Option<i64> = query("SELECT MAX(id) FROM users")

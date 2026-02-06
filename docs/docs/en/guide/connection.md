@@ -31,7 +31,7 @@ use pgorm::{PgClient, PgClientConfig, create_pool};
 let pool = create_pool(&database_url)?;
 let client = pool.get().await?;
 
-// Default config: WarnOnly checking, no stats, no cache
+// Default config: WarnOnly checking, stats enabled, no cache
 let pg = PgClient::new(&client);
 ```
 
