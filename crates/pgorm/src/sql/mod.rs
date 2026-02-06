@@ -19,6 +19,8 @@
 //! let users: Vec<User> = q.fetch_all_as(&conn).await?;
 //! ```
 
+#[macro_use]
+mod exec_macros;
 mod builder;
 mod parts;
 mod query;

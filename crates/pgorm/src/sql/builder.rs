@@ -1,16 +1,11 @@
 use super::parts::SqlPart;
-use super::stream::FromRowStream;
-use super::{starts_with_keyword, strip_sql_prefix};
 use crate::bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};
-use crate::client::{GenericClient, RowStream, StreamingClient};
 use crate::condition::Condition;
 use crate::cte::WithBuilder;
 use crate::error::{OrmError, OrmResult};
 use crate::ident::IntoIdent;
-use crate::row::FromRow;
 use std::sync::Arc;
-use tokio_postgres::Row;
-use tokio_postgres::types::{FromSql, ToSql};
+use tokio_postgres::types::ToSql;
 
 /// A parameter-safe dynamic SQL builder.
 ///
@@ -262,93 +257,13 @@ impl Sql {
         Ok(())
     }
 
-    /// Execute the built SQL and return all rows.
-    pub async fn fetch_all(&self, conn: &impl GenericClient) -> OrmResult<Vec<Row>> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        match self.tag.as_deref() {
-            Some(tag) => conn.query_tagged(tag, &sql, &params).await,
-            None => conn.query(&sql, &params).await,
-        }
-    }
-
-    // ==================== Streaming execution ====================
-
-    /// Execute the built SQL and return a row stream.
-    pub async fn stream(&self, conn: &impl StreamingClient) -> OrmResult<RowStream> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        match self.tag.as_deref() {
-            Some(tag) => conn.query_stream_tagged(tag, &sql, &params).await,
-            None => conn.query_stream(&sql, &params).await,
-        }
-    }
-
-    /// Execute the built SQL and return a stream of `T`.
-    pub async fn stream_as<T: FromRow>(
-        &self,
-        conn: &impl StreamingClient,
-    ) -> OrmResult<FromRowStream<T>> {
-        let stream = self.stream(conn).await?;
-        Ok(FromRowStream::new(stream))
-    }
-
-    /// Execute the built SQL and return all rows mapped to `T`.
-    pub async fn fetch_all_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<Vec<T>> {
-        let rows = self.fetch_all(conn).await?;
-        rows.iter().map(T::from_row).collect()
-    }
-
-    /// Execute the built SQL and return the **first** row.
-    ///
-    /// Semantics match [`GenericClient::query_one`]. If you need strict row-count checking, use
-    /// [`Sql::fetch_one_strict`].
-    pub async fn fetch_one(&self, conn: &impl GenericClient) -> OrmResult<Row> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        match self.tag.as_deref() {
-            Some(tag) => conn.query_one_tagged(tag, &sql, &params).await,
-            None => conn.query_one(&sql, &params).await,
-        }
-    }
-
-    /// Execute the built SQL and return the **first** row mapped to `T`.
-    pub async fn fetch_one_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
-        let row = self.fetch_one(conn).await?;
-        T::from_row(&row)
-    }
-
-    /// Execute the built SQL and return the first row, if any.
-    pub async fn fetch_opt(&self, conn: &impl GenericClient) -> OrmResult<Option<Row>> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        match self.tag.as_deref() {
-            Some(tag) => conn.query_opt_tagged(tag, &sql, &params).await,
-            None => conn.query_opt(&sql, &params).await,
-        }
-    }
-
-    /// Execute the built SQL and return at most one row mapped to `T`.
-    pub async fn fetch_opt_as<T: FromRow>(
-        &self,
-        conn: &impl GenericClient,
-    ) -> OrmResult<Option<T>> {
-        let row = self.fetch_opt(conn).await?;
-        row.as_ref().map(T::from_row).transpose()
-    }
-
-    /// Execute the built SQL and return affected row count.
-    pub async fn execute(&self, conn: &impl GenericClient) -> OrmResult<u64> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        match self.tag.as_deref() {
-            Some(tag) => conn.execute_tagged(tag, &sql, &params).await,
-            None => conn.execute(&sql, &params).await,
+    impl_query_exec! {
+        prepare(self) {
+            self.validate()?;
+            let sql = self.to_sql();
+            let params = self.params_ref();
+            let tag = self.tag.as_deref();
+            (sql, params, tag)
         }
     }
 
@@ -382,186 +297,6 @@ impl Sql {
         }
         self.push(" WHERE ");
         self.push_conditions_and(conditions)
-    }
-
-    /// Execute the built SQL tagged (if the underlying client supports it) and return all rows.
-    pub async fn fetch_all_tagged(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<Vec<Row>> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        conn.query_tagged(tag, &sql, &params).await
-    }
-
-    /// Execute the built SQL tagged (if the underlying client supports it) and return all rows mapped to `T`.
-    pub async fn fetch_all_tagged_as<T: FromRow>(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<Vec<T>> {
-        let rows = self.fetch_all_tagged(conn, tag).await?;
-        rows.iter().map(T::from_row).collect()
-    }
-
-    // ==================== Strict execution ====================
-
-    /// Execute the built SQL and require that it returns **exactly one** row.
-    pub async fn fetch_one_strict(&self, conn: &impl GenericClient) -> OrmResult<Row> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        match self.tag.as_deref() {
-            Some(tag) => conn.query_one_strict_tagged(tag, &sql, &params).await,
-            None => conn.query_one_strict(&sql, &params).await,
-        }
-    }
-
-    /// Execute the built SQL and require that it returns **exactly one** row mapped to `T`.
-    pub async fn fetch_one_strict_as<T: FromRow>(&self, conn: &impl GenericClient) -> OrmResult<T> {
-        let row = self.fetch_one_strict(conn).await?;
-        T::from_row(&row)
-    }
-
-    /// Execute the built SQL and require that it returns **exactly one** row, associating a tag.
-    pub async fn fetch_one_strict_tagged(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<Row> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        conn.query_one_strict_tagged(tag, &sql, &params).await
-    }
-
-    /// Execute the built SQL and require that it returns **exactly one** row mapped to `T`, associating a tag.
-    pub async fn fetch_one_strict_tagged_as<T: FromRow>(
-        &self,
-        conn: &impl GenericClient,
-        tag: &str,
-    ) -> OrmResult<T> {
-        let row = self.fetch_one_strict_tagged(conn, tag).await?;
-        T::from_row(&row)
-    }
-
-    /// Execute the built SQL tagged (if the underlying client supports it) and return affected row count.
-    pub async fn execute_tagged(&self, conn: &impl GenericClient, tag: &str) -> OrmResult<u64> {
-        self.validate()?;
-        let sql = self.to_sql();
-        let params = self.params_ref();
-        conn.execute_tagged(tag, &sql, &params).await
-    }
-
-    // ==================== Convenience APIs (Phase 1) ====================
-
-    /// Execute the built SQL and return exactly one scalar value.
-    ///
-    /// Expects exactly one row with at least one column. Returns `OrmError::NotFound`
-    /// if no rows are returned.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let count: i64 = sql("SELECT COUNT(*) FROM users WHERE status = ")
-    ///     .push_bind("active")
-    ///     .fetch_scalar_one(&client)
-    ///     .await?;
-    /// ```
-    pub async fn fetch_scalar_one<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<T>
-    where
-        T: for<'b> FromSql<'b> + Send + Sync,
-    {
-        let row = self.fetch_one(conn).await?;
-        row.try_get(0)
-            .map_err(|e| OrmError::decode("0", e.to_string()))
-    }
-
-    /// Execute the built SQL and return at most one scalar value.
-    ///
-    /// Returns `None` if no rows are returned, otherwise returns the first column
-    /// of the first row.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let max_id: Option<i64> = sql("SELECT MAX(id) FROM users")
-    ///     .fetch_scalar_opt(&client)
-    ///     .await?;
-    /// ```
-    pub async fn fetch_scalar_opt<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Option<T>>
-    where
-        T: for<'b> FromSql<'b> + Send + Sync,
-    {
-        let row = self.fetch_opt(conn).await?;
-        match row {
-            Some(r) => r
-                .try_get(0)
-                .map(Some)
-                .map_err(|e| OrmError::decode("0", e.to_string())),
-            None => Ok(None),
-        }
-    }
-
-    /// Execute the built SQL and return all scalar values from the first column.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let ids: Vec<i64> = sql("SELECT id FROM users WHERE status = ")
-    ///     .push_bind("active")
-    ///     .fetch_scalar_all(&client)
-    ///     .await?;
-    /// ```
-    pub async fn fetch_scalar_all<'a, T>(&self, conn: &impl GenericClient) -> OrmResult<Vec<T>>
-    where
-        T: for<'b> FromSql<'b> + Send + Sync,
-    {
-        let rows = self.fetch_all(conn).await?;
-        rows.iter()
-            .map(|r| {
-                r.try_get(0)
-                    .map_err(|e| OrmError::decode("0", e.to_string()))
-            })
-            .collect()
-    }
-
-    /// Check if any rows exist for this SELECT query.
-    ///
-    /// Wraps the query in `SELECT EXISTS(...)` for efficient existence checking.
-    /// Only works with SELECT statements.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let has_active: bool = sql("SELECT 1 FROM users WHERE status = ")
-    ///     .push_bind("active")
-    ///     .exists(&client)
-    ///     .await?;
-    /// ```
-    pub async fn exists(&self, conn: &impl GenericClient) -> OrmResult<bool> {
-        self.validate()?;
-        let inner_sql = self.to_sql();
-        let inner_sql = inner_sql.trim_end();
-        let inner_sql = inner_sql.strip_suffix(';').unwrap_or(inner_sql).trim_end();
-
-        // Validate that this is a SELECT-like statement.
-        // Strip leading whitespace, SQL comments (-- and /* */), and parentheses
-        // to handle: SELECT, WITH ... SELECT, (SELECT ...), /* comment */ SELECT, etc.
-        let trimmed = strip_sql_prefix(inner_sql);
-        if !starts_with_keyword(trimmed, "SELECT") && !starts_with_keyword(trimmed, "WITH") {
-            return Err(OrmError::Validation(
-                "exists() only works with SELECT statements (including WITH ... SELECT)"
-                    .to_string(),
-            ));
-        }
-
-        let wrapped_sql = format!("SELECT EXISTS({inner_sql})");
-        let params = self.params_ref();
-        let row = match self.tag.as_deref() {
-            Some(tag) => conn.query_one_tagged(tag, &wrapped_sql, &params).await?,
-            None => conn.query_one(&wrapped_sql, &params).await?,
-        };
-        row.try_get(0)
-            .map_err(|e| OrmError::decode("0", e.to_string()))
     }
 
     /// Append `LIMIT $n` to the query with a bound parameter.

@@ -283,13 +283,13 @@ pub fn params_ref(&self) -> Vec<&(dyn ToSql + Sync)> {
 
 ---
 
-### I-05. Query 和 Sql 的 API 大量重复 (P3 — 后续优化)
+### ~~I-05. Query 和 Sql 的 API 大量重复~~ ✅
 
 **模块**: sql | **文件**: `sql/builder.rs`, `sql/query.rs`
 
 `Query` 和 `Sql` 有大量重复的执行方法（`fetch_all`, `fetch_one`, `exists`, `stream` 及其 `_tagged` 变体）。
 
-**建议**: 提取到 `ExecutableQuery` trait 或使用 macro 生成。
+**修复**: 创建 `impl_query_exec!` 宏（`sql/exec_macros.rs`），将所有执行方法（fetch_all/one/opt、stream、tagged、strict、scalar、exists）统一生成。`Sql` 和 `Query` 各自只需提供 prepare 块，消除约 550 行重复代码。
 
 ---
 
@@ -601,7 +601,7 @@ README 缺少关于连接池配置、超时设置、缓存调优的生产建议�
 
 | 编号 | 问题 | 预估工时 |
 |------|------|----------|
-| I-05 | Query/Sql API 去重 → trait 或 macro | 4 小时 |
+| ~~I-05~~ | ~~Query/Sql API 去重 → impl_query_exec! 宏~~ ✅ | ~~4 小时~~ |
 | I-14 | Lint code 枚举化 | 2 小时 |
 | S-02 | 参数 Arc 优化 | 3 小时 |
 | S-12 | InsertModel 验证代码提取 | 3 小时 |
