@@ -5,6 +5,26 @@ use heck::ToUpperCamelCase;
 use pgorm_check::{DbSchema, RelationKind};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InferredBelongsTo {
+    model_path: String,
+    foreign_key: String,
+    method_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InferredHasMany {
+    model_path: String,
+    foreign_key: String,
+    method_name: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct InferredTableRelations {
+    belongs_to: Vec<InferredBelongsTo>,
+    has_many: Vec<InferredHasMany>,
+}
+
 pub fn generate_models(
     project: &ProjectConfig,
     cfg: &ModelsConfig,
@@ -29,6 +49,18 @@ fn generate_pgorm_models(
     for t in &selected_tables {
         *table_name_counts.entry(t.name.as_str()).or_insert(0) += 1;
     }
+
+    let mut table_struct_names: HashMap<String, String> = HashMap::new();
+    let mut table_primary_keys: HashMap<String, Option<String>> = HashMap::new();
+    for t in &selected_tables {
+        let needs_schema_prefix = table_name_counts.get(t.name.as_str()).copied().unwrap_or(0) > 1;
+        let struct_name = sanitize_type_ident(&struct_name_for_table(cfg, t, needs_schema_prefix));
+        table_struct_names.insert(table_key(t), struct_name);
+        table_primary_keys.insert(table_key(t), primary_key_for_table(cfg, t));
+    }
+
+    let inferred_relations =
+        infer_relations(&selected_tables, &table_struct_names, &table_primary_keys);
 
     let qualify_table_names = schema.schemas.len() > 1;
 
@@ -61,12 +93,17 @@ fn generate_pgorm_models(
             t.name.clone()
         };
 
-        let pk_col = primary_key_for_table(cfg, t);
+        let pk_col = table_primary_keys
+            .get(&table_key(t))
+            .cloned()
+            .unwrap_or(None);
         if let Some(pk) = pk_col.as_deref() {
             if !t.columns.iter().any(|c| c.name == pk) {
                 anyhow::bail!("primary key column not found: {}.{}.{pk}", t.schema, t.name);
             }
         }
+
+        let inferred = inferred_relations.get(&table_key(t));
 
         let module_rs = generate_table_module_rs(
             cfg,
@@ -75,6 +112,8 @@ fn generate_pgorm_models(
             &struct_name,
             &table_attr_value,
             pk_col.as_deref(),
+            inferred,
+            is_table_like(t.kind),
         )?;
 
         files.push(GeneratedFile {
@@ -84,6 +123,108 @@ fn generate_pgorm_models(
     }
 
     Ok(files)
+}
+
+fn table_key(t: &pgorm_check::TableInfo) -> String {
+    format!("{}.{}", t.schema, t.name)
+}
+
+fn pluralize_candidate(base: &str) -> String {
+    if base.ends_with('y')
+        && base.len() > 1
+        && !matches!(
+            base.chars().nth(base.len() - 2),
+            Some('a' | 'e' | 'i' | 'o' | 'u')
+        )
+    {
+        format!("{}ies", &base[..base.len() - 1])
+    } else if base.ends_with('s')
+        || base.ends_with('x')
+        || base.ends_with('z')
+        || base.ends_with("ch")
+        || base.ends_with("sh")
+    {
+        format!("{base}es")
+    } else {
+        format!("{base}s")
+    }
+}
+
+fn infer_relations(
+    tables: &[pgorm_check::TableInfo],
+    table_struct_names: &HashMap<String, String>,
+    table_primary_keys: &HashMap<String, Option<String>>,
+) -> HashMap<String, InferredTableRelations> {
+    let mut out: HashMap<String, InferredTableRelations> = HashMap::new();
+
+    for child in tables {
+        for c in &child.columns {
+            let Some(base) = c.name.strip_suffix("_id") else {
+                continue;
+            };
+            if base.is_empty() {
+                continue;
+            }
+
+            let plural = pluralize_candidate(base);
+
+            // Prefer same-schema target tables to reduce false positives.
+            let mut candidates: Vec<&pgorm_check::TableInfo> = tables
+                .iter()
+                .filter(|t| t.schema == child.schema && (t.name == base || t.name == plural))
+                .collect();
+            if candidates.len() != 1 {
+                candidates = tables
+                    .iter()
+                    .filter(|t| t.name == base || t.name == plural)
+                    .collect();
+            }
+            if candidates.len() != 1 {
+                continue;
+            }
+            let parent = candidates[0];
+            let parent_key = table_key(parent);
+
+            // Heuristic safety: only infer belongs_to for `id` primary key targets.
+            if table_primary_keys
+                .get(&parent_key)
+                .and_then(|v| v.as_deref())
+                != Some("id")
+            {
+                continue;
+            }
+
+            let Some(parent_struct) = table_struct_names.get(&parent_key) else {
+                continue;
+            };
+            let child_key = table_key(child);
+            let Some(child_struct) = table_struct_names.get(&child_key) else {
+                continue;
+            };
+
+            let child_rel = out.entry(child_key.clone()).or_default();
+            let belongs_to = InferredBelongsTo {
+                model_path: format!("super::{parent_struct}"),
+                foreign_key: c.name.clone(),
+                method_name: base.to_string(),
+            };
+            if !child_rel.belongs_to.iter().any(|x| x == &belongs_to) {
+                child_rel.belongs_to.push(belongs_to);
+            }
+
+            let parent_rel = out.entry(parent_key).or_default();
+            let has_many = InferredHasMany {
+                model_path: format!("super::{child_struct}"),
+                foreign_key: c.name.clone(),
+                method_name: sanitize_field_ident(&child.name),
+            };
+            if !parent_rel.has_many.iter().any(|x| x == &has_many) {
+                parent_rel.has_many.push(has_many);
+            }
+        }
+    }
+
+    out
 }
 
 fn select_tables(
@@ -256,6 +397,8 @@ fn generate_table_module_rs(
     struct_name: &str,
     table_attr_value: &str,
     pk_col: Option<&str>,
+    inferred_rel: Option<&InferredTableRelations>,
+    emit_write_models: bool,
 ) -> anyhow::Result<String> {
     let mut out = String::new();
     out.push_str("// @generated by pgorm (pgorm-cli)\n\n");
@@ -281,10 +424,44 @@ fn generate_table_module_rs(
         );
         out.push_str(")]\n");
     }
+
+    if let Some(rel) = inferred_rel {
+        let mut belongs_to = rel.belongs_to.clone();
+        belongs_to.sort_by(|a, b| {
+            (&a.model_path, &a.foreign_key, &a.method_name).cmp(&(
+                &b.model_path,
+                &b.foreign_key,
+                &b.method_name,
+            ))
+        });
+        for r in belongs_to {
+            out.push_str(&format!(
+                "#[orm(belongs_to({}, foreign_key = \"{}\", as = \"{}\"))]\n",
+                r.model_path, r.foreign_key, r.method_name
+            ));
+        }
+
+        let mut has_many = rel.has_many.clone();
+        has_many.sort_by(|a, b| {
+            (&a.model_path, &a.foreign_key, &a.method_name).cmp(&(
+                &b.model_path,
+                &b.foreign_key,
+                &b.method_name,
+            ))
+        });
+        for r in has_many {
+            out.push_str(&format!(
+                "#[orm(has_many({}, foreign_key = \"{}\", as = \"{}\"))]\n",
+                r.model_path, r.foreign_key, r.method_name
+            ));
+        }
+    }
+
     out.push_str(&format!("#[orm(table = \"{table_attr_value}\")]\n"));
     out.push_str(&format!("pub struct {struct_name} {{\n"));
 
     let mut seen_fields: HashSet<String> = HashSet::new();
+    let mut writable_fields: Vec<(String, String, String)> = Vec::new(); // (field_ident, ty, column_name)
     for c in &t.columns {
         let field_ident = sanitize_field_ident(&c.name);
         if !seen_fields.insert(field_ident.clone()) {
@@ -295,14 +472,13 @@ fn generate_table_module_rs(
             );
         }
 
-        let mut ty = type_mapper.map(&c.data_type);
-        if !c.not_null && !ty.starts_with("Option<") {
-            ty = format!("Option<{ty}>");
-        }
+        let ty = column_rust_type(type_mapper, c);
 
         let mut orm_parts: Vec<String> = Vec::new();
         if pk_col.is_some_and(|pk| pk == c.name) {
             orm_parts.push("id".to_string());
+        } else {
+            writable_fields.push((field_ident.clone(), ty.clone(), c.name.clone()));
         }
 
         let field_ident_for_compare = field_ident.trim_start_matches("r#");
@@ -317,7 +493,51 @@ fn generate_table_module_rs(
     }
 
     out.push_str("}\n");
+
+    if emit_write_models && !writable_fields.is_empty() {
+        let insert_name = format!("New{struct_name}");
+        let update_name = format!("{struct_name}Patch");
+
+        out.push('\n');
+        out.push_str("#[derive(Debug, Clone, pgorm::InsertModel)]\n");
+        out.push_str(&format!(
+            "#[orm(table = \"{table_attr_value}\", returning = \"{struct_name}\")]\n"
+        ));
+        out.push_str(&format!("pub struct {insert_name} {{\n"));
+        for (field_ident, ty, column_name) in &writable_fields {
+            let field_ident_for_compare = field_ident.trim_start_matches("r#");
+            if field_ident_for_compare != column_name {
+                out.push_str(&format!("    #[orm(column = \"{}\")]\n", column_name));
+            }
+            out.push_str(&format!("    pub {field_ident}: {ty},\n"));
+        }
+        out.push_str("}\n");
+
+        out.push('\n');
+        out.push_str("#[derive(Debug, Clone, pgorm::UpdateModel)]\n");
+        out.push_str(&format!(
+            "#[orm(table = \"{table_attr_value}\", model = \"{struct_name}\", returning = \"{struct_name}\")]\n"
+        ));
+        out.push_str(&format!("pub struct {update_name} {{\n"));
+        for (field_ident, ty, column_name) in &writable_fields {
+            let field_ident_for_compare = field_ident.trim_start_matches("r#");
+            if field_ident_for_compare != column_name {
+                out.push_str(&format!("    #[orm(column = \"{}\")]\n", column_name));
+            }
+            out.push_str(&format!("    pub {field_ident}: Option<{ty}>,\n"));
+        }
+        out.push_str("}\n");
+    }
+
     Ok(out)
+}
+
+fn column_rust_type(type_mapper: &TypeMapper, c: &pgorm_check::ColumnInfo) -> String {
+    let mut ty = type_mapper.map(&c.data_type);
+    if !c.not_null && !ty.starts_with("Option<") {
+        ty = format!("Option<{ty}>");
+    }
+    ty
 }
 
 fn render_derive(dialect: ModelsDialect, derive: &str) -> String {
@@ -450,6 +670,63 @@ mod tests {
         }
     }
 
+    fn test_schema_with_relations() -> DbSchema {
+        DbSchema {
+            schemas: vec!["public".to_string()],
+            tables: vec![
+                pgorm_check::TableInfo {
+                    schema: "public".to_string(),
+                    name: "users".to_string(),
+                    kind: RelationKind::Table,
+                    columns: vec![
+                        pgorm_check::ColumnInfo {
+                            name: "id".to_string(),
+                            data_type: "bigint".to_string(),
+                            not_null: true,
+                            default_expr: None,
+                            ordinal: 1,
+                        },
+                        pgorm_check::ColumnInfo {
+                            name: "email".to_string(),
+                            data_type: "text".to_string(),
+                            not_null: true,
+                            default_expr: None,
+                            ordinal: 2,
+                        },
+                    ],
+                },
+                pgorm_check::TableInfo {
+                    schema: "public".to_string(),
+                    name: "posts".to_string(),
+                    kind: RelationKind::Table,
+                    columns: vec![
+                        pgorm_check::ColumnInfo {
+                            name: "id".to_string(),
+                            data_type: "bigint".to_string(),
+                            not_null: true,
+                            default_expr: None,
+                            ordinal: 1,
+                        },
+                        pgorm_check::ColumnInfo {
+                            name: "user_id".to_string(),
+                            data_type: "bigint".to_string(),
+                            not_null: true,
+                            default_expr: None,
+                            ordinal: 2,
+                        },
+                        pgorm_check::ColumnInfo {
+                            name: "title".to_string(),
+                            data_type: "text".to_string(),
+                            not_null: true,
+                            default_expr: None,
+                            ordinal: 3,
+                        },
+                    ],
+                },
+            ],
+        }
+    }
+
     #[test]
     fn generates_pgorm_model_with_id_and_option() {
         let cfg = ModelsConfig {
@@ -498,5 +775,72 @@ mod tests {
         assert!(users.contains("#[orm(table = \"users\")]"));
         assert!(users.contains("#[orm(id)]"));
         assert!(users.contains("pub r#type: Option<String>"));
+        assert!(users.contains("pub struct NewUsers"));
+        assert!(users.contains("pub struct UsersPatch"));
+    }
+
+    #[test]
+    fn generates_inferred_relations_and_write_models() {
+        let cfg = ModelsConfig {
+            out: "src/models".to_string(),
+            dialect: ModelsDialect::Pgorm,
+            include_views: false,
+            tables: Vec::new(),
+            rename: Default::default(),
+            primary_key: Default::default(),
+            types: Default::default(),
+            derives: vec![
+                "Debug".to_string(),
+                "Clone".to_string(),
+                "FromRow".to_string(),
+                "Model".to_string(),
+            ],
+            extra_uses: Vec::new(),
+        };
+
+        let schema = test_schema_with_relations();
+        let project = ProjectConfig {
+            config_path: "pgorm.toml".into(),
+            config_dir: ".".into(),
+            file: crate::config::ConfigFile {
+                version: "1".to_string(),
+                engine: Some("postgres".to_string()),
+                database: crate::config::DatabaseConfig {
+                    url: "postgres://".to_string(),
+                    schemas: vec!["public".to_string()],
+                },
+                schema_cache: crate::config::SchemaCacheConfig::default(),
+                models: None,
+                packages: Vec::new(),
+            },
+        };
+
+        let files = generate_models(&project, &cfg, &schema).unwrap();
+
+        let users = files
+            .iter()
+            .find(|f| f.path.ends_with("users.rs"))
+            .unwrap()
+            .content
+            .clone();
+        let posts = files
+            .iter()
+            .find(|f| f.path.ends_with("posts.rs"))
+            .unwrap()
+            .content
+            .clone();
+
+        assert!(
+            users.contains(
+                "#[orm(has_many(super::Posts, foreign_key = \"user_id\", as = \"posts\"))]"
+            )
+        );
+        assert!(posts.contains(
+            "#[orm(belongs_to(super::Users, foreign_key = \"user_id\", as = \"user\"))]"
+        ));
+        assert!(users.contains("pub struct NewUsers"));
+        assert!(users.contains("pub struct UsersPatch"));
+        assert!(posts.contains("pub struct NewPosts"));
+        assert!(posts.contains("pub struct PostsPatch"));
     }
 }
