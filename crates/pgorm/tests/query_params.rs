@@ -45,6 +45,16 @@ struct AuditLogSearchParams<'a> {
     #[orm(ilike(AuditLogQuery::COL_OPERATION_TYPE))]
     op_ilike: Option<&'a str>,
 
+    #[orm(eq(AuditLogQuery::COL_OPERATION_TYPE))]
+    #[orm(ilike(AuditLogQuery::COL_OPERATION_TYPE))]
+    op_eq_and_ilike: Option<&'a str>,
+
+    #[orm(
+        eq(AuditLogQuery::COL_OPERATION_TYPE),
+        like(AuditLogQuery::COL_OPERATION_TYPE)
+    )]
+    op_eq_and_like_same_attr: Option<&'a str>,
+
     #[orm(not_like(AuditLogQuery::COL_OPERATION_TYPE))]
     op_not_like: Option<&'a str>,
 
@@ -121,6 +131,8 @@ fn query_params_apply_and_into_query() {
         end_date: Some(now),
         op_like: Some("%login%"),
         op_ilike: Some("%login%"),
+        op_eq_and_ilike: Some("login"),
+        op_eq_and_like_same_attr: Some("login"),
         op_not_like: None,
         op_not_ilike: None,
         ip_is_null: Some(false),

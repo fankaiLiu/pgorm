@@ -161,3 +161,50 @@ fn validate_update_patch() {
     assert_eq!(patch.email.as_deref(), Some("alice@example.com"));
     assert_eq!(patch.ip_address.unwrap().to_string(), "2001:db8::1");
 }
+
+#[derive(InsertModel)]
+#[orm(table = "devices")]
+#[orm(input)]
+struct NewDevice {
+    #[orm(uuid, input_as = "String")]
+    external_id: Option<Option<uuid::Uuid>>,
+}
+
+#[derive(UpdateModel)]
+#[orm(table = "devices", id_column = "id")]
+#[orm(input)]
+struct DevicePatch {
+    #[orm(uuid, input_as = "String")]
+    external_id: Option<Option<uuid::Uuid>>,
+}
+
+#[test]
+fn input_as_supports_option_option_insert_and_update() {
+    let new_input = NewDeviceInput {
+        external_id: Some(Some("550e8400-e29b-41d4-a716-446655440000".into())),
+    };
+    let new_model = new_input.try_into_model().unwrap();
+    assert_eq!(
+        new_model.external_id.unwrap().unwrap().to_string(),
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
+
+    let new_null = NewDeviceInput {
+        external_id: Some(None),
+    };
+    assert_eq!(new_null.try_into_model().unwrap().external_id, Some(None));
+
+    let patch_input = DevicePatchInput {
+        external_id: Some(Some("550e8400-e29b-41d4-a716-446655440000".into())),
+    };
+    let patch = patch_input.try_into_patch().unwrap();
+    assert_eq!(
+        patch.external_id.unwrap().unwrap().to_string(),
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
+
+    let patch_null = DevicePatchInput {
+        external_id: Some(None),
+    };
+    assert_eq!(patch_null.try_into_patch().unwrap().external_id, Some(None));
+}

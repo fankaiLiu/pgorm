@@ -75,6 +75,40 @@ fn test_update_by_id_method_exists() {
 }
 
 #[test]
+fn test_update_by_ids_method_exists() {
+    fn assert_update_by_ids<T, I>(_patch: T)
+    where
+        T: UpdateByIdsTrait<I>,
+    {
+    }
+
+    trait UpdateByIdsTrait<I> {
+        fn update_by_ids(
+            self,
+            conn: &impl pgorm::GenericClient,
+            ids: Vec<I>,
+        ) -> impl std::future::Future<Output = pgorm::OrmResult<u64>>;
+    }
+
+    impl UpdateByIdsTrait<i64> for PostPatch {
+        fn update_by_ids(
+            self,
+            conn: &impl pgorm::GenericClient,
+            ids: Vec<i64>,
+        ) -> impl std::future::Future<Output = pgorm::OrmResult<u64>> {
+            PostPatch::update_by_ids(self, conn, ids)
+        }
+    }
+
+    let patch = PostPatch {
+        title: Some("Test".into()),
+        content: None,
+        version: 1,
+    };
+    assert_update_by_ids::<PostPatch, i64>(patch);
+}
+
+#[test]
 fn test_update_by_id_force_method_exists() {
     // Verify that update_by_id_force method is generated when version field exists
     fn assert_force_method<T, I>(_patch: T)
@@ -133,6 +167,40 @@ fn test_update_by_id_returning_method_exists() {
             id: i64,
         ) -> impl std::future::Future<Output = pgorm::OrmResult<Post>> {
             PostPatch::update_by_id_returning(self, conn, id)
+        }
+    }
+
+    let patch = PostPatch {
+        title: Some("Test".into()),
+        content: None,
+        version: 1,
+    };
+    assert_returning_method::<PostPatch, i64, Post>(patch);
+}
+
+#[test]
+fn test_update_by_ids_returning_method_exists() {
+    fn assert_returning_method<T, I, R>(_patch: T)
+    where
+        T: UpdateByIdsReturningTrait<I, R>,
+    {
+    }
+
+    trait UpdateByIdsReturningTrait<I, R> {
+        fn update_by_ids_returning(
+            self,
+            conn: &impl pgorm::GenericClient,
+            ids: Vec<I>,
+        ) -> impl std::future::Future<Output = pgorm::OrmResult<Vec<R>>>;
+    }
+
+    impl UpdateByIdsReturningTrait<i64, Post> for PostPatch {
+        fn update_by_ids_returning(
+            self,
+            conn: &impl pgorm::GenericClient,
+            ids: Vec<i64>,
+        ) -> impl std::future::Future<Output = pgorm::OrmResult<Vec<Post>>> {
+            PostPatch::update_by_ids_returning(self, conn, ids)
         }
     }
 

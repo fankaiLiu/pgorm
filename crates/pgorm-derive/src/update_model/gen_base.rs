@@ -54,14 +54,6 @@ pub(super) fn generate_update_by_id_methods(
         quote! {}
     };
 
-    // Suppress unused variable warning for version ident in update_by_ids
-    // (bulk updates don't use version checking)
-    let version_suppress = if let Some((version_ident, _)) = version_field {
-        quote! { let _ = #version_ident; }
-    } else {
-        quote! {}
-    };
-
     // For version checking, we need to capture id string before push_bind moves it
     let (id_capture, execute_with_check) = if let Some((version_ident, _)) = version_field {
         let capture = quote! {
@@ -83,6 +75,43 @@ pub(super) fn generate_update_by_id_methods(
     } else {
         (quote! {}, quote! { q.execute(conn).await })
     };
+
+    // Bulk version checking support (for update_by_ids).
+    let (bulk_precheck, bulk_version_where, bulk_execute) =
+        if let Some((version_ident, version_col)) = version_field {
+            (
+                quote! {
+                    let __version_val = #version_ident as i64;
+                    let __target_sql = ::std::format!(
+                        "SELECT COUNT(*) FROM {} WHERE {}.{} = ANY($1)",
+                        #table_name,
+                        #table_name,
+                        #id_col_expr
+                    );
+                    let __target_row = conn.query_one(&__target_sql, &[&ids]).await?;
+                    let __target_count: i64 = __target_row.get(0);
+                },
+                quote! {
+                    q.push(" AND ");
+                    q.push(#version_col);
+                    q.push(" = ");
+                    q.push_bind(__version_val);
+                },
+                quote! {
+                    let __affected = q.execute(conn).await?;
+                    if (__affected as i64) < __target_count {
+                        return Err(pgorm::OrmError::stale_record(
+                            #table_name,
+                            format!("bulk(count={})", __target_count),
+                            __version_val,
+                        ));
+                    }
+                    Ok(__affected)
+                },
+            )
+        } else {
+            (quote! {}, quote! {}, quote! { q.execute(conn).await })
+        };
 
     quote! {
         /// Update columns by primary key (patch-style).
@@ -130,8 +159,8 @@ pub(super) fn generate_update_by_id_methods(
         ///
         /// The same patch is applied to every matched row.
         ///
-        /// Note: Optimistic locking (version check) is NOT supported for bulk updates.
-        /// If you need version checking, use a loop with `update_by_id` instead.
+        /// If the struct has a `#[orm(version)]` field, this method checks versions in bulk:
+        /// if any matched row has a different version, returns `OrmError::StaleRecord`.
         pub async fn update_by_ids<I>(
             self,
             conn: &impl pgorm::GenericClient,
@@ -146,7 +175,7 @@ pub(super) fn generate_update_by_id_methods(
 
             #destructure
             #now_init
-            #version_suppress
+            #bulk_precheck
 
             let mut q = pgorm::sql("UPDATE ");
             q.push(#table_name);
@@ -169,9 +198,9 @@ pub(super) fn generate_update_by_id_methods(
             q.push(" = ANY(");
             q.push_bind(ids);
             q.push(")");
+            #bulk_version_where
 
-            // Note: No version check for bulk updates
-            q.execute(conn).await
+            #bulk_execute
         }
     }
 }
@@ -302,8 +331,8 @@ pub(super) fn generate_update_returning_methods(
         quote! {}
     };
 
-    // Suppress unused variable warning for version ident in bulk/force methods
-    let version_suppress = if let Some((version_ident, _)) = version_field {
+    // Suppress unused variable warning for version ident in force methods.
+    let version_suppress_force = if let Some((version_ident, _)) = version_field {
         quote! { let _ = #version_ident; }
     } else {
         quote! {}
@@ -336,6 +365,47 @@ pub(super) fn generate_update_returning_methods(
         )
     };
 
+    // Bulk version checking support (for update_by_ids_returning).
+    let (bulk_precheck, bulk_version_where, bulk_fetch_with_check) =
+        if let Some((version_ident, version_col)) = version_field {
+            (
+                quote! {
+                    let __version_val = #version_ident as i64;
+                    let __target_sql = ::std::format!(
+                        "SELECT COUNT(*) FROM {} WHERE {}.{} = ANY($1)",
+                        #table_name,
+                        #table_name,
+                        #id_col_expr
+                    );
+                    let __target_row = conn.query_one(&__target_sql, &[&ids]).await?;
+                    let __target_count: i64 = __target_row.get(0);
+                },
+                quote! {
+                    q.push(" AND ");
+                    q.push(#version_col);
+                    q.push(" = ");
+                    q.push_bind(__version_val);
+                },
+                quote! {
+                    let __rows = q.fetch_all_as::<#returning_ty>(conn).await?;
+                    if (__rows.len() as i64) < __target_count {
+                        return Err(pgorm::OrmError::stale_record(
+                            #table_name,
+                            format!("bulk(count={})", __target_count),
+                            __version_val,
+                        ));
+                    }
+                    Ok(__rows)
+                },
+            )
+        } else {
+            (
+                quote! {},
+                quote! {},
+                quote! { q.fetch_all_as::<#returning_ty>(conn).await },
+            )
+        };
+
     // Generate force returning method if version field exists
     let force_returning = if let Some((_, version_col)) = version_field {
         let version_set_force = quote! {
@@ -367,7 +437,7 @@ pub(super) fn generate_update_returning_methods(
             {
                 #destructure
                 #now_init
-                #version_suppress
+                #version_suppress_force
 
                 let mut q = pgorm::Sql::empty();
                 q.push("WITH ");
@@ -467,8 +537,8 @@ pub(super) fn generate_update_returning_methods(
         ///
         /// The same patch is applied to every matched row.
         ///
-        /// Note: Optimistic locking (version check) is NOT supported for bulk updates.
-        /// If you need version checking, use a loop with `update_by_id_returning` instead.
+        /// If the struct has a `#[orm(version)]` field, this method checks versions in bulk:
+        /// if any matched row has a different version, returns `OrmError::StaleRecord`.
         pub async fn update_by_ids_returning<I>(
             self,
             conn: &impl pgorm::GenericClient,
@@ -484,7 +554,7 @@ pub(super) fn generate_update_returning_methods(
 
             #destructure
             #now_init
-            #version_suppress
+            #bulk_precheck
 
             let mut q = pgorm::Sql::empty();
             q.push("WITH ");
@@ -510,6 +580,7 @@ pub(super) fn generate_update_returning_methods(
             q.push(" = ANY(");
             q.push_bind(ids);
             q.push(")");
+            #bulk_version_where
 
             q.push(" RETURNING *) SELECT ");
             q.push(#returning_ty::SELECT_LIST);
@@ -518,8 +589,7 @@ pub(super) fn generate_update_returning_methods(
             q.push(" ");
             q.push(#returning_ty::JOIN_CLAUSE);
 
-            // Note: No version check for bulk updates
-            q.fetch_all_as::<#returning_ty>(conn).await
+            #bulk_fetch_with_check
         }
     }
 }

@@ -125,22 +125,13 @@ fn is_reference_type(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Reference(_))
 }
 
-fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
-    let mut op_kind: Option<FilterOpKind> = None;
-    let mut col: Option<syn::Expr> = None;
-    let mut map: Option<syn::Expr> = None;
-    let mut per_page: Option<syn::Expr> = None;
-    let mut force_string = false;
+fn parse_field_filters(field: &syn::Field) -> Result<Vec<FilterOp>> {
+    let mut filters: Vec<FilterOp> = Vec::new();
 
-    let mut set_op = |new_kind: FilterOpKind| -> Result<()> {
-        if op_kind.is_some() {
-            return Err(syn::Error::new_spanned(
-                field,
-                "multiple filter ops on a single field are not supported",
-            ));
+    let mut push_current = |current: &mut Option<FilterOp>| {
+        if let Some(op) = current.take() {
+            filters.push(op);
         }
-        op_kind = Some(new_kind);
-        Ok(())
     };
 
     for attr in &field.attrs {
@@ -152,55 +143,50 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
             syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
         )?;
 
+        let mut current: Option<FilterOp> = None;
+
         for meta in items {
             match meta {
                 syn::Meta::Path(p) => {
                     if p.is_ident("skip") {
-                        return Ok(None);
+                        return Ok(Vec::new());
                     }
-                    if p.is_ident("raw") {
-                        set_op(FilterOpKind::Raw)?;
-                        continue;
-                    }
-                    if p.is_ident("and") {
-                        set_op(FilterOpKind::And)?;
-                        continue;
-                    }
-                    if p.is_ident("or") {
-                        set_op(FilterOpKind::Or)?;
-                        continue;
-                    }
-                    if p.is_ident("order_by") {
-                        set_op(FilterOpKind::OrderBy)?;
-                        continue;
-                    }
-                    if p.is_ident("order_by_asc") {
-                        set_op(FilterOpKind::OrderByAsc)?;
-                        continue;
-                    }
-                    if p.is_ident("order_by_desc") {
-                        set_op(FilterOpKind::OrderByDesc)?;
-                        continue;
-                    }
-                    if p.is_ident("order_by_raw") {
-                        set_op(FilterOpKind::OrderByRaw)?;
-                        continue;
-                    }
-                    if p.is_ident("paginate") {
-                        set_op(FilterOpKind::Paginate)?;
-                        continue;
-                    }
-                    if p.is_ident("limit") {
-                        set_op(FilterOpKind::Limit)?;
-                        continue;
-                    }
-                    if p.is_ident("offset") {
-                        set_op(FilterOpKind::Offset)?;
-                        continue;
-                    }
-                    if p.is_ident("page") {
-                        set_op(FilterOpKind::Page)?;
-                        continue;
+
+                    let kind = if p.is_ident("raw") {
+                        Some(FilterOpKind::Raw)
+                    } else if p.is_ident("and") {
+                        Some(FilterOpKind::And)
+                    } else if p.is_ident("or") {
+                        Some(FilterOpKind::Or)
+                    } else if p.is_ident("order_by") {
+                        Some(FilterOpKind::OrderBy)
+                    } else if p.is_ident("order_by_asc") {
+                        Some(FilterOpKind::OrderByAsc)
+                    } else if p.is_ident("order_by_desc") {
+                        Some(FilterOpKind::OrderByDesc)
+                    } else if p.is_ident("order_by_raw") {
+                        Some(FilterOpKind::OrderByRaw)
+                    } else if p.is_ident("paginate") {
+                        Some(FilterOpKind::Paginate)
+                    } else if p.is_ident("limit") {
+                        Some(FilterOpKind::Limit)
+                    } else if p.is_ident("offset") {
+                        Some(FilterOpKind::Offset)
+                    } else if p.is_ident("page") {
+                        Some(FilterOpKind::Page)
+                    } else {
+                        None
+                    };
+
+                    if let Some(kind) = kind {
+                        push_current(&mut current);
+                        current = Some(FilterOp {
+                            kind,
+                            col: None,
+                            map: None,
+                            per_page: None,
+                            force_string: false,
+                        });
                     }
                 }
                 syn::Meta::List(list) => {
@@ -212,16 +198,29 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
                     match ident.as_str() {
                         "map" => {
                             let map_expr: syn::Expr = list.parse_args()?;
-                            if map.is_some() {
+                            let Some(op) = current.as_mut() else {
                                 return Err(syn::Error::new_spanned(
                                     list,
-                                    "map(...) can only be specified once",
+                                    "map(...) must follow a filter operation",
+                                ));
+                            };
+                            if op.map.is_some() {
+                                return Err(syn::Error::new_spanned(
+                                    list,
+                                    "map(...) can only be specified once per operation",
                                 ));
                             }
-                            map = Some(map_expr);
+                            op.map = Some(map_expr);
                         }
                         "page" => {
-                            set_op(FilterOpKind::Page)?;
+                            push_current(&mut current);
+                            let mut op = FilterOp {
+                                kind: FilterOpKind::Page,
+                                col: None,
+                                map: None,
+                                per_page: None,
+                                force_string: false,
+                            };
                             let items = list.parse_args_with(
                                 syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
                             )?;
@@ -233,13 +232,13 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
                                     ));
                                 };
                                 if nv.path.is_ident("per_page") {
-                                    if per_page.is_some() {
+                                    if op.per_page.is_some() {
                                         return Err(syn::Error::new_spanned(
                                             nv,
                                             "per_page can only be specified once",
                                         ));
                                     }
-                                    per_page = Some(nv.value);
+                                    op.per_page = Some(nv.value);
                                 } else {
                                     return Err(syn::Error::new_spanned(
                                         nv,
@@ -247,17 +246,41 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
                                     ));
                                 }
                             }
+                            current = Some(op);
                         }
-                        "eq" => {
-                            set_op(FilterOpKind::Eq)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "eq_str" => {
-                            set_op(FilterOpKind::Eq)?;
-                            force_string = true;
-                            col = Some(list.parse_args()?);
+                        "eq" | "eq_str" | "ne" | "gt" | "gte" | "lt" | "lte" | "like" | "ilike"
+                        | "not_like" | "not_ilike" | "is_null" | "is_not_null" | "in_list"
+                        | "not_in" | "between" | "not_between" => {
+                            push_current(&mut current);
+                            let kind = match ident.as_str() {
+                                "eq" | "eq_str" => FilterOpKind::Eq,
+                                "ne" => FilterOpKind::Ne,
+                                "gt" => FilterOpKind::Gt,
+                                "gte" => FilterOpKind::Gte,
+                                "lt" => FilterOpKind::Lt,
+                                "lte" => FilterOpKind::Lte,
+                                "like" => FilterOpKind::Like,
+                                "ilike" => FilterOpKind::Ilike,
+                                "not_like" => FilterOpKind::NotLike,
+                                "not_ilike" => FilterOpKind::NotIlike,
+                                "is_null" => FilterOpKind::IsNull,
+                                "is_not_null" => FilterOpKind::IsNotNull,
+                                "in_list" => FilterOpKind::InList,
+                                "not_in" => FilterOpKind::NotIn,
+                                "between" => FilterOpKind::Between,
+                                "not_between" => FilterOpKind::NotBetween,
+                                _ => unreachable!(),
+                            };
+                            current = Some(FilterOp {
+                                kind,
+                                col: Some(list.parse_args()?),
+                                map: None,
+                                per_page: None,
+                                force_string: ident == "eq_str",
+                            });
                         }
                         "eq_map" => {
+                            push_current(&mut current);
                             let args = list.parse_args_with(
                                 syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
                             )?;
@@ -268,75 +291,13 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
                                 ));
                             }
                             let mut it = args.into_iter();
-                            col = Some(it.next().unwrap());
-                            if map.is_some() {
-                                return Err(syn::Error::new_spanned(
-                                    list,
-                                    "map(...) can only be specified once",
-                                ));
-                            }
-                            map = Some(it.next().unwrap());
-                            set_op(FilterOpKind::Eq)?;
-                        }
-                        "ne" => {
-                            set_op(FilterOpKind::Ne)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "gt" => {
-                            set_op(FilterOpKind::Gt)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "gte" => {
-                            set_op(FilterOpKind::Gte)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "lt" => {
-                            set_op(FilterOpKind::Lt)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "lte" => {
-                            set_op(FilterOpKind::Lte)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "like" => {
-                            set_op(FilterOpKind::Like)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "ilike" => {
-                            set_op(FilterOpKind::Ilike)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "not_like" => {
-                            set_op(FilterOpKind::NotLike)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "not_ilike" => {
-                            set_op(FilterOpKind::NotIlike)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "is_null" => {
-                            set_op(FilterOpKind::IsNull)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "is_not_null" => {
-                            set_op(FilterOpKind::IsNotNull)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "in_list" => {
-                            set_op(FilterOpKind::InList)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "not_in" => {
-                            set_op(FilterOpKind::NotIn)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "between" => {
-                            set_op(FilterOpKind::Between)?;
-                            col = Some(list.parse_args()?);
-                        }
-                        "not_between" => {
-                            set_op(FilterOpKind::NotBetween)?;
-                            col = Some(list.parse_args()?);
+                            current = Some(FilterOp {
+                                kind: FilterOpKind::Eq,
+                                col: Some(it.next().unwrap()),
+                                map: Some(it.next().unwrap()),
+                                per_page: None,
+                                force_string: false,
+                            });
                         }
                         _ => continue,
                     }
@@ -344,24 +305,11 @@ fn parse_field_filter(field: &syn::Field) -> Result<Option<FilterOp>> {
                 syn::Meta::NameValue(_) => {}
             }
         }
+
+        push_current(&mut current);
     }
 
-    let Some(kind) = op_kind else {
-        return Ok(None);
-    };
-
-    // Validate "only one op per field".
-    // We can't detect duplicates perfectly from the loop above without more state,
-    // but we can catch most cases by checking if multiple col(...) were set for
-    // different ops (col overwritten).
-    // If you need multiple filters, split them into multiple fields.
-    Ok(Some(FilterOp {
-        kind,
-        col,
-        map,
-        per_page,
-        force_string,
-    }))
+    Ok(filters)
 }
 
 pub fn expand(input: DeriveInput) -> Result<TokenStream> {
@@ -398,23 +346,58 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
             continue;
         };
 
-        let Some(filter) = parse_field_filter(field)? else {
+        let filters = parse_field_filters(field)?;
+        if filters.is_empty() {
             continue;
-        };
+        }
 
         let field_ty = &field.ty;
         let opt_inner = option_inner(field_ty);
         let field_is_option = opt_inner.is_some();
 
-        let kind = filter.kind;
-        let col = filter.col.clone();
-        let map_expr = filter.map.clone();
-        let per_page_expr = filter.per_page.clone();
-        let force_string = filter.force_string;
+        for filter in filters {
+            let kind = filter.kind;
+            let col = filter.col.clone();
+            let map_expr = filter.map.clone();
+            let per_page_expr = filter.per_page.clone();
+            let force_string = filter.force_string;
 
-        let col_required = matches!(
-            kind,
-            FilterOpKind::Eq
+            let col_required = matches!(
+                kind,
+                FilterOpKind::Eq
+                    | FilterOpKind::Ne
+                    | FilterOpKind::Gt
+                    | FilterOpKind::Gte
+                    | FilterOpKind::Lt
+                    | FilterOpKind::Lte
+                    | FilterOpKind::Like
+                    | FilterOpKind::Ilike
+                    | FilterOpKind::NotLike
+                    | FilterOpKind::NotIlike
+                    | FilterOpKind::IsNull
+                    | FilterOpKind::IsNotNull
+                    | FilterOpKind::InList
+                    | FilterOpKind::NotIn
+                    | FilterOpKind::Between
+                    | FilterOpKind::NotBetween
+            );
+
+            if col_required && col.is_none() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "this operation requires a column argument, e.g. #[orm(eq(ModelQuery::COL_FOO))]",
+                ));
+            }
+
+            if !col_required && col.is_some() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "this operation does not take a column argument",
+                ));
+            }
+
+            let stmt = match kind {
+                FilterOpKind::Eq
                 | FilterOpKind::Ne
                 | FilterOpKind::Gt
                 | FilterOpKind::Gte
@@ -423,365 +406,152 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 | FilterOpKind::Like
                 | FilterOpKind::Ilike
                 | FilterOpKind::NotLike
-                | FilterOpKind::NotIlike
-                | FilterOpKind::IsNull
-                | FilterOpKind::IsNotNull
-                | FilterOpKind::InList
-                | FilterOpKind::NotIn
-                | FilterOpKind::Between
-                | FilterOpKind::NotBetween
-        );
+                | FilterOpKind::NotIlike => {
+                    let col_expr = col.clone().unwrap();
+                    let method = match kind {
+                        FilterOpKind::Eq => quote!(eq),
+                        FilterOpKind::Ne => quote!(ne),
+                        FilterOpKind::Gt => quote!(gt),
+                        FilterOpKind::Gte => quote!(gte),
+                        FilterOpKind::Lt => quote!(lt),
+                        FilterOpKind::Lte => quote!(lte),
+                        FilterOpKind::Like => quote!(like),
+                        FilterOpKind::Ilike => quote!(ilike),
+                        FilterOpKind::NotLike => quote!(not_like),
+                        FilterOpKind::NotIlike => quote!(not_ilike),
+                        _ => unreachable!(),
+                    };
 
-        if col_required && col.is_none() {
-            return Err(syn::Error::new_spanned(
-                field,
-                "this operation requires a column argument, e.g. #[orm(eq(ModelQuery::COL_FOO))]",
-            ));
-        }
-
-        if !col_required && col.is_some() {
-            return Err(syn::Error::new_spanned(
-                field,
-                "this operation does not take a column argument",
-            ));
-        }
-
-        let stmt = match kind {
-            FilterOpKind::Eq
-            | FilterOpKind::Ne
-            | FilterOpKind::Gt
-            | FilterOpKind::Gte
-            | FilterOpKind::Lt
-            | FilterOpKind::Lte
-            | FilterOpKind::Like
-            | FilterOpKind::Ilike
-            | FilterOpKind::NotLike
-            | FilterOpKind::NotIlike => {
-                let col_expr = col.clone().unwrap();
-                let method = match kind {
-                    FilterOpKind::Eq => quote!(eq),
-                    FilterOpKind::Ne => quote!(ne),
-                    FilterOpKind::Gt => quote!(gt),
-                    FilterOpKind::Gte => quote!(gte),
-                    FilterOpKind::Lt => quote!(lt),
-                    FilterOpKind::Lte => quote!(lte),
-                    FilterOpKind::Like => quote!(like),
-                    FilterOpKind::Ilike => quote!(ilike),
-                    FilterOpKind::NotLike => quote!(not_like),
-                    FilterOpKind::NotIlike => quote!(not_ilike),
-                    _ => unreachable!(),
-                };
-
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some(vv) => q.#method(#col_expr, vv),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some(v) => q.#method(#col_expr, v)?,
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if let Some(inner) = opt_inner {
-                    if is_stringish(inner) {
-                        // &str/String inside Option: convert to owned for `'static`.
-                        if matches!(kind, FilterOpKind::Eq) && !force_string {
-                            quote! { let q = q.eq_opt_str(#col_expr, #field_ident)?; }
+                    if let Some(map_expr) = map_expr {
+                        if field_is_option {
+                            quote! {
+                                let q = q.apply_if_some(#field_ident, |q, v| {
+                                    match (#map_expr)(v) {
+                                        ::std::option::Option::Some(vv) => q.#method(#col_expr, vv),
+                                        ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                    }
+                                })?;
+                            }
                         } else {
                             quote! {
-                                let q = q.apply_if_some(#field_ident, |q, v| q.#method(#col_expr, ::std::string::ToString::to_string(&v)))?;
+                                let q = match (#map_expr)(#field_ident) {
+                                    ::std::option::Option::Some(v) => q.#method(#col_expr, v)?,
+                                    ::std::option::Option::None => q,
+                                };
                             }
                         }
-                    } else if is_reference_type(inner) {
+                    } else if let Some(inner) = opt_inner {
+                        if is_stringish(inner) {
+                            // &str/String inside Option: convert to owned for `'static`.
+                            if matches!(kind, FilterOpKind::Eq) && !force_string {
+                                quote! { let q = q.eq_opt_str(#col_expr, #field_ident)?; }
+                            } else {
+                                quote! {
+                                    let q = q.apply_if_some(#field_ident, |q, v| q.#method(#col_expr, ::std::string::ToString::to_string(&v)))?;
+                                }
+                            }
+                        } else if is_reference_type(inner) {
+                            return Err(syn::Error::new_spanned(
+                                field,
+                                "Option<&T> is not supported here (use owned types or map(...) to convert)",
+                            ));
+                        } else if matches!(kind, FilterOpKind::Eq) {
+                            quote! { let q = q.eq_opt(#col_expr, #field_ident)?; }
+                        } else if matches!(kind, FilterOpKind::Gte) {
+                            quote! { let q = q.gte_opt(#col_expr, #field_ident)?; }
+                        } else if matches!(kind, FilterOpKind::Lte) {
+                            quote! { let q = q.lte_opt(#col_expr, #field_ident)?; }
+                        } else {
+                            quote! { let q = q.apply_if_some(#field_ident, |q, v| q.#method(#col_expr, v))?; }
+                        }
+                    } else if is_stringish(field_ty) {
+                        if matches!(kind, FilterOpKind::Eq) && !force_string {
+                            quote! { let q = q.eq_str(#col_expr, #field_ident)?; }
+                        } else if is_reference_type(field_ty) {
+                            quote! { let q = q.#method(#col_expr, ::std::string::ToString::to_string(&#field_ident))?; }
+                        } else {
+                            quote! { let q = q.#method(#col_expr, #field_ident)?; }
+                        }
+                    } else if is_reference_type(field_ty) {
                         return Err(syn::Error::new_spanned(
                             field,
-                            "Option<&T> is not supported here (use owned types or map(...) to convert)",
+                            "&T is not supported here (use owned types or map(...) to convert)",
                         ));
-                    } else if matches!(kind, FilterOpKind::Eq) {
-                        quote! { let q = q.eq_opt(#col_expr, #field_ident)?; }
-                    } else if matches!(kind, FilterOpKind::Gte) {
-                        quote! { let q = q.gte_opt(#col_expr, #field_ident)?; }
-                    } else if matches!(kind, FilterOpKind::Lte) {
-                        quote! { let q = q.lte_opt(#col_expr, #field_ident)?; }
-                    } else {
-                        quote! { let q = q.apply_if_some(#field_ident, |q, v| q.#method(#col_expr, v))?; }
-                    }
-                } else if is_stringish(field_ty) {
-                    if matches!(kind, FilterOpKind::Eq) && !force_string {
-                        quote! { let q = q.eq_str(#col_expr, #field_ident)?; }
-                    } else if is_reference_type(field_ty) {
-                        quote! { let q = q.#method(#col_expr, ::std::string::ToString::to_string(&#field_ident))?; }
                     } else {
                         quote! { let q = q.#method(#col_expr, #field_ident)?; }
                     }
-                } else if is_reference_type(field_ty) {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "&T is not supported here (use owned types or map(...) to convert)",
-                    ));
-                } else {
-                    quote! { let q = q.#method(#col_expr, #field_ident)?; }
                 }
-            }
-            FilterOpKind::IsNull | FilterOpKind::IsNotNull => {
-                let col_expr = col.clone().unwrap();
-                let method = match kind {
-                    FilterOpKind::IsNull => quote!(is_null),
-                    FilterOpKind::IsNotNull => quote!(is_not_null),
-                    _ => unreachable!(),
-                };
+                FilterOpKind::IsNull | FilterOpKind::IsNotNull => {
+                    let col_expr = col.clone().unwrap();
+                    let method = match kind {
+                        FilterOpKind::IsNull => quote!(is_null),
+                        FilterOpKind::IsNotNull => quote!(is_not_null),
+                        _ => unreachable!(),
+                    };
 
-                let is_bool = matches!(field_ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "bool"));
-                let is_opt_bool = opt_inner.is_some_and(|inner| matches!(inner, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "bool")));
+                    let is_bool = matches!(field_ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "bool"));
+                    let is_opt_bool = opt_inner.is_some_and(|inner| matches!(inner, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "bool")));
 
-                if is_bool {
-                    quote! { let q = q.apply_if(#field_ident, |q| q.#method(#col_expr))?; }
-                } else if is_opt_bool {
-                    quote! { let q = q.apply_if(#field_ident == ::std::option::Option::Some(true), |q| q.#method(#col_expr))?; }
-                } else {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "is_null/is_not_null requires a bool or Option<bool> field",
-                    ));
-                }
-            }
-            FilterOpKind::InList | FilterOpKind::NotIn => {
-                let col_expr = col.clone().unwrap();
-                let method = match kind {
-                    FilterOpKind::InList => quote!(in_list),
-                    FilterOpKind::NotIn => quote!(not_in),
-                    _ => unreachable!(),
-                };
-
-                if let Some(inner) = opt_inner {
-                    let Some(_) = vec_inner(inner) else {
+                    if is_bool {
+                        quote! { let q = q.apply_if(#field_ident, |q| q.#method(#col_expr))?; }
+                    } else if is_opt_bool {
+                        quote! { let q = q.apply_if(#field_ident == ::std::option::Option::Some(true), |q| q.#method(#col_expr))?; }
+                    } else {
                         return Err(syn::Error::new_spanned(
                             field,
-                            "in_list/not_in requires Vec<T> or Option<Vec<T>>",
+                            "is_null/is_not_null requires a bool or Option<bool> field",
+                        ));
+                    }
+                }
+                FilterOpKind::InList | FilterOpKind::NotIn => {
+                    let col_expr = col.clone().unwrap();
+                    let method = match kind {
+                        FilterOpKind::InList => quote!(in_list),
+                        FilterOpKind::NotIn => quote!(not_in),
+                        _ => unreachable!(),
+                    };
+
+                    if let Some(inner) = opt_inner {
+                        let Some(_) = vec_inner(inner) else {
+                            return Err(syn::Error::new_spanned(
+                                field,
+                                "in_list/not_in requires Vec<T> or Option<Vec<T>>",
+                            ));
+                        };
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| q.#method(#col_expr, v))?; }
+                    } else {
+                        let Some(_) = vec_inner(field_ty) else {
+                            return Err(syn::Error::new_spanned(
+                                field,
+                                "in_list/not_in requires Vec<T> or Option<Vec<T>>",
+                            ));
+                        };
+                        quote! { let q = q.#method(#col_expr, #field_ident)?; }
+                    }
+                }
+                FilterOpKind::Between | FilterOpKind::NotBetween => {
+                    let col_expr = col.clone().unwrap();
+                    let method = match kind {
+                        FilterOpKind::Between => quote!(between),
+                        FilterOpKind::NotBetween => quote!(not_between),
+                        _ => unreachable!(),
+                    };
+
+                    let tuple_inner = if let Some(inner) = opt_inner {
+                        inner
+                    } else {
+                        field_ty
+                    };
+                    let syn::Type::Tuple(tuple) = tuple_inner else {
+                        return Err(syn::Error::new_spanned(
+                            field,
+                            "between/not_between requires (T, T) or Option<(T, T)>",
                         ));
                     };
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| q.#method(#col_expr, v))?; }
-                } else {
-                    let Some(_) = vec_inner(field_ty) else {
+                    if tuple.elems.len() != 2 {
                         return Err(syn::Error::new_spanned(
                             field,
-                            "in_list/not_in requires Vec<T> or Option<Vec<T>>",
-                        ));
-                    };
-                    quote! { let q = q.#method(#col_expr, #field_ident)?; }
-                }
-            }
-            FilterOpKind::Between | FilterOpKind::NotBetween => {
-                let col_expr = col.clone().unwrap();
-                let method = match kind {
-                    FilterOpKind::Between => quote!(between),
-                    FilterOpKind::NotBetween => quote!(not_between),
-                    _ => unreachable!(),
-                };
-
-                let tuple_inner = if let Some(inner) = opt_inner {
-                    inner
-                } else {
-                    field_ty
-                };
-                let syn::Type::Tuple(tuple) = tuple_inner else {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "between/not_between requires (T, T) or Option<(T, T)>",
-                    ));
-                };
-                if tuple.elems.len() != 2 {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "between/not_between requires a 2-tuple: (T, T)",
-                    ));
-                }
-
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some((from, to)) => q.#method(#col_expr, from, to),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some((from, to)) => q.#method(#col_expr, from, to)?,
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, (from, to)| q.#method(#col_expr, from, to))?; }
-                } else {
-                    quote! {
-                        let (from, to) = #field_ident;
-                        let q = q.#method(#col_expr, from, to)?;
-                    }
-                }
-            }
-            FilterOpKind::OrderBy => {
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.order_by(vv)),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some(v) => q.order_by(v),
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.order_by(v)))?; }
-                } else {
-                    quote! { let q = q.order_by(#field_ident); }
-                }
-            }
-            FilterOpKind::OrderByAsc | FilterOpKind::OrderByDesc => {
-                let method = match kind {
-                    FilterOpKind::OrderByAsc => quote!(order_by_asc),
-                    FilterOpKind::OrderByDesc => quote!(order_by_desc),
-                    _ => unreachable!(),
-                };
-
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some(vv) => q.#method(vv),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some(v) => q.#method(v)?,
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| q.#method(v))?; }
-                } else {
-                    quote! { let q = q.#method(#field_ident)?; }
-                }
-            }
-            FilterOpKind::OrderByRaw => {
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.order_by_raw(vv)),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some(v) => q.order_by_raw(v),
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.order_by_raw(v)))?; }
-                } else {
-                    quote! { let q = q.order_by_raw(#field_ident); }
-                }
-            }
-            FilterOpKind::Paginate => {
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.paginate(vv)),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some(v) => q.paginate(v),
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.paginate(v)))?; }
-                } else {
-                    quote! { let q = q.paginate(#field_ident); }
-                }
-            }
-            FilterOpKind::Limit | FilterOpKind::Offset => {
-                let method = match kind {
-                    FilterOpKind::Limit => quote!(limit),
-                    FilterOpKind::Offset => quote!(offset),
-                    _ => unreachable!(),
-                };
-
-                if let Some(map_expr) = map_expr {
-                    if field_is_option {
-                        quote! {
-                            let q = q.apply_if_some(#field_ident, |q, v| {
-                                match (#map_expr)(v) {
-                                    ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.#method(vv)),
-                                    ::std::option::Option::None => ::std::result::Result::Ok(q),
-                                }
-                            })?;
-                        }
-                    } else {
-                        quote! {
-                            let q = match (#map_expr)(#field_ident) {
-                                ::std::option::Option::Some(v) => q.#method(v),
-                                ::std::option::Option::None => q,
-                            };
-                        }
-                    }
-                } else if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.#method(v)))?; }
-                } else {
-                    quote! { let q = q.#method(#field_ident); }
-                }
-            }
-            FilterOpKind::Page => {
-                let tuple_ty = if let Some(inner) = opt_inner {
-                    inner
-                } else {
-                    field_ty
-                };
-                let is_tuple = matches!(tuple_ty, syn::Type::Tuple(t) if t.elems.len() == 2);
-
-                if is_tuple {
-                    if per_page_expr.is_some() {
-                        return Err(syn::Error::new_spanned(
-                            field,
-                            "page(per_page = ...) cannot be used on a tuple field; use a page number field instead",
+                            "between/not_between requires a 2-tuple: (T, T)",
                         ));
                     }
 
@@ -790,7 +560,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                             quote! {
                                 let q = q.apply_if_some(#field_ident, |q, v| {
                                     match (#map_expr)(v) {
-                                        ::std::option::Option::Some((page, per_page)) => q.page(page, per_page),
+                                        ::std::option::Option::Some((from, to)) => q.#method(#col_expr, from, to),
                                         ::std::option::Option::None => ::std::result::Result::Ok(q),
                                     }
                                 })?;
@@ -798,26 +568,50 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         } else {
                             quote! {
                                 let q = match (#map_expr)(#field_ident) {
-                                    ::std::option::Option::Some((page, per_page)) => q.page(page, per_page)?,
+                                    ::std::option::Option::Some((from, to)) => q.#method(#col_expr, from, to)?,
                                     ::std::option::Option::None => q,
                                 };
                             }
                         }
                     } else if field_is_option {
-                        quote! { let q = q.apply_if_some(#field_ident, |q, (page, per_page)| q.page(page, per_page))?; }
+                        quote! { let q = q.apply_if_some(#field_ident, |q, (from, to)| q.#method(#col_expr, from, to))?; }
                     } else {
                         quote! {
-                            let (page, per_page) = #field_ident;
-                            let q = q.page(page, per_page)?;
+                            let (from, to) = #field_ident;
+                            let q = q.#method(#col_expr, from, to)?;
                         }
                     }
-                } else {
-                    // page number + per_page expr
-                    let Some(per_page_expr) = per_page_expr else {
-                        return Err(syn::Error::new_spanned(
-                            field,
-                            "page requires (i64, i64) / Option<(i64, i64)> or #[orm(page(per_page = ...))] on an i64/Option<i64> field",
-                        ));
+                }
+                FilterOpKind::OrderBy => {
+                    if let Some(map_expr) = map_expr {
+                        if field_is_option {
+                            quote! {
+                                let q = q.apply_if_some(#field_ident, |q, v| {
+                                    match (#map_expr)(v) {
+                                        ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.order_by(vv)),
+                                        ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                    }
+                                })?;
+                            }
+                        } else {
+                            quote! {
+                                let q = match (#map_expr)(#field_ident) {
+                                    ::std::option::Option::Some(v) => q.order_by(v),
+                                    ::std::option::Option::None => q,
+                                };
+                            }
+                        }
+                    } else if field_is_option {
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.order_by(v)))?; }
+                    } else {
+                        quote! { let q = q.order_by(#field_ident); }
+                    }
+                }
+                FilterOpKind::OrderByAsc | FilterOpKind::OrderByDesc => {
+                    let method = match kind {
+                        FilterOpKind::OrderByAsc => quote!(order_by_asc),
+                        FilterOpKind::OrderByDesc => quote!(order_by_desc),
+                        _ => unreachable!(),
                     };
 
                     if let Some(map_expr) = map_expr {
@@ -825,7 +619,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                             quote! {
                                 let q = q.apply_if_some(#field_ident, |q, v| {
                                     match (#map_expr)(v) {
-                                        ::std::option::Option::Some(vv) => q.page(vv, #per_page_expr),
+                                        ::std::option::Option::Some(vv) => q.#method(vv),
                                         ::std::option::Option::None => ::std::result::Result::Ok(q),
                                     }
                                 })?;
@@ -833,40 +627,197 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                         } else {
                             quote! {
                                 let q = match (#map_expr)(#field_ident) {
-                                    ::std::option::Option::Some(v) => q.page(v, #per_page_expr)?,
+                                    ::std::option::Option::Some(v) => q.#method(v)?,
                                     ::std::option::Option::None => q,
                                 };
                             }
                         }
                     } else if field_is_option {
-                        quote! { let q = q.apply_if_some(#field_ident, |q, v| q.page(v, #per_page_expr))?; }
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| q.#method(v))?; }
                     } else {
-                        quote! { let q = q.page(#field_ident, #per_page_expr)?; }
+                        quote! { let q = q.#method(#field_ident)?; }
                     }
                 }
-            }
-            FilterOpKind::Raw => {
-                if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.raw(v)))?; }
-                } else {
-                    quote! { let q = q.raw(#field_ident); }
+                FilterOpKind::OrderByRaw => {
+                    if let Some(map_expr) = map_expr {
+                        if field_is_option {
+                            quote! {
+                                let q = q.apply_if_some(#field_ident, |q, v| {
+                                    match (#map_expr)(v) {
+                                        ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.order_by_raw(vv)),
+                                        ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                    }
+                                })?;
+                            }
+                        } else {
+                            quote! {
+                                let q = match (#map_expr)(#field_ident) {
+                                    ::std::option::Option::Some(v) => q.order_by_raw(v),
+                                    ::std::option::Option::None => q,
+                                };
+                            }
+                        }
+                    } else if field_is_option {
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.order_by_raw(v)))?; }
+                    } else {
+                        quote! { let q = q.order_by_raw(#field_ident); }
+                    }
                 }
-            }
-            FilterOpKind::And | FilterOpKind::Or => {
-                let method = match kind {
-                    FilterOpKind::And => quote!(and),
-                    FilterOpKind::Or => quote!(or),
-                    _ => unreachable!(),
-                };
-                if field_is_option {
-                    quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.#method(v)))?; }
-                } else {
-                    quote! { let q = q.#method(#field_ident); }
+                FilterOpKind::Paginate => {
+                    if let Some(map_expr) = map_expr {
+                        if field_is_option {
+                            quote! {
+                                let q = q.apply_if_some(#field_ident, |q, v| {
+                                    match (#map_expr)(v) {
+                                        ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.paginate(vv)),
+                                        ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                    }
+                                })?;
+                            }
+                        } else {
+                            quote! {
+                                let q = match (#map_expr)(#field_ident) {
+                                    ::std::option::Option::Some(v) => q.paginate(v),
+                                    ::std::option::Option::None => q,
+                                };
+                            }
+                        }
+                    } else if field_is_option {
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.paginate(v)))?; }
+                    } else {
+                        quote! { let q = q.paginate(#field_ident); }
+                    }
                 }
-            }
-        };
+                FilterOpKind::Limit | FilterOpKind::Offset => {
+                    let method = match kind {
+                        FilterOpKind::Limit => quote!(limit),
+                        FilterOpKind::Offset => quote!(offset),
+                        _ => unreachable!(),
+                    };
 
-        apply_stmts.push(stmt);
+                    if let Some(map_expr) = map_expr {
+                        if field_is_option {
+                            quote! {
+                                let q = q.apply_if_some(#field_ident, |q, v| {
+                                    match (#map_expr)(v) {
+                                        ::std::option::Option::Some(vv) => ::std::result::Result::Ok(q.#method(vv)),
+                                        ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                    }
+                                })?;
+                            }
+                        } else {
+                            quote! {
+                                let q = match (#map_expr)(#field_ident) {
+                                    ::std::option::Option::Some(v) => q.#method(v),
+                                    ::std::option::Option::None => q,
+                                };
+                            }
+                        }
+                    } else if field_is_option {
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.#method(v)))?; }
+                    } else {
+                        quote! { let q = q.#method(#field_ident); }
+                    }
+                }
+                FilterOpKind::Page => {
+                    let tuple_ty = if let Some(inner) = opt_inner {
+                        inner
+                    } else {
+                        field_ty
+                    };
+                    let is_tuple = matches!(tuple_ty, syn::Type::Tuple(t) if t.elems.len() == 2);
+
+                    if is_tuple {
+                        if per_page_expr.is_some() {
+                            return Err(syn::Error::new_spanned(
+                                field,
+                                "page(per_page = ...) cannot be used on a tuple field; use a page number field instead",
+                            ));
+                        }
+
+                        if let Some(map_expr) = map_expr {
+                            if field_is_option {
+                                quote! {
+                                    let q = q.apply_if_some(#field_ident, |q, v| {
+                                        match (#map_expr)(v) {
+                                            ::std::option::Option::Some((page, per_page)) => q.page(page, per_page),
+                                            ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                        }
+                                    })?;
+                                }
+                            } else {
+                                quote! {
+                                    let q = match (#map_expr)(#field_ident) {
+                                        ::std::option::Option::Some((page, per_page)) => q.page(page, per_page)?,
+                                        ::std::option::Option::None => q,
+                                    };
+                                }
+                            }
+                        } else if field_is_option {
+                            quote! { let q = q.apply_if_some(#field_ident, |q, (page, per_page)| q.page(page, per_page))?; }
+                        } else {
+                            quote! {
+                                let (page, per_page) = #field_ident;
+                                let q = q.page(page, per_page)?;
+                            }
+                        }
+                    } else {
+                        // page number + per_page expr
+                        let Some(per_page_expr) = per_page_expr else {
+                            return Err(syn::Error::new_spanned(
+                                field,
+                                "page requires (i64, i64) / Option<(i64, i64)> or #[orm(page(per_page = ...))] on an i64/Option<i64> field",
+                            ));
+                        };
+
+                        if let Some(map_expr) = map_expr {
+                            if field_is_option {
+                                quote! {
+                                    let q = q.apply_if_some(#field_ident, |q, v| {
+                                        match (#map_expr)(v) {
+                                            ::std::option::Option::Some(vv) => q.page(vv, #per_page_expr),
+                                            ::std::option::Option::None => ::std::result::Result::Ok(q),
+                                        }
+                                    })?;
+                                }
+                            } else {
+                                quote! {
+                                    let q = match (#map_expr)(#field_ident) {
+                                        ::std::option::Option::Some(v) => q.page(v, #per_page_expr)?,
+                                        ::std::option::Option::None => q,
+                                    };
+                                }
+                            }
+                        } else if field_is_option {
+                            quote! { let q = q.apply_if_some(#field_ident, |q, v| q.page(v, #per_page_expr))?; }
+                        } else {
+                            quote! { let q = q.page(#field_ident, #per_page_expr)?; }
+                        }
+                    }
+                }
+                FilterOpKind::Raw => {
+                    if field_is_option {
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.raw(v)))?; }
+                    } else {
+                        quote! { let q = q.raw(#field_ident); }
+                    }
+                }
+                FilterOpKind::And | FilterOpKind::Or => {
+                    let method = match kind {
+                        FilterOpKind::And => quote!(and),
+                        FilterOpKind::Or => quote!(or),
+                        _ => unreachable!(),
+                    };
+                    if field_is_option {
+                        quote! { let q = q.apply_if_some(#field_ident, |q, v| ::std::result::Result::Ok(q.#method(v)))?; }
+                    } else {
+                        quote! { let q = q.#method(#field_ident); }
+                    }
+                }
+            };
+
+            apply_stmts.push(stmt);
+        }
     }
 
     let destructure = quote! { let Self { #(#all_field_idents,)* } = self; };

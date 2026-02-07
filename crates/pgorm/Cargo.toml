@@ -201,3 +201,7 @@ path = "examples/cte_queries/main.rs"
 [[example]]
 name = "composite_primary_key"
 path = "examples/composite_primary_key/main.rs"
+
+[[example]]
+name = "productized_limits"
+path = "examples/productized_limits/main.rs"

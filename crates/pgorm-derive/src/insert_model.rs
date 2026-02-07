@@ -248,12 +248,10 @@ fn generate_input_struct(
         let input_ty: syn::Type = if let Some(inner) = option_inner(&field_ty) {
             if let Some(input_as) = field_attrs.input_as.as_ref() {
                 if option_inner(inner).is_some() {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "input_as is not supported on Option<Option<T>> fields",
-                    ));
+                    syn::parse_quote!(Option<Option<#input_as>>)
+                } else {
+                    syn::parse_quote!(Option<#input_as>)
                 }
-                syn::parse_quote!(Option<#input_as>)
             } else {
                 field_ty.clone()
             }
@@ -489,12 +487,34 @@ fn build_output_expr(
     field_ty: &syn::Type,
     field_attrs: &attrs::FieldAttrs,
 ) -> Result<TokenStream> {
-    let is_opt = option_inner(field_ty).is_some();
+    let opt_inner = option_inner(field_ty);
+    let is_opt = opt_inner.is_some();
+    let is_double_opt = opt_inner.and_then(option_inner).is_some();
     let needs_default = field_attrs.default || field_attrs.skip_insert || field_attrs.is_id;
 
     // input_as conversions for uuid/url, to allow ValidationErrors instead of serde errors.
     if field_attrs.input_as.is_some() {
         if is_uuid_type(field_ty) {
+            if is_double_opt {
+                return Ok(quote! {
+                    match self.#field_ident {
+                        Some(Some(s)) => match ::pgorm::validate::parse_uuid(s.as_ref()) {
+                            Ok(v) => Some(Some(v)),
+                            Err(_) => {
+                                let mut errors = ::pgorm::changeset::ValidationErrors::default();
+                                errors.push(::pgorm::changeset::ValidationError::new(
+                                    #field_name_lit,
+                                    ::pgorm::changeset::ValidationCode::Uuid,
+                                    "is not a valid uuid",
+                                ));
+                                return Err(errors);
+                            }
+                        },
+                        Some(None) => Some(None),
+                        None => None,
+                    }
+                });
+            }
             if is_opt {
                 return Ok(quote! {
                     match self.#field_ident {
@@ -541,6 +561,26 @@ fn build_output_expr(
             });
         }
         if is_ipaddr_type(field_ty) {
+            if is_double_opt {
+                return Ok(quote! {
+                    match self.#field_ident {
+                        Some(Some(s)) => match ::pgorm::validate::parse_ip(s.as_ref()) {
+                            Ok(v) => Some(Some(v)),
+                            Err(_) => {
+                                let mut errors = ::pgorm::changeset::ValidationErrors::default();
+                                errors.push(::pgorm::changeset::ValidationError::new(
+                                    #field_name_lit,
+                                    ::pgorm::changeset::ValidationCode::Ip,
+                                    "is not a valid ip address",
+                                ));
+                                return Err(errors);
+                            }
+                        },
+                        Some(None) => Some(None),
+                        None => None,
+                    }
+                });
+            }
             if is_opt {
                 return Ok(quote! {
                     match self.#field_ident {
@@ -587,6 +627,26 @@ fn build_output_expr(
             });
         }
         if is_url_type(field_ty) {
+            if is_double_opt {
+                return Ok(quote! {
+                    match self.#field_ident {
+                        Some(Some(s)) => match ::pgorm::validate::parse_url(s.as_ref()) {
+                            Ok(v) => Some(Some(v)),
+                            Err(_) => {
+                                let mut errors = ::pgorm::changeset::ValidationErrors::default();
+                                errors.push(::pgorm::changeset::ValidationError::new(
+                                    #field_name_lit,
+                                    ::pgorm::changeset::ValidationCode::Url,
+                                    "is not a valid url",
+                                ));
+                                return Err(errors);
+                            }
+                        },
+                        Some(None) => Some(None),
+                        None => None,
+                    }
+                });
+            }
             if is_opt {
                 return Ok(quote! {
                     match self.#field_ident {
@@ -664,19 +724,28 @@ fn build_output_expr(
 }
 
 fn is_uuid_type(ty: &syn::Type) -> bool {
-    let ty = option_inner(ty).unwrap_or(ty);
+    let mut ty = ty;
+    while let Some(inner) = option_inner(ty) {
+        ty = inner;
+    }
     let syn::Type::Path(p) = ty else { return false };
     p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "Uuid")
 }
 
 fn is_url_type(ty: &syn::Type) -> bool {
-    let ty = option_inner(ty).unwrap_or(ty);
+    let mut ty = ty;
+    while let Some(inner) = option_inner(ty) {
+        ty = inner;
+    }
     let syn::Type::Path(p) = ty else { return false };
     p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "Url")
 }
 
 fn is_ipaddr_type(ty: &syn::Type) -> bool {
-    let ty = option_inner(ty).unwrap_or(ty);
+    let mut ty = ty;
+    while let Some(inner) = option_inner(ty) {
+        ty = inner;
+    }
     let syn::Type::Path(p) = ty else { return false };
     p.qself.is_none() && p.path.segments.last().is_some_and(|s| s.ident == "IpAddr")
 }

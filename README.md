@@ -730,6 +730,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `savepoint` | Savepoints and nested transactions |
 | `migrate` | SQL migrations with refinery |
 | `migration_toolchain` | File-based migration workflow (`status/up/down/diff`) |
+| `productized_limits` | `input_as` nested option, multi-op `QueryParams`, bulk version check |
 
 Run any example:
 

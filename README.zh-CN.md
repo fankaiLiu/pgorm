@@ -730,6 +730,7 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `savepoint` | 保存点和嵌套事务 |
 | `migrate` | SQL 迁移（refinery） |
 | `migration_toolchain` | 文件式迁移工作流（`status/up/down/diff`） |
+| `productized_limits` | `input_as` 嵌套 Option、`QueryParams` 多操作、批量版本检查 |
 
 运行示例：
 
