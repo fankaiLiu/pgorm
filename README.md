@@ -33,7 +33,7 @@
 - **Multi-table write graphs** — insert related records across tables in one transaction
 - **Optimistic locking** with `#[orm(version)]`
 - **PostgreSQL special types** — `PgEnum`, `PgComposite`, `Range<T>` with derive macros
-- **Transactions & savepoints** — `transaction!`, `savepoint!`, `nested_transaction!` macros
+- **Transactions & savepoints** — `transaction!`, `transaction_with!`, `savepoint!`, `nested_transaction!`
 - **CTE (WITH) queries** — including recursive CTEs
 - **Keyset (cursor) pagination** — `Keyset1`, `Keyset2` for stable, index-friendly paging
 - **Streaming queries** — row-by-row `Stream` for large result sets
@@ -454,6 +454,7 @@ while let Some(row) = stream.next().await {
 
 ```rust
 use pgorm::prelude::*;
+use pgorm::{TransactionIsolation, TransactionOptions};
 
 // Top-level transaction
 pgorm::transaction!(&mut client, tx, {
@@ -467,6 +468,17 @@ pgorm::transaction!(&mut client, tx, {
     sp.release().await?;  // or sp.rollback().await?
 
     Ok::<(), OrmError>(())
+})?;
+
+// Transaction with explicit isolation/read-only/deferrable options
+let opts = TransactionOptions::new()
+    .isolation_level(TransactionIsolation::Serializable)
+    .read_only(true)
+    .deferrable(true);
+let total: i64 = pgorm::transaction_with!(&mut client, tx, opts, {
+    query("SELECT COALESCE(SUM(balance), 0) FROM accounts")
+        .fetch_scalar_one(&tx)
+        .await
 })?;
 
 // savepoint! macro — auto release on Ok, rollback on Err
@@ -708,6 +720,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `pg_range` | Range types (tstzrange, daterange, int4range) |
 | `pg_composite` | PostgreSQL composite types with PgComposite derive |
 | `composite_primary_key` | Composite primary key models (`select_by_pk`, `delete_by_pk`) |
+| `transaction_options` | Transactions with isolation/read-only/deferrable config |
 | `savepoint` | Savepoints and nested transactions |
 | `migrate` | SQL migrations with refinery |
 

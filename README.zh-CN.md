@@ -33,7 +33,7 @@
 - **多表写入图** — 在单个事务中插入多表关联记录
 - **乐观锁** — `#[orm(version)]`
 - **PostgreSQL 特殊类型** — `PgEnum`、`PgComposite`、`Range<T>` 派生宏
-- **事务与保存点** — `transaction!`、`savepoint!`、`nested_transaction!` 宏
+- **事务与保存点** — `transaction!`、`transaction_with!`、`savepoint!`、`nested_transaction!`
 - **CTE (WITH) 查询** — 包括递归 CTE
 - **游标分页** — `Keyset1`、`Keyset2`，基于索引的稳定分页
 - **流式查询** — 逐行 `Stream`，处理大结果集
@@ -454,6 +454,7 @@ while let Some(row) = stream.next().await {
 
 ```rust
 use pgorm::prelude::*;
+use pgorm::{TransactionIsolation, TransactionOptions};
 
 // 顶级事务
 pgorm::transaction!(&mut client, tx, {
@@ -467,6 +468,17 @@ pgorm::transaction!(&mut client, tx, {
     sp.release().await?;  // 或 sp.rollback().await?
 
     Ok::<(), OrmError>(())
+})?;
+
+// 显式配置隔离级别 / 只读 / deferrable
+let opts = TransactionOptions::new()
+    .isolation_level(TransactionIsolation::Serializable)
+    .read_only(true)
+    .deferrable(true);
+let total: i64 = pgorm::transaction_with!(&mut client, tx, opts, {
+    query("SELECT COALESCE(SUM(balance), 0) FROM accounts")
+        .fetch_scalar_one(&tx)
+        .await
 })?;
 
 // savepoint! 宏 — Ok 时自动 release，Err 时自动 rollback
@@ -708,6 +720,7 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `pg_range` | 范围类型（tstzrange、daterange、int4range） |
 | `pg_composite` | PostgreSQL 复合类型派生宏 |
 | `composite_primary_key` | 复合主键模型（`select_by_pk`、`delete_by_pk`） |
+| `transaction_options` | 事务隔离级别/只读/deferrable 配置 |
 | `savepoint` | 保存点和嵌套事务 |
 | `migrate` | SQL 迁移（refinery） |
 

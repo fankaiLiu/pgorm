@@ -78,7 +78,10 @@ pub use ident::{Ident, IdentPart, IntoIdent};
 pub use eager::{BelongsToMap, HasManyMap, HasOneMap, Loaded};
 
 // Transactions
-pub use transaction::{__next_savepoint_name, Savepoint, TransactionExt};
+pub use transaction::{
+    __next_savepoint_name, Savepoint, TransactionBeginExt, TransactionExt, TransactionIsolation,
+    TransactionOptions, begin_transaction, begin_transaction_with,
+};
 
 // Validation
 pub use changeset::{ValidationCode, ValidationError, ValidationErrors};

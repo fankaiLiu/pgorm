@@ -29,6 +29,7 @@
 
 use crate::error::{OrmError, OrmResult};
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio_postgres::IsolationLevel;
 use tokio_postgres::Row;
 use tokio_postgres::Statement;
 use tokio_postgres::types::ToSql;
@@ -36,9 +37,199 @@ use tokio_postgres::types::ToSql;
 /// Global counter for anonymous savepoint naming.
 static SAVEPOINT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Transaction isolation level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionIsolation {
+    ReadUncommitted,
+    ReadCommitted,
+    RepeatableRead,
+    Serializable,
+}
+
+impl From<TransactionIsolation> for IsolationLevel {
+    fn from(value: TransactionIsolation) -> Self {
+        match value {
+            TransactionIsolation::ReadUncommitted => IsolationLevel::ReadUncommitted,
+            TransactionIsolation::ReadCommitted => IsolationLevel::ReadCommitted,
+            TransactionIsolation::RepeatableRead => IsolationLevel::RepeatableRead,
+            TransactionIsolation::Serializable => IsolationLevel::Serializable,
+        }
+    }
+}
+
+/// Builder-style transaction options.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{TransactionIsolation, TransactionOptions};
+///
+/// let opts = TransactionOptions::new()
+///     .isolation_level(TransactionIsolation::Serializable)
+///     .read_only(true)
+///     .deferrable(true);
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TransactionOptions {
+    isolation_level: Option<TransactionIsolation>,
+    read_only: Option<bool>,
+    deferrable: Option<bool>,
+}
+
+impl TransactionOptions {
+    /// Create a new options value with defaults (database defaults).
+    pub const fn new() -> Self {
+        Self {
+            isolation_level: None,
+            read_only: None,
+            deferrable: None,
+        }
+    }
+
+    /// Set isolation level.
+    pub const fn isolation_level(mut self, level: TransactionIsolation) -> Self {
+        self.isolation_level = Some(level);
+        self
+    }
+
+    /// Set access mode (`READ ONLY` / `READ WRITE`).
+    pub const fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = Some(read_only);
+        self
+    }
+
+    /// Set deferrable mode (`DEFERRABLE` / `NOT DEFERRABLE`).
+    pub const fn deferrable(mut self, deferrable: bool) -> Self {
+        self.deferrable = Some(deferrable);
+        self
+    }
+
+    /// Returns the configured isolation level.
+    pub const fn isolation_level_opt(&self) -> Option<TransactionIsolation> {
+        self.isolation_level
+    }
+
+    /// Returns the configured read-only flag.
+    pub const fn read_only_opt(&self) -> Option<bool> {
+        self.read_only
+    }
+
+    /// Returns the configured deferrable flag.
+    pub const fn deferrable_opt(&self) -> Option<bool> {
+        self.deferrable
+    }
+
+    fn validate(self) -> OrmResult<Self> {
+        if self.deferrable == Some(true) {
+            let serializable = self.isolation_level == Some(TransactionIsolation::Serializable);
+            let read_only = self.read_only == Some(true);
+            if !serializable || !read_only {
+                return Err(OrmError::Other(
+                    "deferrable=true requires isolation_level=Serializable and read_only=true"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(self)
+    }
+}
+
+/// Unified "begin transaction" API across direct and pooled clients.
+pub trait TransactionBeginExt {
+    /// Transaction type started by this client.
+    type Transaction<'a>
+    where
+        Self: 'a;
+
+    /// Begin a transaction with default options.
+    fn begin_transaction(
+        &mut self,
+    ) -> impl std::future::Future<Output = OrmResult<Self::Transaction<'_>>> + Send {
+        self.begin_transaction_with(TransactionOptions::default())
+    }
+
+    /// Begin a transaction with explicit options.
+    fn begin_transaction_with(
+        &mut self,
+        options: TransactionOptions,
+    ) -> impl std::future::Future<Output = OrmResult<Self::Transaction<'_>>> + Send;
+}
+
+impl TransactionBeginExt for tokio_postgres::Client {
+    type Transaction<'a>
+        = tokio_postgres::Transaction<'a>
+    where
+        Self: 'a;
+
+    async fn begin_transaction_with(
+        &mut self,
+        options: TransactionOptions,
+    ) -> OrmResult<Self::Transaction<'_>> {
+        let options = options.validate()?;
+        let mut builder = self.build_transaction();
+        if let Some(level) = options.isolation_level {
+            builder = builder.isolation_level(level.into());
+        }
+        if let Some(read_only) = options.read_only {
+            builder = builder.read_only(read_only);
+        }
+        if let Some(deferrable) = options.deferrable {
+            builder = builder.deferrable(deferrable);
+        }
+        builder.start().await.map_err(OrmError::from_db_error)
+    }
+}
+
+#[cfg(feature = "pool")]
+impl TransactionBeginExt for deadpool_postgres::Client {
+    type Transaction<'a>
+        = deadpool_postgres::Transaction<'a>
+    where
+        Self: 'a;
+
+    async fn begin_transaction_with(
+        &mut self,
+        options: TransactionOptions,
+    ) -> OrmResult<Self::Transaction<'_>> {
+        let options = options.validate()?;
+        let mut builder = self.build_transaction();
+        if let Some(level) = options.isolation_level {
+            builder = builder.isolation_level(level.into());
+        }
+        if let Some(read_only) = options.read_only {
+            builder = builder.read_only(read_only);
+        }
+        if let Some(deferrable) = options.deferrable {
+            builder = builder.deferrable(deferrable);
+        }
+        builder.start().await.map_err(OrmError::from_db_error)
+    }
+}
+
+/// Begin a transaction with default options.
+pub async fn begin_transaction<'a, C>(
+    client: &'a mut C,
+) -> OrmResult<<C as TransactionBeginExt>::Transaction<'a>>
+where
+    C: TransactionBeginExt + ?Sized,
+{
+    client.begin_transaction().await
+}
+
+/// Begin a transaction with explicit options.
+pub async fn begin_transaction_with<'a, C>(
+    client: &'a mut C,
+    options: TransactionOptions,
+) -> OrmResult<<C as TransactionBeginExt>::Transaction<'a>>
+where
+    C: TransactionBeginExt + ?Sized,
+{
+    client.begin_transaction_with(options).await
+}
+
 /// Runs the given block inside a database transaction.
 ///
-/// - Begins a transaction via `$client.transaction().await`.
+/// - Begins a transaction via [`begin_transaction`].
 /// - Commits on `Ok(_)`.
 /// - Rolls back on `Err(_)`.
 ///
@@ -46,10 +237,49 @@ static SAVEPOINT_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[macro_export]
 macro_rules! transaction {
     ($client:expr, $tx:ident, $body:block) => {{
-        let mut $tx = ($client)
-            .transaction()
-            .await
-            .map_err($crate::OrmError::from_db_error)?;
+        let mut $tx = $crate::begin_transaction(($client)).await?;
+
+        let __pgorm_tx_body_result = async { $body }.await;
+        match __pgorm_tx_body_result {
+            Ok(value) => {
+                $tx.commit()
+                    .await
+                    .map_err($crate::OrmError::from_db_error)?;
+                Ok(value)
+            }
+            Err(error) => match $tx.rollback().await {
+                Ok(()) => Err(error),
+                Err(rollback_err) => Err($crate::OrmError::Other(format!(
+                    "{error} (rollback failed: {rollback_err})"
+                ))),
+            },
+        }
+    }};
+}
+
+/// Runs the given block inside a transaction started with explicit options.
+///
+/// The block must evaluate to `pgorm::OrmResult<T>`.
+///
+/// # Example
+///
+/// ```ignore
+/// use pgorm::{TransactionIsolation, TransactionOptions};
+///
+/// let opts = TransactionOptions::new()
+///     .isolation_level(TransactionIsolation::Serializable)
+///     .read_only(true)
+///     .deferrable(true);
+///
+/// pgorm::transaction_with!(&mut client, tx, opts, {
+///     // ...
+///     Ok::<(), pgorm::OrmError>(())
+/// })?;
+/// ```
+#[macro_export]
+macro_rules! transaction_with {
+    ($client:expr, $tx:ident, $options:expr, $body:block) => {{
+        let mut $tx = $crate::begin_transaction_with(($client), $options).await?;
 
         let __pgorm_tx_body_result = async { $body }.await;
         match __pgorm_tx_body_result {
@@ -400,5 +630,53 @@ impl TransactionExt for deadpool_postgres::Transaction<'_> {
             .await
             .map_err(OrmError::from_db_error)?;
         Ok(Savepoint::new(inner, name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TransactionIsolation, TransactionOptions};
+
+    #[test]
+    fn transaction_options_builder_roundtrip() {
+        let opts = TransactionOptions::new()
+            .isolation_level(TransactionIsolation::RepeatableRead)
+            .read_only(false)
+            .deferrable(false);
+
+        assert_eq!(
+            opts.isolation_level_opt(),
+            Some(TransactionIsolation::RepeatableRead)
+        );
+        assert_eq!(opts.read_only_opt(), Some(false));
+        assert_eq!(opts.deferrable_opt(), Some(false));
+    }
+
+    #[test]
+    fn transaction_options_validate_allows_default() {
+        assert!(TransactionOptions::default().validate().is_ok());
+    }
+
+    #[test]
+    fn transaction_options_validate_rejects_invalid_deferrable_combo() {
+        let err = TransactionOptions::new()
+            .isolation_level(TransactionIsolation::ReadCommitted)
+            .read_only(true)
+            .deferrable(true)
+            .validate()
+            .expect_err("invalid combo should fail");
+
+        let msg = err.to_string();
+        assert!(msg.contains("deferrable=true"));
+        assert!(msg.contains("Serializable"));
+    }
+
+    #[test]
+    fn transaction_options_validate_accepts_serializable_readonly_deferrable() {
+        let opts = TransactionOptions::new()
+            .isolation_level(TransactionIsolation::Serializable)
+            .read_only(true)
+            .deferrable(true);
+        assert!(opts.validate().is_ok());
     }
 }

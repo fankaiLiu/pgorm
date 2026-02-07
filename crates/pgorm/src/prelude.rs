@@ -33,7 +33,10 @@ pub use crate::bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};
 pub use crate::eager::{BelongsToMap, HasManyMap, HasOneMap, Loaded};
 
 // ── Transactions ────────────────────────────────────────────────────────────
-pub use crate::transaction::{Savepoint, TransactionExt};
+pub use crate::transaction::{
+    Savepoint, TransactionBeginExt, TransactionExt, TransactionIsolation, TransactionOptions,
+    begin_transaction, begin_transaction_with,
+};
 
 // ── Validation ──────────────────────────────────────────────────────────────
 pub use crate::changeset::{ValidationError, ValidationErrors};

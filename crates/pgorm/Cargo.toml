@@ -178,6 +178,10 @@ name = "savepoint"
 path = "examples/savepoint/main.rs"
 
 [[example]]
+name = "transaction_options"
+path = "examples/transaction_options/main.rs"
+
+[[example]]
 name = "bulk_operations"
 path = "examples/bulk_operations/main.rs"
 
