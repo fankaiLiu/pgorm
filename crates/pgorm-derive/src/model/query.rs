@@ -231,6 +231,17 @@ fn gen_column_consts(
                     | "and"
                     | "or"
                     | "raw"
+                    | "raw_bind"
+                    | "ilike_any"
+                    | "ilike_any_opt"
+                    | "like_opt"
+                    | "ilike_opt"
+                    | "ne_opt"
+                    | "gt_opt"
+                    | "lt_opt"
+                    | "in_list_opt"
+                    | "between_opt"
+                    | "exists"
                     | "paginate"
                     | "limit"
                     | "offset"
@@ -610,6 +621,156 @@ fn gen_filtering_methods() -> TokenStream {
             self.where_expr = current.and_with(pgorm::WhereExpr::raw(sql));
             self
         }
+
+        /// Add a raw WHERE expression with parameter bindings.
+        ///
+        /// The `?` placeholders in the template are replaced with `$N` parameters.
+        ///
+        /// # Example
+        /// ```ignore
+        /// Product::query()
+        ///     .raw_bind("(user_id = ? OR ? = ANY(collaborators))", vec![uid, uid])
+        ///     .find(&client).await?;
+        /// ```
+        pub fn raw_bind<T>(mut self, template: &str, params: ::std::vec::Vec<T>) -> Self
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            let current = self.where_expr;
+            self.where_expr = current.and_with(pgorm::WhereExpr::raw_bind(template, params));
+            self
+        }
+
+        // ==================== Optional filter variants ====================
+
+        /// Filter by inequality (optional): only applies when `value` is `Some`.
+        #[inline]
+        pub fn ne_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(value, |q, v| q.ne(column, v))
+        }
+
+        /// Filter by greater than (optional): only applies when `value` is `Some`.
+        #[inline]
+        pub fn gt_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(value, |q, v| q.gt(column, v))
+        }
+
+        /// Filter by less than (optional): only applies when `value` is `Some`.
+        #[inline]
+        pub fn lt_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            value: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(value, |q, v| q.lt(column, v))
+        }
+
+        /// Filter by LIKE pattern (optional): only applies when `pattern` is `Some`.
+        #[inline]
+        pub fn like_opt(
+            self,
+            column: impl pgorm::IntoIdent,
+            pattern: ::std::option::Option<impl ::core::convert::Into<::std::string::String>>,
+        ) -> pgorm::OrmResult<Self> {
+            self.apply_if_some(pattern, |q, v| q.like(column, v.into()))
+        }
+
+        /// Filter by ILIKE pattern (optional): only applies when `pattern` is `Some`.
+        #[inline]
+        pub fn ilike_opt(
+            self,
+            column: impl pgorm::IntoIdent,
+            pattern: ::std::option::Option<impl ::core::convert::Into<::std::string::String>>,
+        ) -> pgorm::OrmResult<Self> {
+            self.apply_if_some(pattern, |q, v| q.ilike(column, v.into()))
+        }
+
+        /// Filter by IN list (optional): only applies when `values` is `Some`.
+        #[inline]
+        pub fn in_list_opt<T>(
+            self,
+            column: impl pgorm::IntoIdent,
+            values: ::std::option::Option<::std::vec::Vec<T>>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.apply_if_some(values, |q, v| q.in_list(column, v))
+        }
+
+        /// Filter by an optional inclusive range (alias for `range_opt`).
+        #[inline]
+        pub fn between_opt<I, T>(
+            self,
+            column: I,
+            from: ::std::option::Option<T>,
+            to: ::std::option::Option<T>,
+        ) -> pgorm::OrmResult<Self>
+        where
+            I: pgorm::IntoIdent + ::core::clone::Clone,
+            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+        {
+            self.range_opt(column, from, to)
+        }
+
+        // ==================== Multi-column search ====================
+
+        /// Multi-column ILIKE search with OR logic.
+        ///
+        /// Generates: `(c1 ILIKE $1 OR c2 ILIKE $2 OR ...)` with the same pattern bound to each.
+        ///
+        /// # Example
+        /// ```ignore
+        /// Product::query()
+        ///     .ilike_any(&["name", "description"], "%phone%")?
+        ///     .find(&client).await?;
+        /// ```
+        pub fn ilike_any(
+            mut self,
+            columns: &[&str],
+            pattern: impl ::core::convert::Into<::std::string::String>,
+        ) -> pgorm::OrmResult<Self> {
+            let pat = pattern.into();
+            let mut or_exprs: ::std::vec::Vec<pgorm::WhereExpr> = ::std::vec::Vec::new();
+            for col in columns {
+                or_exprs.push(pgorm::Condition::ilike(*col, pat.clone())?.into());
+            }
+            if !or_exprs.is_empty() {
+                let current = self.where_expr;
+                self.where_expr = current.and_with(pgorm::WhereExpr::or(or_exprs));
+            }
+            ::std::result::Result::Ok(self)
+        }
+
+        /// Multi-column ILIKE search (optional): only applies when `pattern` is `Some`.
+        #[inline]
+        pub fn ilike_any_opt(
+            self,
+            columns: &[&str],
+            pattern: ::std::option::Option<impl ::core::convert::Into<::std::string::String>>,
+        ) -> pgorm::OrmResult<Self> {
+            match pattern {
+                ::std::option::Option::Some(p) => self.ilike_any(columns, p),
+                ::std::option::Option::None => ::std::result::Result::Ok(self),
+            }
+        }
     }
 }
 
@@ -734,6 +895,15 @@ fn gen_execution_methods(model_name: &syn::Ident, has_joins: bool) -> TokenStrea
         {
             let q = self.build_first_sql();
             q.fetch_opt_as(conn).await
+        }
+
+        /// Check if any matching record exists (efficient, no data returned).
+        pub async fn exists(
+            &self,
+            conn: &impl pgorm::GenericClient,
+        ) -> pgorm::OrmResult<bool> {
+            let q = self.build_first_sql();
+            q.exists(conn).await
         }
     }
 }

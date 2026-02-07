@@ -177,6 +177,83 @@ fn compile_sql_policy() {
 }
 
 #[test]
+fn compile_query_builder_opt_variants() {
+    let _ = || -> OrmResult<()> {
+        type Q = CompileUserQuery;
+
+        // Basic opt variants
+        let _q = CompileUser::query()
+            .eq_opt(Q::name, Some("alice".to_string()))?
+            .eq_opt(Q::name, None::<String>)?
+            .eq_opt_str(Q::name, Some("bob"))?
+            .ne_opt(Q::id, Some(1_i64))?
+            .ne_opt(Q::id, None::<i64>)?
+            .gt_opt(Q::id, Some(10_i64))?
+            .gt_opt(Q::id, None::<i64>)?
+            .lt_opt(Q::id, Some(100_i64))?
+            .lt_opt(Q::id, None::<i64>)?
+            .gte_opt(Q::id, Some(5_i64))?
+            .lte_opt(Q::id, Some(50_i64))?
+            .like_opt(Q::name, Some("%ali%".to_string()))?
+            .like_opt(Q::name, None::<String>)?
+            .ilike_opt(Q::name, Some("%ALI%".to_string()))?
+            .ilike_opt(Q::name, None::<String>)?
+            .in_list_opt(Q::id, Some(vec![1_i64, 2, 3]))?
+            .in_list_opt(Q::id, None::<Vec<i64>>)?
+            .between_opt(Q::id, Some(1_i64), Some(100_i64))?
+            .between_opt(Q::id, None::<i64>, None::<i64>)?;
+        Ok(())
+    };
+}
+
+#[test]
+fn compile_query_builder_ilike_any() {
+    let _ = || -> OrmResult<()> {
+        type Q = CompileUserQuery;
+
+        let _q = CompileUser::query().ilike_any(&[Q::name, Q::email], "%search%")?;
+
+        // opt variant
+        let _q = CompileUser::query()
+            .ilike_any_opt(&[Q::name, Q::email], Some("%search%".to_string()))?
+            .ilike_any_opt(&[Q::name, Q::email], None::<String>)?;
+        Ok(())
+    };
+}
+
+#[test]
+fn compile_query_builder_raw_bind() {
+    let _ = || -> OrmResult<()> {
+        let user_id = 42_i64;
+
+        // Verify raw_bind compiles on query builder
+        let _q = CompileUser::query().raw_bind("(id = ? OR ? > 0)", vec![user_id, user_id]);
+
+        Ok(())
+    };
+}
+
+#[test]
+fn compile_where_expr_raw_bind() {
+    let _ = || -> OrmResult<()> {
+        let expr = WhereExpr::raw_bind(
+            "(user_id = ? OR ? = ANY(collaborators))",
+            vec![42_i64, 42_i64],
+        );
+        let mut q = sql("SELECT * FROM users WHERE ");
+        expr.append_to_sql(&mut q);
+        let sql_str = q.to_sql();
+        assert!(sql_str.contains("$1"), "should contain $1, got: {sql_str}");
+        assert!(sql_str.contains("$2"), "should contain $2, got: {sql_str}");
+        assert!(
+            sql_str.contains("(user_id ="),
+            "should contain template text, got: {sql_str}"
+        );
+        Ok(())
+    };
+}
+
+#[test]
 fn compile_ident_validation() {
     // Valid identifiers
     assert!(pgorm::Ident::parse("user_name").is_ok());

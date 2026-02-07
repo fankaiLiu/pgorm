@@ -47,6 +47,15 @@ pub enum WhereExpr {
     /// **Warning**: This bypasses SQL injection protection. Only use with
     /// trusted, hardcoded SQL strings.
     Raw(String),
+    /// Raw SQL template with parameter bindings.
+    ///
+    /// Each `?` in the template is replaced with `$N` and bound to the
+    /// corresponding parameter. This is safer than `Raw` because values
+    /// are properly parameterized.
+    RawBind {
+        template: String,
+        params: Vec<Arc<dyn ToSql + Send + Sync>>,
+    },
 }
 
 impl WhereExpr {
@@ -77,6 +86,29 @@ impl WhereExpr {
     /// trusted, hardcoded SQL strings.
     pub fn raw(sql: impl Into<String>) -> Self {
         WhereExpr::Raw(sql.into())
+    }
+
+    /// Create a raw SQL expression with parameter bindings.
+    ///
+    /// Each `?` in the template is replaced with `$N` and bound to the
+    /// corresponding parameter. This is safer than [`WhereExpr::raw`] because
+    /// values are properly parameterized.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let expr = WhereExpr::raw_bind(
+    ///     "(user_id = ? OR ? = ANY(collaborators))",
+    ///     vec![user_id, user_id],
+    /// );
+    /// ```
+    pub fn raw_bind<T>(template: impl Into<String>, params: Vec<T>) -> Self
+    where
+        T: ToSql + Send + Sync + 'static,
+    {
+        WhereExpr::RawBind {
+            template: template.into(),
+            params: params.into_iter().map(|p| Arc::new(p) as _).collect(),
+        }
     }
 
     /// Combine this expression with another using AND.
@@ -160,6 +192,15 @@ impl WhereExpr {
             }
             WhereExpr::Raw(s) => {
                 sql.push(s);
+            }
+            WhereExpr::RawBind { template, params } => {
+                let mut param_iter = params.iter();
+                for part in template.split('?') {
+                    sql.push(part);
+                    if let Some(param) = param_iter.next() {
+                        sql.push_bind_value(param.clone());
+                    }
+                }
             }
         }
     }
