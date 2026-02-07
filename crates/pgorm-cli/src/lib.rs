@@ -11,6 +11,7 @@ mod config;
 mod gen_check;
 mod generate;
 mod init;
+mod migrate_cmd;
 mod model_codegen;
 mod model_generate;
 mod queries;
@@ -40,5 +41,6 @@ pub async fn run(args: Vec<String>) -> anyhow::Result<()> {
         cli::Command::Sql(cmd) => match cmd {
             cli::SqlCommand::Check(args) => sql_check::run(args).await,
         },
+        cli::Command::Migrate(cmd) => migrate_cmd::run(cmd).await,
     }
 }

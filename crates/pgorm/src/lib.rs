@@ -91,7 +91,10 @@ pub use error::{OrmError, OrmResult};
 
 // Re-export refinery types for convenience
 #[cfg(feature = "migrate")]
-pub use migrate::{Migration, Report, Runner, Target, embed_migrations};
+pub use migrate::{
+    AppliedMigration, DiskMigration, Migration, MigrationStatus, Report, Runner, SchemaVersion,
+    Target, embed_migrations,
+};
 
 // Connection pooling
 #[cfg(feature = "pool")]

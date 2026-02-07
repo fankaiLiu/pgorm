@@ -17,6 +17,7 @@ anyhow.workspace = true
 glob.workspace = true
 heck.workspace = true
 pg_query.workspace = true
+pgorm = { path = "../pgorm", default-features = false, features = ["migrate"] }
 pgorm-check = { workspace = true, features = ["sql"] }
 chrono.workspace = true
 serde.workspace = true

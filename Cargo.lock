@@ -1352,6 +1352,7 @@ dependencies = [
  "glob",
  "heck",
  "pg_query",
+ "pgorm",
  "pgorm-check",
  "serde",
  "serde_json",

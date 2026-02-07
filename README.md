@@ -723,6 +723,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `transaction_options` | Transactions with isolation/read-only/deferrable config |
 | `savepoint` | Savepoints and nested transactions |
 | `migrate` | SQL migrations with refinery |
+| `migration_toolchain` | File-based migration workflow (`status/up/down/diff`) |
 
 Run any example:
 

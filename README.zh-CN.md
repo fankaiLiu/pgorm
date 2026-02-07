@@ -723,6 +723,7 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `transaction_options` | 事务隔离级别/只读/deferrable 配置 |
 | `savepoint` | 保存点和嵌套事务 |
 | `migrate` | SQL 迁移（refinery） |
+| `migration_toolchain` | 文件式迁移工作流（`status/up/down/diff`） |
 
 运行示例：
 

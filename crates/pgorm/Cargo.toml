@@ -92,6 +92,11 @@ path = "examples/migrate/main.rs"
 required-features = ["migrate", "pool"]
 
 [[example]]
+name = "migration_toolchain"
+path = "examples/migration_toolchain/main.rs"
+required-features = ["migrate"]
+
+[[example]]
 name = "changeset"
 path = "examples/changeset/main.rs"
 

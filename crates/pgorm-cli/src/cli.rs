@@ -10,6 +10,13 @@ pub enum HelpTopic {
     Model,
     Sql,
     SqlCheck,
+    Migrate,
+    MigrateInit,
+    MigrateNew,
+    MigrateUp,
+    MigrateDown,
+    MigrateStatus,
+    MigrateDiff,
 }
 
 #[derive(Debug, Clone)]
@@ -18,6 +25,7 @@ pub enum Command {
     Gen(GenCommand),
     Model(ModelRunArgs),
     Sql(SqlCommand),
+    Migrate(MigrateCommand),
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +85,62 @@ pub struct SqlCheckArgs {
     pub files: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub enum MigrateCommand {
+    Init(MigrateInitArgs),
+    New(MigrateNewArgs),
+    Up(MigrateUpArgs),
+    Down(MigrateDownArgs),
+    Status(MigrateStatusArgs),
+    Diff(MigrateDiffArgs),
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrateInitArgs {
+    pub dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrateNewArgs {
+    pub dir: PathBuf,
+    pub name: String,
+    pub with_down: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrateUpArgs {
+    pub config: PathBuf,
+    pub database: Option<String>,
+    pub dir: Option<PathBuf>,
+    pub to: Option<i64>,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrateDownArgs {
+    pub config: PathBuf,
+    pub database: Option<String>,
+    pub dir: Option<PathBuf>,
+    pub to: Option<i64>,
+    pub steps: Option<usize>,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrateStatusArgs {
+    pub config: PathBuf,
+    pub database: Option<String>,
+    pub dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrateDiffArgs {
+    pub config: PathBuf,
+    pub database: Option<String>,
+    pub dir: Option<PathBuf>,
+    pub output: Option<PathBuf>,
+}
+
 pub fn parse_args(args: &[String]) -> anyhow::Result<Command> {
     let mut it = args.iter().skip(1);
     let Some(first) = it.next() else {
@@ -88,6 +152,7 @@ pub fn parse_args(args: &[String]) -> anyhow::Result<Command> {
         "gen" => parse_gen(it.map(|s| s.as_str())),
         "model" => parse_model(it.map(|s| s.as_str())),
         "sql" => parse_sql(it.map(|s| s.as_str())),
+        "migrate" => parse_migrate(it.map(|s| s.as_str())),
         _ => anyhow::bail!("unknown command: {first}"),
     }
 }
@@ -321,12 +386,208 @@ fn parse_sql<'a>(mut it: impl Iterator<Item = &'a str>) -> anyhow::Result<Comman
     Ok(Command::Sql(cmd))
 }
 
+fn parse_migrate<'a>(mut it: impl Iterator<Item = &'a str>) -> anyhow::Result<Command> {
+    let mut subcmd: Option<&str> = None;
+
+    let mut config = PathBuf::from("pgorm.toml");
+    let mut database: Option<String> = None;
+    let mut dir: Option<PathBuf> = None;
+    let mut to: Option<i64> = None;
+    let mut steps: Option<usize> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut dry_run = false;
+    let mut with_down = true;
+    let mut new_name: Option<String> = None;
+
+    while let Some(token) = it.next() {
+        match token {
+            "-h" | "--help" => {
+                return Ok(Command::Help(match subcmd {
+                    None => HelpTopic::Migrate,
+                    Some("init") => HelpTopic::MigrateInit,
+                    Some("new") => HelpTopic::MigrateNew,
+                    Some("up") => HelpTopic::MigrateUp,
+                    Some("down") => HelpTopic::MigrateDown,
+                    Some("status") => HelpTopic::MigrateStatus,
+                    Some("diff") => HelpTopic::MigrateDiff,
+                    Some(other) => anyhow::bail!("unknown subcommand: {other}"),
+                }));
+            }
+            "init" | "new" | "up" | "down" | "status" | "diff" if subcmd.is_none() => {
+                subcmd = Some(token);
+            }
+            "--config" => {
+                let Some(v) = it.next() else {
+                    anyhow::bail!("--config requires a value");
+                };
+                config = PathBuf::from(v);
+            }
+            _ if token.starts_with("--config=") => {
+                config = PathBuf::from(token.trim_start_matches("--config="));
+            }
+            "--database" => {
+                let Some(v) = it.next() else {
+                    anyhow::bail!("--database requires a value");
+                };
+                database = Some(v.to_string());
+            }
+            _ if token.starts_with("--database=") => {
+                database = Some(token.trim_start_matches("--database=").to_string());
+            }
+            "--dir" => {
+                let Some(v) = it.next() else {
+                    anyhow::bail!("--dir requires a value");
+                };
+                dir = Some(PathBuf::from(v));
+            }
+            _ if token.starts_with("--dir=") => {
+                dir = Some(PathBuf::from(token.trim_start_matches("--dir=")));
+            }
+            "--to" => {
+                let Some(v) = it.next() else {
+                    anyhow::bail!("--to requires a value");
+                };
+                to = Some(
+                    v.parse::<i64>()
+                        .map_err(|_| anyhow::anyhow!("invalid --to value: {v}"))?,
+                );
+            }
+            _ if token.starts_with("--to=") => {
+                let raw = token.trim_start_matches("--to=");
+                to = Some(
+                    raw.parse::<i64>()
+                        .map_err(|_| anyhow::anyhow!("invalid --to value: {raw}"))?,
+                );
+            }
+            "--steps" => {
+                let Some(v) = it.next() else {
+                    anyhow::bail!("--steps requires a value");
+                };
+                steps = Some(
+                    v.parse::<usize>()
+                        .map_err(|_| anyhow::anyhow!("invalid --steps value: {v}"))?,
+                );
+            }
+            _ if token.starts_with("--steps=") => {
+                let raw = token.trim_start_matches("--steps=");
+                steps = Some(
+                    raw.parse::<usize>()
+                        .map_err(|_| anyhow::anyhow!("invalid --steps value: {raw}"))?,
+                );
+            }
+            "--output" => {
+                let Some(v) = it.next() else {
+                    anyhow::bail!("--output requires a value");
+                };
+                output = Some(PathBuf::from(v));
+            }
+            _ if token.starts_with("--output=") => {
+                output = Some(PathBuf::from(token.trim_start_matches("--output=")));
+            }
+            "--dry-run" => dry_run = true,
+            "--no-down" => with_down = false,
+            other if other.starts_with('-') => anyhow::bail!("unknown argument: {other}"),
+            other => {
+                if matches!(subcmd, Some("new")) && new_name.is_none() {
+                    new_name = Some(other.to_string());
+                } else {
+                    anyhow::bail!("unexpected positional argument: {other}");
+                }
+            }
+        }
+    }
+
+    let cmd = match subcmd {
+        None => return Ok(Command::Help(HelpTopic::Migrate)),
+        Some("init") => {
+            if new_name.is_some() || to.is_some() || steps.is_some() || output.is_some() || dry_run
+            {
+                anyhow::bail!("invalid options for `migrate init`");
+            }
+            MigrateCommand::Init(MigrateInitArgs {
+                dir: dir.unwrap_or_else(|| PathBuf::from("migrations")),
+            })
+        }
+        Some("new") => {
+            if to.is_some() || steps.is_some() || output.is_some() || dry_run {
+                anyhow::bail!("invalid options for `migrate new`");
+            }
+            let Some(name) = new_name else {
+                anyhow::bail!("missing migration name: usage `pgorm migrate new <name>`");
+            };
+            MigrateCommand::New(MigrateNewArgs {
+                dir: dir.unwrap_or_else(|| PathBuf::from("migrations")),
+                name,
+                with_down,
+            })
+        }
+        Some("up") => {
+            if steps.is_some() || output.is_some() || new_name.is_some() || !with_down {
+                anyhow::bail!("invalid options for `migrate up`");
+            }
+            MigrateCommand::Up(MigrateUpArgs {
+                config,
+                database,
+                dir,
+                to,
+                dry_run,
+            })
+        }
+        Some("down") => {
+            if output.is_some() || new_name.is_some() || !with_down {
+                anyhow::bail!("invalid options for `migrate down`");
+            }
+            if to.is_some() && steps.is_some() {
+                anyhow::bail!("`migrate down` accepts either --to or --steps, not both");
+            }
+            MigrateCommand::Down(MigrateDownArgs {
+                config,
+                database,
+                dir,
+                to,
+                steps,
+                dry_run,
+            })
+        }
+        Some("status") => {
+            if to.is_some()
+                || steps.is_some()
+                || output.is_some()
+                || dry_run
+                || new_name.is_some()
+                || !with_down
+            {
+                anyhow::bail!("invalid options for `migrate status`");
+            }
+            MigrateCommand::Status(MigrateStatusArgs {
+                config,
+                database,
+                dir,
+            })
+        }
+        Some("diff") => {
+            if to.is_some() || steps.is_some() || dry_run || new_name.is_some() || !with_down {
+                anyhow::bail!("invalid options for `migrate diff`");
+            }
+            MigrateCommand::Diff(MigrateDiffArgs {
+                config,
+                database,
+                dir,
+                output,
+            })
+        }
+        Some(other) => anyhow::bail!("unknown subcommand: {other}"),
+    };
+
+    Ok(Command::Migrate(cmd))
+}
+
 pub fn print_help(topic: HelpTopic) {
     match topic {
         HelpTopic::Root => {
             println!(
                 "\
-pgorm - SQL codegen CLI for pgorm
+pgorm - SQL codegen and migration CLI for pgorm
 
 USAGE:
   pgorm <COMMAND> [OPTIONS]
@@ -335,8 +596,9 @@ COMMANDS:
   gen           Generate Rust from SQL (sqlc-like)
   model         Generate Rust models from schema
   sql           Check raw SQL against schema
+  migrate       Migration workflow (init/new/up/down/status/diff)
 
-Run `pgorm gen --help`, `pgorm model --help`, or `pgorm sql --help` for more."
+Run `pgorm <command> --help` for more."
             );
         }
         HelpTopic::Gen => {
@@ -447,6 +709,104 @@ OPTIONS:
   -h, --help            Print help"
             );
         }
+        HelpTopic::Migrate => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate <SUBCOMMAND> [OPTIONS]
+
+SUBCOMMANDS:
+  init                  Create migrations directory
+  new <name>            Create migration skeleton files
+  up                    Apply pending up migrations
+  down                  Roll back migrations
+  status                Show local/applied/pending migrations
+  diff                  Render pending migration SQL draft
+
+Run `pgorm migrate <subcommand> --help` for more."
+            );
+        }
+        HelpTopic::MigrateInit => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate init [--dir <DIR>]
+
+OPTIONS:
+  --dir <DIR>           Migration directory (default: migrations)
+  -h, --help            Print help"
+            );
+        }
+        HelpTopic::MigrateNew => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate new <name> [OPTIONS]
+
+OPTIONS:
+  --dir <DIR>           Migration directory (default: migrations)
+  --no-down             Create only up migration file
+  -h, --help            Print help"
+            );
+        }
+        HelpTopic::MigrateUp => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate up [OPTIONS]
+
+OPTIONS:
+  --config <FILE>       Config file path (default: pgorm.toml)
+  --database <URL>      Database URL (overrides config)
+  --dir <DIR>           Migration directory (default: migrations)
+  --to <VERSION>        Apply up to target version (inclusive)
+  --dry-run             Print migrations that would be applied
+  -h, --help            Print help"
+            );
+        }
+        HelpTopic::MigrateDown => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate down [OPTIONS]
+
+OPTIONS:
+  --config <FILE>       Config file path (default: pgorm.toml)
+  --database <URL>      Database URL (overrides config)
+  --dir <DIR>           Migration directory (default: migrations)
+  --steps <N>           Roll back latest N migrations (default: 1)
+  --to <VERSION>        Roll back until target version
+  --dry-run             Print migrations that would be rolled back
+  -h, --help            Print help"
+            );
+        }
+        HelpTopic::MigrateStatus => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate status [OPTIONS]
+
+OPTIONS:
+  --config <FILE>       Config file path (default: pgorm.toml)
+  --database <URL>      Database URL (overrides config)
+  --dir <DIR>           Migration directory (default: migrations)
+  -h, --help            Print help"
+            );
+        }
+        HelpTopic::MigrateDiff => {
+            println!(
+                "\
+USAGE:
+  pgorm migrate diff [OPTIONS]
+
+OPTIONS:
+  --config <FILE>       Config file path (default: pgorm.toml)
+  --database <URL>      Database URL (overrides config)
+  --dir <DIR>           Migration directory (default: migrations)
+  --output <FILE>       Write draft SQL to file (default: stdout)
+  -h, --help            Print help"
+            );
+        }
     }
 }
 
@@ -478,5 +838,44 @@ mod tests {
             sql.files,
             vec![PathBuf::from("a.sql"), PathBuf::from("b.sql")]
         );
+    }
+
+    #[test]
+    fn parse_migrate_new() {
+        let args = vec![
+            "pgorm".to_string(),
+            "migrate".to_string(),
+            "new".to_string(),
+            "add_users".to_string(),
+            "--dir".to_string(),
+            "db/migrations".to_string(),
+        ];
+
+        let cmd = parse_args(&args).unwrap();
+        let Command::Migrate(MigrateCommand::New(m)) = cmd else {
+            panic!("expected migrate new");
+        };
+        assert_eq!(m.name, "add_users");
+        assert_eq!(m.dir, PathBuf::from("db/migrations"));
+        assert!(m.with_down);
+    }
+
+    #[test]
+    fn parse_migrate_down_steps() {
+        let args = vec![
+            "pgorm".to_string(),
+            "migrate".to_string(),
+            "down".to_string(),
+            "--steps=3".to_string(),
+            "--dry-run".to_string(),
+        ];
+
+        let cmd = parse_args(&args).unwrap();
+        let Command::Migrate(MigrateCommand::Down(m)) = cmd else {
+            panic!("expected migrate down");
+        };
+        assert_eq!(m.steps, Some(3));
+        assert!(m.dry_run);
+        assert_eq!(m.to, None);
     }
 }
