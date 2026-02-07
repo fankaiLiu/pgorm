@@ -184,3 +184,7 @@ path = "examples/bulk_operations/main.rs"
 [[example]]
 name = "cte_queries"
 path = "examples/cte_queries/main.rs"
+
+[[example]]
+name = "composite_primary_key"
+path = "examples/composite_primary_key/main.rs"

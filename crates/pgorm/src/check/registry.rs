@@ -16,9 +16,19 @@ pub trait TableMeta {
     /// List of column names in this table.
     fn columns() -> &'static [&'static str];
 
-    /// The primary key column name, if any.
+    /// Primary key column names in declaration order.
+    ///
+    /// For single-column primary keys, return a slice with one element.
+    /// For composite primary keys, return all key columns.
+    fn primary_keys() -> &'static [&'static str] {
+        &[]
+    }
+
+    /// Backward-compatible single primary key accessor.
+    ///
+    /// Returns the first element from [`Self::primary_keys()`] by default.
     fn primary_key() -> Option<&'static str> {
-        None
+        Self::primary_keys().first().copied()
     }
 }
 
@@ -27,7 +37,7 @@ pub trait TableMeta {
 pub struct ColumnMeta {
     /// Column name.
     pub name: String,
-    /// Whether this column is the primary key.
+    /// Whether this column is part of the primary key.
     pub is_primary_key: bool,
 }
 
@@ -40,6 +50,12 @@ pub struct TableSchema {
     pub name: String,
     /// Column metadata.
     pub columns: Vec<ColumnMeta>,
+}
+
+fn mark_primary_keys(cols: &mut [ColumnMeta], primary_keys: &[&str]) {
+    for col in cols {
+        col.is_primary_key = primary_keys.iter().any(|pk| *pk == col.name);
+    }
 }
 
 impl TableSchema {
@@ -71,19 +87,34 @@ impl TableSchema {
         self
     }
 
-    /// Set the primary key column.
-    pub fn with_primary_key(mut self, pk: &str) -> Self {
-        for col in &mut self.columns {
-            col.is_primary_key = col.name == pk;
+    /// Return primary key columns in this table.
+    pub fn primary_keys(&self) -> Vec<&str> {
+        self.columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .map(|c| c.name.as_str())
+            .collect()
+    }
+
+    /// Set primary key columns.
+    pub fn with_primary_keys(mut self, pks: &[&str]) -> Self {
+        mark_primary_keys(&mut self.columns, pks);
+
+        for pk in pks {
+            if !self.columns.iter().any(|c| c.name == *pk) {
+                self.columns.push(ColumnMeta {
+                    name: (*pk).to_string(),
+                    is_primary_key: true,
+                });
+            }
         }
-        // If the primary key column doesn't exist, add it
-        if !self.columns.iter().any(|c| c.name == pk) {
-            self.columns.push(ColumnMeta {
-                name: pk.to_string(),
-                is_primary_key: true,
-            });
-        }
+
         self
+    }
+
+    /// Set a single primary key column.
+    pub fn with_primary_key(self, pk: &str) -> Self {
+        self.with_primary_keys(&[pk])
     }
 
     /// Check if this table has a column with the given name.
@@ -125,11 +156,16 @@ impl SchemaRegistry {
         let schema_name = T::schema_name().to_string();
         let table_name = T::table_name().to_string();
         let columns = T::columns();
-        let pk = T::primary_key();
+        let mut primary_keys = T::primary_keys().to_vec();
+        if primary_keys.is_empty() {
+            if let Some(pk) = T::primary_key() {
+                primary_keys.push(pk);
+            }
+        }
 
         let mut table = TableSchema::new(&schema_name, &table_name);
         for col in columns {
-            let is_pk = pk == Some(*col);
+            let is_pk = primary_keys.iter().any(|pk| *pk == *col);
             table.add_column(*col, is_pk);
         }
 

@@ -5,7 +5,9 @@
 
 #![allow(dead_code)]
 
-use pgorm::{FromRow, InsertModel, Model, ModelPk, UpdateModel, WriteReport, WriteStepReport};
+use pgorm::{
+    FromRow, InsertModel, Model, ModelPk, TableMeta, UpdateModel, WriteReport, WriteStepReport,
+};
 
 // ============================================
 // Test: Basic InsertModel with has_many
@@ -108,6 +110,23 @@ struct Product {
     id: i64,
     name: String,
     category_id: Option<i64>,
+}
+
+#[derive(Debug, FromRow, Model)]
+#[orm(table = "enrollments")]
+struct Enrollment {
+    #[orm(id)]
+    user_id: i64,
+    #[orm(id)]
+    course_id: i64,
+    status: String,
+}
+
+async fn _composite_pk_api_compiles(conn: &impl pgorm::GenericClient) -> pgorm::OrmResult<()> {
+    let _ = Enrollment::select_by_pk(conn, 1_i64, 2_i64).await?;
+    let _ = Enrollment::delete_by_pk(conn, 1_i64, 2_i64).await?;
+    let _: Enrollment = Enrollment::delete_by_pk_returning(conn, 1_i64, 2_i64).await?;
+    Ok(())
 }
 
 // Product with belongs_to for category
@@ -376,6 +395,25 @@ fn test_model_pk_trait() {
     // ModelPk::Id associated type is i64
     fn assert_model_pk<M: ModelPk<Id = i64>>(_: &M) {}
     assert_model_pk(&order);
+}
+
+#[test]
+fn test_composite_pk_metadata_and_sql() {
+    assert_eq!(Enrollment::IDS, &["user_id", "course_id"]);
+    assert_eq!(
+        <Enrollment as TableMeta>::primary_keys(),
+        &["user_id", "course_id"]
+    );
+    assert_eq!(<Enrollment as TableMeta>::primary_key(), Some("user_id"));
+
+    let generated = Enrollment::generated_sql();
+    assert!(generated.iter().any(|(name, _)| *name == "select_by_pk"));
+    assert!(generated.iter().any(|(name, _)| *name == "delete_by_pk"));
+    assert!(
+        generated
+            .iter()
+            .any(|(name, _)| *name == "delete_by_pk_returning")
+    );
 }
 
 // ============================================

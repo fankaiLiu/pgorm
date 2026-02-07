@@ -707,6 +707,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `pg_enum` | PostgreSQL ENUM with PgEnum derive |
 | `pg_range` | Range types (tstzrange, daterange, int4range) |
 | `pg_composite` | PostgreSQL composite types with PgComposite derive |
+| `composite_primary_key` | Composite primary key models (`select_by_pk`, `delete_by_pk`) |
 | `savepoint` | Savepoints and nested transactions |
 | `migrate` | SQL migrations with refinery |
 

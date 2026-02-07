@@ -707,6 +707,7 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `pg_enum` | PostgreSQL ENUM 派生宏 |
 | `pg_range` | 范围类型（tstzrange、daterange、int4range） |
 | `pg_composite` | PostgreSQL 复合类型派生宏 |
+| `composite_primary_key` | 复合主键模型（`select_by_pk`、`delete_by_pk`） |
 | `savepoint` | 保存点和嵌套事务 |
 | `migrate` | SQL 迁移（refinery） |
 

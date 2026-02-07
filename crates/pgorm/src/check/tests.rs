@@ -32,6 +32,22 @@ impl TableMeta for TestOrder {
     }
 }
 
+struct TestEnrollment;
+
+impl TableMeta for TestEnrollment {
+    fn table_name() -> &'static str {
+        "enrollments"
+    }
+
+    fn columns() -> &'static [&'static str] {
+        &["user_id", "course_id", "created_at"]
+    }
+
+    fn primary_keys() -> &'static [&'static str] {
+        &["user_id", "course_id"]
+    }
+}
+
 #[test]
 fn test_register_table() {
     let mut registry = SchemaRegistry::new();
@@ -69,6 +85,28 @@ fn test_table_schema_builder() {
 
     let pk_col = table.columns.iter().find(|c| c.is_primary_key).unwrap();
     assert_eq!(pk_col.name, "id");
+}
+
+#[test]
+fn test_table_schema_builder_composite_pk() {
+    let table = TableSchema::new("public", "enrollments")
+        .with_columns(&["user_id", "course_id", "created_at"])
+        .with_primary_keys(&["user_id", "course_id"]);
+
+    let mut pks = table.primary_keys();
+    pks.sort_unstable();
+    assert_eq!(pks, vec!["course_id", "user_id"]);
+}
+
+#[test]
+fn test_register_table_with_composite_pk() {
+    let mut registry = SchemaRegistry::new();
+    registry.register::<TestEnrollment>();
+
+    let table = registry.get_table("public", "enrollments").unwrap();
+    let mut pks = table.primary_keys();
+    pks.sort_unstable();
+    assert_eq!(pks, vec!["course_id", "user_id"]);
 }
 
 #[test]

@@ -58,9 +58,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let mut column_names = Vec::with_capacity(fields.len());
     let mut columns_for_alias = Vec::with_capacity(fields.len());
     let mut qualified_columns = Vec::with_capacity(fields.len()); // table.column AS field_name format
-    let mut id_column: Option<String> = None;
-    let mut id_field_type: Option<&syn::Type> = None;
-    let mut id_field_ident: Option<syn::Ident> = None;
+    let mut id_fields: Vec<(String, &syn::Type, syn::Ident)> = Vec::new();
     let mut fk_field_types: HashMap<String, &syn::Type> = HashMap::with_capacity(fields.len() * 2);
     let mut fk_field_idents: HashMap<String, syn::Ident> = HashMap::with_capacity(fields.len() * 2);
     let mut query_fields: Vec<QueryFieldInfo> = Vec::with_capacity(fields.len());
@@ -100,9 +98,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
         qualified_columns.push(qualified);
 
         if is_id {
-            id_column = Some(column_name.clone());
-            id_field_type = Some(&field.ty);
-            id_field_ident = Some(field_ident.clone());
+            if !is_main_table {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "#[orm(id)] must refer to a field from the model's main table",
+                ));
+            }
+            id_fields.push((column_name.clone(), &field.ty, field_ident.clone()));
         }
 
         // Track fields for belongs_to foreign key lookups.
@@ -141,18 +143,24 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     // Build JOIN clause string
     let join_sql = build_join_sql(&join_clauses);
 
+    let id_columns: Vec<String> = id_fields.iter().map(|(col, _, _)| col.clone()).collect();
+    let ids_const = quote! { pub const IDS: &'static [&'static str] = &[#(#id_columns),*]; };
+
+    let (id_column, id_field_type, id_field_ident) = if id_fields.len() == 1 {
+        let (col, ty, ident) = &id_fields[0];
+        (Some(col.clone()), Some(*ty), Some(ident.clone()))
+    } else {
+        (None, None, None)
+    };
+
     let id_const = if let Some(id) = &id_column {
         quote! { pub const ID: &'static str = #id; }
     } else {
         quote! {}
     };
 
-    // Generate primary key option for TableMeta
-    let pk_option = if let Some(id) = &id_column {
-        quote! { Some(#id) }
-    } else {
-        quote! { None }
-    };
+    let select_by_pk_method = generate_select_by_pk_method(&table_name, &id_fields, has_joins);
+    let delete_by_pk_methods = generate_delete_by_pk_methods(&table_name, &id_fields);
 
     // Generate select_one method only if there's an ID field
     let select_one_method =
@@ -191,7 +199,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let select_all_method = generate_select_all_method(has_joins);
 
     // Generate generated_sql method
-    let generated_sql_method = generate_generated_sql_method(&id_column);
+    let generated_sql_method = generate_generated_sql_method(&table_name, &id_columns);
 
     // Generate Query struct for dynamic queries
     let query_struct = generate_query_struct(name, &table_name, &query_fields, has_joins);
@@ -215,6 +223,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         impl #name {
             pub const TABLE: &'static str = #table_name;
+            #ids_const
             #id_const
             pub const SELECT_LIST: &'static str = #select_list;
             #join_const
@@ -229,7 +238,11 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
             #select_all_method
 
+            #select_by_pk_method
+
             #select_one_method
+
+            #delete_by_pk_methods
 
             #delete_by_id_methods
 
@@ -253,8 +266,12 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 &[#(#column_names),*]
             }
 
+            fn primary_keys() -> &'static [&'static str] {
+                Self::IDS
+            }
+
             fn primary_key() -> Option<&'static str> {
-                #pk_option
+                Self::IDS.first().copied()
             }
         }
 
@@ -289,6 +306,140 @@ fn build_join_sql(join_clauses: &[JoinClause]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn pk_params_and_where(
+    table_name: &str,
+    id_fields: &[(String, &syn::Type, syn::Ident)],
+    qualify: bool,
+) -> (Vec<syn::Ident>, Vec<TokenStream>, String) {
+    let mut params = Vec::with_capacity(id_fields.len());
+    let mut defs = Vec::with_capacity(id_fields.len());
+    let mut where_parts = Vec::with_capacity(id_fields.len());
+
+    for (idx, (id_col, id_ty, id_ident)) in id_fields.iter().enumerate() {
+        let param_ident = format_ident!("pk_{}", id_ident);
+        params.push(param_ident.clone());
+        defs.push(quote! { #param_ident: #id_ty });
+
+        let lhs = if qualify {
+            format!("{table_name}.{id_col}")
+        } else {
+            id_col.clone()
+        };
+        where_parts.push(format!("{lhs} = ${}", idx + 1));
+    }
+
+    (params, defs, where_parts.join(" AND "))
+}
+
+/// Generate select_by_pk method when one or more ID fields exist.
+fn generate_select_by_pk_method(
+    table_name: &str,
+    id_fields: &[(String, &syn::Type, syn::Ident)],
+    has_joins: bool,
+) -> TokenStream {
+    if id_fields.is_empty() {
+        return quote! {};
+    }
+
+    let (param_idents, param_defs, where_clause) = pk_params_and_where(table_name, id_fields, true);
+    let params = quote! { &[#(&#param_idents),*] };
+
+    if has_joins {
+        quote! {
+            /// Fetch a single record by primary key columns.
+            ///
+            /// Returns `OrmError::NotFound` if no record is found.
+            pub async fn select_by_pk(
+                conn: &impl pgorm::GenericClient,
+                #(#param_defs),*
+            ) -> pgorm::OrmResult<Self>
+            where
+                Self: pgorm::FromRow,
+            {
+                let sql = ::std::format!(
+                    "SELECT {} FROM {} {} WHERE {}",
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE,
+                    #where_clause,
+                );
+                let row = conn.query_one(&sql, #params).await?;
+                pgorm::FromRow::from_row(&row)
+            }
+        }
+    } else {
+        quote! {
+            /// Fetch a single record by primary key columns.
+            ///
+            /// Returns `OrmError::NotFound` if no record is found.
+            pub async fn select_by_pk(
+                conn: &impl pgorm::GenericClient,
+                #(#param_defs),*
+            ) -> pgorm::OrmResult<Self>
+            where
+                Self: pgorm::FromRow,
+            {
+                let sql = ::std::format!(
+                    "SELECT {} FROM {} WHERE {}",
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    #where_clause,
+                );
+                let row = conn.query_one(&sql, #params).await?;
+                pgorm::FromRow::from_row(&row)
+            }
+        }
+    }
+}
+
+/// Generate delete_by_pk methods when one or more ID fields exist.
+fn generate_delete_by_pk_methods(
+    table_name: &str,
+    id_fields: &[(String, &syn::Type, syn::Ident)],
+) -> TokenStream {
+    if id_fields.is_empty() {
+        return quote! {};
+    }
+
+    let (param_idents, param_defs, where_clause) = pk_params_and_where(table_name, id_fields, true);
+    let params = quote! { &[#(&#param_idents),*] };
+
+    quote! {
+        /// Delete a single record by primary key columns.
+        ///
+        /// Returns the number of affected rows (0 or 1).
+        pub async fn delete_by_pk(
+            conn: &impl pgorm::GenericClient,
+            #(#param_defs),*
+        ) -> pgorm::OrmResult<u64> {
+            let sql = ::std::format!("DELETE FROM {} WHERE {}", Self::TABLE, #where_clause);
+            conn.execute(&sql, #params).await
+        }
+
+        /// Delete a single record by primary key columns and return the deleted row.
+        ///
+        /// Returns `OrmError::NotFound` if no record is found.
+        pub async fn delete_by_pk_returning(
+            conn: &impl pgorm::GenericClient,
+            #(#param_defs),*
+        ) -> pgorm::OrmResult<Self>
+        where
+            Self: pgorm::FromRow,
+        {
+            let sql = ::std::format!(
+                "WITH {table} AS (DELETE FROM {table} WHERE {where_clause} RETURNING *) \
+    SELECT {} FROM {table} {}",
+                Self::SELECT_LIST,
+                Self::JOIN_CLAUSE,
+                table = Self::TABLE,
+                where_clause = #where_clause,
+            );
+            let row = conn.query_one(&sql, #params).await?;
+            pgorm::FromRow::from_row(&row)
+        }
+    }
 }
 
 /// Generate select_one method if ID field exists.
@@ -1364,8 +1515,64 @@ fn generate_select_all_method(has_joins: bool) -> TokenStream {
 }
 
 /// Generate generated_sql and check_schema methods.
-fn generate_generated_sql_method(id_column: &Option<String>) -> TokenStream {
-    if let Some(id_col) = id_column {
+fn generate_generated_sql_method(table_name: &str, id_columns: &[String]) -> TokenStream {
+    if !id_columns.is_empty() {
+        let where_clause = id_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col)| format!("{table_name}.{col} = ${}", i + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let where_clause_unqualified = id_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col)| format!("{col} = ${}", i + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let single_id_col = if id_columns.len() == 1 {
+            Some(id_columns[0].clone())
+        } else {
+            None
+        };
+
+        let single_id_sql = if let Some(id_col) = single_id_col {
+            quote! {
+                // select_one (single id compatibility)
+                let select_one = ::std::format!(
+                    "SELECT {} FROM {} {} WHERE {}.{} = $1",
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE,
+                    Self::TABLE,
+                    #id_col
+                ).trim().to_string();
+                sqls.push(("select_one", select_one));
+
+                // delete_by_id (single id compatibility)
+                let delete_by_id = ::std::format!(
+                    "DELETE FROM {} WHERE {} = $1",
+                    Self::TABLE,
+                    #id_col
+                );
+                sqls.push(("delete_by_id", delete_by_id));
+
+                // delete_by_id_returning (single id compatibility)
+                let delete_returning = ::std::format!(
+                    "WITH {} AS (DELETE FROM {} WHERE {}.{} = $1 RETURNING *) SELECT {} FROM {} {}",
+                    Self::TABLE,
+                    Self::TABLE,
+                    Self::TABLE,
+                    #id_col,
+                    Self::SELECT_LIST,
+                    Self::TABLE,
+                    Self::JOIN_CLAUSE
+                ).trim().to_string();
+                sqls.push(("delete_by_id_returning", delete_returning));
+            }
+        } else {
+            quote! {}
+        };
+
         quote! {
             /// Returns all SQL statements this model generates.
             ///
@@ -1383,37 +1590,37 @@ fn generate_generated_sql_method(id_column: &Option<String>) -> TokenStream {
                 ).trim().to_string();
                 sqls.push(("select_all", select_all));
 
-                // select_one (by id)
-                let select_one = ::std::format!(
-                    "SELECT {} FROM {} {} WHERE {}.{} = $1",
+                // select_by_pk
+                let select_by_pk = ::std::format!(
+                    "SELECT {} FROM {} {} WHERE {}",
                     Self::SELECT_LIST,
                     Self::TABLE,
                     Self::JOIN_CLAUSE,
-                    Self::TABLE,
-                    #id_col
+                    #where_clause
                 ).trim().to_string();
-                sqls.push(("select_one", select_one));
+                sqls.push(("select_by_pk", select_by_pk));
 
-                // delete_by_id
-                let delete_by_id = ::std::format!(
-                    "DELETE FROM {} WHERE {} = $1",
+                // delete_by_pk
+                let delete_by_pk = ::std::format!(
+                    "DELETE FROM {} WHERE {}",
                     Self::TABLE,
-                    #id_col
+                    #where_clause_unqualified
                 );
-                sqls.push(("delete_by_id", delete_by_id));
+                sqls.push(("delete_by_pk", delete_by_pk));
 
-                // delete_by_id_returning
-                let delete_returning = ::std::format!(
-                    "WITH {} AS (DELETE FROM {} WHERE {}.{} = $1 RETURNING *) SELECT {} FROM {} {}",
+                // delete_by_pk_returning
+                let delete_by_pk_returning = ::std::format!(
+                    "WITH {} AS (DELETE FROM {} WHERE {} RETURNING *) SELECT {} FROM {} {}",
                     Self::TABLE,
                     Self::TABLE,
-                    Self::TABLE,
-                    #id_col,
+                    #where_clause,
                     Self::SELECT_LIST,
                     Self::TABLE,
                     Self::JOIN_CLAUSE
                 ).trim().to_string();
-                sqls.push(("delete_by_id_returning", delete_returning));
+                sqls.push(("delete_by_pk_returning", delete_by_pk_returning));
+
+                #single_id_sql
 
                 sqls
             }
