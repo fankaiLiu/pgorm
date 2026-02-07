@@ -2,7 +2,7 @@
 
 pgorm is a **model-definition-first, AI-friendly PostgreSQL ORM** for Rust. It generates queries from your model definitions, provides runtime SQL checking for AI-generated queries, and bundles monitoring, connection pooling, and statement caching into a single `PgClient` wrapper.
 
-- **Version:** 0.2.0
+- **Version:** 0.3.0
 - **MSRV:** Rust 1.88+
 - **Edition:** 2024
 
@@ -10,7 +10,7 @@ pgorm is a **model-definition-first, AI-friendly PostgreSQL ORM** for Rust. It g
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 ```
 
 ## Define a Model

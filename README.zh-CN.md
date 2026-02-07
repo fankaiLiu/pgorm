@@ -48,14 +48,14 @@
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 ```
 
 默认 feature（`pool`、`derive`、`check`、`validate`）覆盖大部分场景。
 最小构建（仅 SQL 构建器 + 行映射）：
 
 ```toml
-pgorm = { version = "0.2.0", default-features = false }
+pgorm = { version = "0.3.0", default-features = false }
 ```
 
 ## 快速上手

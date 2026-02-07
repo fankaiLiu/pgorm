@@ -6,14 +6,14 @@ Add pgorm to your project:
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 ```
 
 Default features (`pool`, `derive`, `check`, `validate`) cover most use cases. For a minimal build with only the SQL builder and row mapping:
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", default-features = false }
+pgorm = { version = "0.3.0", default-features = false }
 ```
 
 ## Rust Toolchain
@@ -47,14 +47,14 @@ To enable specific features:
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["tracing", "rust_decimal"] }
+pgorm = { version = "0.3.0", features = ["tracing", "rust_decimal"] }
 ```
 
 To enable all extra type support at once:
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["extra_types"] }
+pgorm = { version = "0.3.0", features = ["extra_types"] }
 ```
 
 ## Re-exports
@@ -70,7 +70,7 @@ When you need the full `tokio-postgres` API (e.g., for raw connections without t
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 tokio-postgres = "0.7"
 ```
 
@@ -80,7 +80,7 @@ If you only need the SQL builder (`sql()`, `query()`) and row mapping (`FromRow`
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", default-features = false }
+pgorm = { version = "0.3.0", default-features = false }
 ```
 
 This gives you the smallest dependency footprint while retaining the core query API.

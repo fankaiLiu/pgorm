@@ -14,10 +14,10 @@ The `derive` and `validate` features must be enabled (both are included in defau
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 
 # If you disabled defaults:
-# pgorm = { version = "0.2.0", features = ["derive", "validate"] }
+# pgorm = { version = "0.3.0", features = ["derive", "validate"] }
 ```
 
 ## 1. Generate Input Structs with `#[orm(input)]`

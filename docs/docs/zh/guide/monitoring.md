@@ -193,7 +193,7 @@ match pgorm::query("DELETE FROM items")
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["tracing"] }
+pgorm = { version = "0.3.0", features = ["tracing"] }
 ```
 
 然后添加 `TracingSqlHook`：

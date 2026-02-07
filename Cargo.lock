@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bit-vec",
  "bytes",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm-check"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1362,7 +1362,7 @@ dependencies = [
 
 [[package]]
 name = "pgorm-derive"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "heck",
  "proc-macro2",

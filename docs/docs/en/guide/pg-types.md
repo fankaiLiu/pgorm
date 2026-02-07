@@ -325,7 +325,7 @@ Enable all at once:
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["extra_types"] }
+pgorm = { version = "0.3.0", features = ["extra_types"] }
 ```
 
 Note: even if you enable a pgorm feature, you still need to add the corresponding type crate (`time`, `cidr`, `geo-types`, etc.) as a direct dependency to reference those types in your code.

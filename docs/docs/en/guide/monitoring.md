@@ -193,7 +193,7 @@ If your application uses the `tracing` crate, enable the `tracing` feature to ha
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["tracing"] }
+pgorm = { version = "0.3.0", features = ["tracing"] }
 ```
 
 Then add `TracingSqlHook`:

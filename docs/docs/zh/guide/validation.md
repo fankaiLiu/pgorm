@@ -14,10 +14,10 @@
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 
 # 如果你禁用了默认 feature：
-# pgorm = { version = "0.2.0", features = ["derive", "validate"] }
+# pgorm = { version = "0.3.0", features = ["derive", "validate"] }
 ```
 
 ## 1. 使用 `#[orm(input)]` 生成 Input 结构体

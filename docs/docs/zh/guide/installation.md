@@ -6,14 +6,14 @@
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 ```
 
 默认功能（`pool`、`derive`、`check`、`validate`）覆盖了大多数使用场景。如果只需要 SQL 构建器和行映射的最小化构建：
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", default-features = false }
+pgorm = { version = "0.3.0", default-features = false }
 ```
 
 ## Rust 工具链
@@ -47,14 +47,14 @@ pgorm 跟踪最新的稳定 Rust Edition。请确保你的工具链满足最低�
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["tracing", "rust_decimal"] }
+pgorm = { version = "0.3.0", features = ["tracing", "rust_decimal"] }
 ```
 
 要一次性启用所有额外类型支持：
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["extra_types"] }
+pgorm = { version = "0.3.0", features = ["extra_types"] }
 ```
 
 ## 重导出
@@ -70,7 +70,7 @@ pgorm 重导出了 `tokio-postgres` 中的关键类型，因此常见操作不�
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 tokio-postgres = "0.7"
 ```
 
@@ -80,7 +80,7 @@ tokio-postgres = "0.7"
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", default-features = false }
+pgorm = { version = "0.3.0", default-features = false }
 ```
 
 这样可以获得最小的依赖体积，同时保留核心查询 API。

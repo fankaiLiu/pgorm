@@ -8,13 +8,13 @@ pgorm 通过可选的 `migrate` feature 集成了 [refinery](https://github.com/
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["migrate"] }
+pgorm = { version = "0.3.0", features = ["migrate"] }
 ```
 
 如果你同时使用连接池（大多数应用都会使用）：
 
 ```toml
-pgorm = { version = "0.2.0", features = ["migrate", "pool"] }
+pgorm = { version = "0.3.0", features = ["migrate", "pool"] }
 ```
 
 ## 迁移文件命名

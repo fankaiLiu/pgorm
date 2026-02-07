@@ -2,7 +2,7 @@
 
 pgorm 是一个**模型定义优先、AI 友好的 PostgreSQL ORM**，专为 Rust 设计。它根据模型定义生成查询，提供运行时 SQL 检查以校验 AI 生成的查询，并将监控、连接池和预处理语句缓存整合到单一的 `PgClient` 封装中。
 
-- **版本：** 0.2.0
+- **版本：** 0.3.0
 - **最低支持 Rust 版本（MSRV）：** Rust 1.88+
 - **Edition：** 2024
 
@@ -10,7 +10,7 @@ pgorm 是一个**模型定义优先、AI 友好的 PostgreSQL ORM**，专为 Rus
 
 ```toml
 [dependencies]
-pgorm = "0.2.0"
+pgorm = "0.3.0"
 ```
 
 ## 定义模型

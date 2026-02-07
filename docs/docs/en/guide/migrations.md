@@ -8,13 +8,13 @@ Add pgorm with the `migrate` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["migrate"] }
+pgorm = { version = "0.3.0", features = ["migrate"] }
 ```
 
 If you also use connection pooling (most applications do):
 
 ```toml
-pgorm = { version = "0.2.0", features = ["migrate", "pool"] }
+pgorm = { version = "0.3.0", features = ["migrate", "pool"] }
 ```
 
 ## Migration File Naming

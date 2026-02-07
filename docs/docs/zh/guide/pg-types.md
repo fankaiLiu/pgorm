@@ -325,7 +325,7 @@ let rows: Vec<AuditLog> = query("SELECT id, ip_address FROM audit_logs WHERE ip_
 
 ```toml
 [dependencies]
-pgorm = { version = "0.2.0", features = ["extra_types"] }
+pgorm = { version = "0.3.0", features = ["extra_types"] }
 ```
 
 注意：即使启用了 pgorm 功能标志，你仍然需要将对应的类型 crate（`time`、`cidr`、`geo-types` 等）作为直接依赖添加，才能在代码中引用这些类型。
