@@ -35,7 +35,7 @@
 - **PostgreSQL special types** — `PgEnum`, `PgComposite`, `Range<T>` with derive macros
 - **Transactions & savepoints** — `transaction!`, `transaction_with!`, `savepoint!`, `nested_transaction!`
 - **CTE (WITH) queries** — including recursive CTEs
-- **Keyset (cursor) pagination** — `Keyset1`, `Keyset2` for stable, index-friendly paging
+- **Keyset (cursor) pagination** — `Keyset1`, `Keyset2`, `KeysetN` for stable, index-friendly paging
 - **Streaming queries** — row-by-row `Stream` for large result sets
 - **Prepared statement cache** with LRU eviction
 - **Query monitoring** — metrics, logging, hooks, and slow query detection
@@ -431,6 +431,11 @@ if !where_expr.is_trivially_true() {
     where_expr.append_to_sql(&mut q);
 }
 keyset.append_order_by_limit_to_sql(&mut q)?;
+
+// Multi-column keyset (N columns)
+let keyset_n = KeysetN::desc(["created_at", "priority", "id"])?
+    .after((last_ts, last_priority, last_id))
+    .limit(20);
 ```
 
 ### Streaming Queries
@@ -714,6 +719,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `query_params` | QueryParams derive for dynamic query building |
 | `streaming` | Streaming large result sets row-by-row |
 | `keyset_pagination` | Cursor-based keyset pagination |
+| `keyset_pagination_multi` | Multi-column cursor pagination with `KeysetN` |
 | `cte_queries` | CTE (WITH) queries including recursive CTEs |
 | `optimistic_locking` | Optimistic locking with version column |
 | `pg_enum` | PostgreSQL ENUM with PgEnum derive |

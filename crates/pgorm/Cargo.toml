@@ -163,6 +163,10 @@ name = "keyset_pagination"
 path = "examples/keyset_pagination/main.rs"
 
 [[example]]
+name = "keyset_pagination_multi"
+path = "examples/keyset_pagination_multi/main.rs"
+
+[[example]]
 name = "optimistic_locking"
 path = "examples/optimistic_locking/main.rs"
 

@@ -20,7 +20,8 @@ pub use crate::client::{GenericClient, RowStream, StreamingClient};
 
 // ── Query building ──────────────────────────────────────────────────────────
 pub use crate::builder::{
-    Cursor, Keyset1, Keyset2, NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr,
+    Cursor, IntoKeysetCursor, Keyset1, Keyset2, KeysetN, NullsOrder, OrderBy, OrderItem,
+    Pagination, SortDir, WhereExpr,
 };
 pub use crate::condition::{Condition, Op};
 pub use crate::cte::WithBuilder;

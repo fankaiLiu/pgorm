@@ -4,7 +4,7 @@
 //! - [`WhereExpr`]: Boolean expression tree for WHERE clauses (AND/OR/NOT/grouping)
 //! - [`OrderBy`]: Structured ORDER BY builder with nulls handling
 //! - [`Pagination`]: LIMIT/OFFSET builder
-//! - [`Keyset1`] / [`Keyset2`]: Keyset/cursor pagination builders
+//! - [`Keyset1`] / [`Keyset2`] / [`KeysetN`]: Keyset/cursor pagination builders
 //! - [`Ident`]: Safe SQL identifier handling (see [`crate::Ident`])
 
 use crate::Ident;
@@ -685,6 +685,202 @@ impl Keyset2 {
     }
 }
 
+/// Conversion helper for heterogeneous keyset cursor values.
+///
+/// This is primarily used by [`KeysetN::after`] and [`KeysetN::before`].
+pub trait IntoKeysetCursor {
+    fn into_keyset_cursor(self) -> Vec<Arc<dyn ToSql + Send + Sync>>;
+}
+
+impl IntoKeysetCursor for Vec<Arc<dyn ToSql + Send + Sync>> {
+    fn into_keyset_cursor(self) -> Vec<Arc<dyn ToSql + Send + Sync>> {
+        self
+    }
+}
+
+impl<T> IntoKeysetCursor for (T,)
+where
+    T: ToSql + Send + Sync + 'static,
+{
+    fn into_keyset_cursor(self) -> Vec<Arc<dyn ToSql + Send + Sync>> {
+        vec![Arc::new(self.0)]
+    }
+}
+
+macro_rules! impl_into_keyset_cursor_tuple {
+    ($($name:ident : $idx:tt),+ $(,)?) => {
+        impl<$($name),+> IntoKeysetCursor for ($($name,)+)
+        where
+            $($name: ToSql + Send + Sync + 'static),+
+        {
+            fn into_keyset_cursor(self) -> Vec<Arc<dyn ToSql + Send + Sync>> {
+                vec![
+                    $(Arc::new(self.$idx) as Arc<dyn ToSql + Send + Sync>,)+
+                ]
+            }
+        }
+    };
+}
+
+impl_into_keyset_cursor_tuple!(A: 0, B: 1);
+impl_into_keyset_cursor_tuple!(A: 0, B: 1, C: 2);
+impl_into_keyset_cursor_tuple!(A: 0, B: 1, C: 2, D: 3);
+impl_into_keyset_cursor_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4);
+impl_into_keyset_cursor_tuple!(A: 0, B: 1, C: 2, D: 3, E: 4, F: 5);
+
+/// Multi-column keyset pagination builder.
+///
+/// For N columns `(c1, c2, ..., cN)`, seek is expanded lexicographically:
+/// - `c1 op v1`
+/// - `OR (c1 = v1 AND c2 op v2)`
+/// - `OR ...`
+/// - `OR (c1 = v1 AND ... AND cN op vN)`
+///
+/// where `op` is chosen by sort direction and cursor side (`after` / `before`).
+#[derive(Debug, Clone)]
+pub struct KeysetN {
+    columns: Vec<Ident>,
+    dir: SortDir,
+    cursor: Option<Cursor<Vec<DynValue>>>,
+    limit: i64,
+}
+
+impl KeysetN {
+    pub fn asc<I, C>(columns: I) -> OrmResult<Self>
+    where
+        I: IntoIterator<Item = C>,
+        C: IntoIdent,
+    {
+        Self::new(columns, SortDir::Asc)
+    }
+
+    pub fn desc<I, C>(columns: I) -> OrmResult<Self>
+    where
+        I: IntoIterator<Item = C>,
+        C: IntoIdent,
+    {
+        Self::new(columns, SortDir::Desc)
+    }
+
+    fn new<I, C>(columns: I, dir: SortDir) -> OrmResult<Self>
+    where
+        I: IntoIterator<Item = C>,
+        C: IntoIdent,
+    {
+        let columns: Vec<Ident> = columns
+            .into_iter()
+            .map(IntoIdent::into_ident)
+            .collect::<OrmResult<Vec<_>>>()?;
+        if columns.len() < 2 {
+            return Err(OrmError::validation(
+                "KeysetN requires at least 2 columns".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            columns,
+            dir,
+            cursor: None,
+            limit: DEFAULT_KEYSET_LIMIT,
+        })
+    }
+
+    pub fn after<V>(mut self, values: V) -> Self
+    where
+        V: IntoKeysetCursor,
+    {
+        self.cursor = Some(Cursor::After(values.into_keyset_cursor()));
+        self
+    }
+
+    pub fn before<V>(mut self, values: V) -> Self
+    where
+        V: IntoKeysetCursor,
+    {
+        self.cursor = Some(Cursor::Before(values.into_keyset_cursor()));
+        self
+    }
+
+    pub fn limit(mut self, n: i64) -> Self {
+        self.limit = n;
+        self
+    }
+
+    pub fn order_by(&self) -> OrderBy {
+        self.columns
+            .iter()
+            .cloned()
+            .fold(OrderBy::new(), |acc, col| {
+                acc.add(OrderItem::new(col, self.dir))
+            })
+    }
+
+    pub fn into_where_expr(&self) -> OrmResult<WhereExpr> {
+        let Some(cursor) = &self.cursor else {
+            return Ok(WhereExpr::and(Vec::new()));
+        };
+
+        let op = seek_cmp_op(self.dir, cursor);
+        let values = match cursor {
+            Cursor::After(values) | Cursor::Before(values) => values,
+        };
+
+        if values.len() != self.columns.len() {
+            return Err(OrmError::validation(format!(
+                "keyset cursor value count mismatch: expected {}, got {}",
+                self.columns.len(),
+                values.len()
+            )));
+        }
+
+        let mut or_terms = Vec::with_capacity(self.columns.len());
+        for idx in 0..self.columns.len() {
+            let mut and_terms = Vec::with_capacity(idx + 1);
+            for eq_idx in 0..idx {
+                and_terms.push(WhereExpr::atom(Condition::cmp_dyn(
+                    self.columns[eq_idx].clone(),
+                    "=",
+                    values[eq_idx].clone(),
+                )));
+            }
+            and_terms.push(WhereExpr::atom(Condition::cmp_dyn(
+                self.columns[idx].clone(),
+                op,
+                values[idx].clone(),
+            )));
+
+            if and_terms.len() == 1 {
+                or_terms.push(and_terms.remove(0));
+            } else {
+                or_terms.push(WhereExpr::and(and_terms));
+            }
+        }
+
+        Ok(WhereExpr::or(or_terms))
+    }
+
+    pub fn append_order_by_limit_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+        if self.limit < 1 {
+            return Err(OrmError::validation(format!(
+                "keyset limit must be >= 1, got {}",
+                self.limit
+            )));
+        }
+        self.order_by().append_to_sql(sql);
+        sql.limit(self.limit);
+        Ok(())
+    }
+
+    pub fn append_to_sql(&self, sql: &mut Sql) -> OrmResult<()> {
+        let seek = self.into_where_expr()?;
+        if !seek.is_trivially_true() {
+            sql.push(" WHERE ");
+            seek.append_to_sql(sql);
+        }
+        self.append_order_by_limit_to_sql(sql)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -903,6 +1099,49 @@ mod tests {
             sql.to_sql(),
             "SELECT * FROM users WHERE (status = $1 AND (created_at, id) > ($2, $3)) ORDER BY created_at ASC, id ASC LIMIT $4"
         );
+    }
+
+    #[test]
+    fn keysetn_desc_after_generates_lexicographic_seek() {
+        let keyset = KeysetN::desc(["created_at", "priority", "id"])
+            .unwrap()
+            .after((100_i64, 5_i32, 42_i64))
+            .limit(20);
+        let mut sql = Sql::new("SELECT * FROM users");
+        keyset.append_to_sql(&mut sql).unwrap();
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM users WHERE (created_at < $1 OR (created_at = $2 AND priority < $3) OR (created_at = $4 AND priority = $5 AND id < $6)) ORDER BY created_at DESC, priority DESC, id DESC LIMIT $7"
+        );
+    }
+
+    #[test]
+    fn keysetn_composes_with_other_where_expr() {
+        let keyset = KeysetN::asc(["a", "b", "id"])
+            .unwrap()
+            .after((1_i32, 2_i32, 3_i64))
+            .limit(3);
+        let where_expr = WhereExpr::atom(Condition::eq("status", "active").unwrap())
+            .and_with(keyset.into_where_expr().unwrap());
+
+        let mut sql = Sql::new("SELECT * FROM t WHERE ");
+        where_expr.append_to_sql(&mut sql);
+        keyset.append_order_by_limit_to_sql(&mut sql).unwrap();
+        assert_eq!(
+            sql.to_sql(),
+            "SELECT * FROM t WHERE (status = $1 AND (a > $2 OR (a = $3 AND b > $4) OR (a = $5 AND b = $6 AND id > $7))) ORDER BY a ASC, b ASC, id ASC LIMIT $8"
+        );
+    }
+
+    #[test]
+    fn keysetn_rejects_mismatched_cursor_len() {
+        let keyset = KeysetN::asc(["a", "b", "c"]).unwrap().after((1_i32, 2_i32));
+        assert!(keyset.into_where_expr().is_err());
+    }
+
+    #[test]
+    fn keysetn_requires_two_columns() {
+        assert!(KeysetN::asc(["id"]).is_err());
     }
 
     // ==================== Pagination tests ====================

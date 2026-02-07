@@ -107,6 +107,12 @@ fn compile_keyset_pagination() {
         let keyset = Keyset2::desc("created_at", "id")?.limit(20);
         let mut q = sql("SELECT * FROM users");
         keyset.append_order_by_limit_to_sql(&mut q)?;
+
+        let keyset_n = KeysetN::desc(["created_at", "priority", "id"])?
+            .after((1_i64, 2_i32, 3_i64))
+            .limit(20);
+        let mut qn = sql("SELECT * FROM users");
+        keyset_n.append_order_by_limit_to_sql(&mut qn)?;
         Ok(())
     };
 }

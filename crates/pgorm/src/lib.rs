@@ -53,7 +53,8 @@ pub mod migrate;
 
 // SQL building
 pub use builder::{
-    Cursor, Keyset1, Keyset2, NullsOrder, OrderBy, OrderItem, Pagination, SortDir, WhereExpr,
+    Cursor, IntoKeysetCursor, Keyset1, Keyset2, KeysetN, NullsOrder, OrderBy, OrderItem,
+    Pagination, SortDir, WhereExpr,
 };
 pub use condition::{Condition, Op};
 pub use cte::WithBuilder;

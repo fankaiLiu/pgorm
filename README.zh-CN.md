@@ -35,7 +35,7 @@
 - **PostgreSQL 特殊类型** — `PgEnum`、`PgComposite`、`Range<T>` 派生宏
 - **事务与保存点** — `transaction!`、`transaction_with!`、`savepoint!`、`nested_transaction!`
 - **CTE (WITH) 查询** — 包括递归 CTE
-- **游标分页** — `Keyset1`、`Keyset2`，基于索引的稳定分页
+- **游标分页** — `Keyset1`、`Keyset2`、`KeysetN`，基于索引的稳定分页
 - **流式查询** — 逐行 `Stream`，处理大结果集
 - **预编译语句缓存** — LRU 淘汰策略
 - **查询监控** — 指标统计、日志、Hook、慢查询检测
@@ -431,6 +431,11 @@ if !where_expr.is_trivially_true() {
     where_expr.append_to_sql(&mut q);
 }
 keyset.append_order_by_limit_to_sql(&mut q)?;
+
+// 多列游标分页（N 列）
+let keyset_n = KeysetN::desc(["created_at", "priority", "id"])?
+    .after((last_ts, last_priority, last_id))
+    .limit(20);
 ```
 
 ### 流式查询
@@ -714,6 +719,7 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `query_params` | QueryParams 派生宏 |
 | `streaming` | 逐行流式查询 |
 | `keyset_pagination` | 游标分页 |
+| `keyset_pagination_multi` | `KeysetN` 多列游标分页 |
 | `cte_queries` | CTE (WITH) 查询（含递归） |
 | `optimistic_locking` | 乐观锁（版本列） |
 | `pg_enum` | PostgreSQL ENUM 派生宏 |
