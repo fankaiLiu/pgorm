@@ -95,7 +95,7 @@ pub(super) fn generate_update_by_id_methods(
             id: I,
         ) -> pgorm::OrmResult<u64>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             #destructure
             #now_init
@@ -138,7 +138,7 @@ pub(super) fn generate_update_by_id_methods(
             ids: ::std::vec::Vec<I>,
         ) -> pgorm::OrmResult<u64>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             if ids.is_empty() {
                 return ::std::result::Result::Ok(0);
@@ -220,7 +220,7 @@ pub(super) fn generate_update_force_methods(
             id: I,
         ) -> pgorm::OrmResult<u64>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             #destructure
             #now_init
@@ -362,7 +362,7 @@ pub(super) fn generate_update_returning_methods(
                 id: I,
             ) -> pgorm::OrmResult<#returning_ty>
             where
-                I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+                I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
                 #returning_ty: pgorm::FromRow,
             {
                 #destructure
@@ -418,7 +418,7 @@ pub(super) fn generate_update_returning_methods(
             id: I,
         ) -> pgorm::OrmResult<#returning_ty>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
             #returning_ty: pgorm::FromRow,
         {
             #destructure
@@ -475,7 +475,7 @@ pub(super) fn generate_update_returning_methods(
             ids: ::std::vec::Vec<I>,
         ) -> pgorm::OrmResult<::std::vec::Vec<#returning_ty>>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
             #returning_ty: pgorm::FromRow,
         {
             if ids.is_empty() {

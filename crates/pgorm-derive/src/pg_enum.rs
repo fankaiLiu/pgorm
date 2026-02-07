@@ -50,13 +50,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     let pg_type_array = format!("{pg_type}[]");
 
     let expanded = quote! {
-        impl ::tokio_postgres::types::ToSql for #name {
+        impl ::pgorm::tokio_postgres::types::ToSql for #name {
             fn to_sql(
                 &self,
-                ty: &::tokio_postgres::types::Type,
+                ty: &::pgorm::tokio_postgres::types::Type,
                 out: &mut ::bytes::BytesMut,
             ) -> ::std::result::Result<
-                ::tokio_postgres::types::IsNull,
+                ::pgorm::tokio_postgres::types::IsNull,
                 ::std::boxed::Box<dyn ::std::error::Error + ::std::marker::Sync + ::std::marker::Send>,
             > {
                 let s: &str = match self {
@@ -65,24 +65,24 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 s.to_sql(ty, out)
             }
 
-            fn accepts(ty: &::tokio_postgres::types::Type) -> bool {
+            fn accepts(ty: &::pgorm::tokio_postgres::types::Type) -> bool {
                 ty.name() == #pg_type
-                    || *ty == ::tokio_postgres::types::Type::TEXT
-                    || *ty == ::tokio_postgres::types::Type::VARCHAR
+                    || *ty == ::pgorm::tokio_postgres::types::Type::TEXT
+                    || *ty == ::pgorm::tokio_postgres::types::Type::VARCHAR
             }
 
-            ::tokio_postgres::types::to_sql_checked!();
+            ::pgorm::tokio_postgres::types::to_sql_checked!();
         }
 
-        impl<'__pgorm_a> ::tokio_postgres::types::FromSql<'__pgorm_a> for #name {
+        impl<'__pgorm_a> ::pgorm::tokio_postgres::types::FromSql<'__pgorm_a> for #name {
             fn from_sql(
-                ty: &::tokio_postgres::types::Type,
+                ty: &::pgorm::tokio_postgres::types::Type,
                 raw: &'__pgorm_a [u8],
             ) -> ::std::result::Result<
                 Self,
                 ::std::boxed::Box<dyn ::std::error::Error + ::std::marker::Sync + ::std::marker::Send>,
             > {
-                let s = <&str as ::tokio_postgres::types::FromSql>::from_sql(ty, raw)?;
+                let s = <&str as ::pgorm::tokio_postgres::types::FromSql>::from_sql(ty, raw)?;
                 match s {
                     #(#from_sql_arms)*
                     other => Err(::std::format!(
@@ -93,10 +93,10 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 }
             }
 
-            fn accepts(ty: &::tokio_postgres::types::Type) -> bool {
+            fn accepts(ty: &::pgorm::tokio_postgres::types::Type) -> bool {
                 ty.name() == #pg_type
-                    || *ty == ::tokio_postgres::types::Type::TEXT
-                    || *ty == ::tokio_postgres::types::Type::VARCHAR
+                    || *ty == ::pgorm::tokio_postgres::types::Type::TEXT
+                    || *ty == ::pgorm::tokio_postgres::types::Type::VARCHAR
             }
         }
 

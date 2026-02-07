@@ -335,7 +335,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by equality: column = value
         pub fn eq<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::eq(column, value)?;
             let current = self.where_expr;
@@ -364,7 +364,7 @@ fn gen_filtering_methods() -> TokenStream {
             value: ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.eq(column, v))
         }
@@ -394,7 +394,7 @@ fn gen_filtering_methods() -> TokenStream {
             f: impl FnOnce(S) -> ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             match value.and_then(f) {
                 ::std::option::Option::Some(v) => self.eq(column, v),
@@ -405,7 +405,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by inequality: column != value
         pub fn ne<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::ne(column, value)?;
             let current = self.where_expr;
@@ -416,7 +416,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by greater than: column > value
         pub fn gt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::gt(column, value)?;
             let current = self.where_expr;
@@ -427,7 +427,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by greater than or equal: column >= value
         pub fn gte<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::gte(column, value)?;
             let current = self.where_expr;
@@ -443,7 +443,7 @@ fn gen_filtering_methods() -> TokenStream {
             value: ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.gte(column, v))
         }
@@ -451,7 +451,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by less than: column < value
         pub fn lt<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::lt(column, value)?;
             let current = self.where_expr;
@@ -462,7 +462,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by less than or equal: column <= value
         pub fn lte<T>(mut self, column: impl pgorm::IntoIdent, value: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::lte(column, value)?;
             let current = self.where_expr;
@@ -478,7 +478,7 @@ fn gen_filtering_methods() -> TokenStream {
             value: ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.lte(column, v))
         }
@@ -493,7 +493,7 @@ fn gen_filtering_methods() -> TokenStream {
         ) -> pgorm::OrmResult<Self>
         where
             I: pgorm::IntoIdent + ::core::clone::Clone,
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.gte_opt(column.clone(), from)?.lte_opt(column, to)
         }
@@ -501,7 +501,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by LIKE pattern: column LIKE pattern
         pub fn like<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::like(column, pattern)?;
             let current = self.where_expr;
@@ -512,7 +512,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by case-insensitive ILIKE pattern: column ILIKE pattern
         pub fn ilike<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::ilike(column, pattern)?;
             let current = self.where_expr;
@@ -523,7 +523,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by NOT LIKE pattern: column NOT LIKE pattern
         pub fn not_like<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::not_like(column, pattern)?;
             let current = self.where_expr;
@@ -534,7 +534,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by NOT ILIKE pattern: column NOT ILIKE pattern
         pub fn not_ilike<T>(mut self, column: impl pgorm::IntoIdent, pattern: T) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::not_ilike(column, pattern)?;
             let current = self.where_expr;
@@ -561,7 +561,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by IN list: column IN (values...)
         pub fn in_list<T>(mut self, column: impl pgorm::IntoIdent, values: ::std::vec::Vec<T>) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::in_list(column, values)?;
             let current = self.where_expr;
@@ -572,7 +572,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// Filter by NOT IN list: column NOT IN (values...)
         pub fn not_in<T>(mut self, column: impl pgorm::IntoIdent, values: ::std::vec::Vec<T>) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::not_in(column, values)?;
             let current = self.where_expr;
@@ -588,7 +588,7 @@ fn gen_filtering_methods() -> TokenStream {
             to: T,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::between(column, from, to)?;
             let current = self.where_expr;
@@ -604,7 +604,7 @@ fn gen_filtering_methods() -> TokenStream {
             to: T,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let cond = pgorm::Condition::not_between(column, from, to)?;
             let current = self.where_expr;
@@ -634,7 +634,7 @@ fn gen_filtering_methods() -> TokenStream {
         /// ```
         pub fn raw_bind<T>(mut self, template: &str, params: ::std::vec::Vec<T>) -> Self
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             let current = self.where_expr;
             self.where_expr = current.and_with(pgorm::WhereExpr::raw_bind(template, params));
@@ -651,7 +651,7 @@ fn gen_filtering_methods() -> TokenStream {
             value: ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.ne(column, v))
         }
@@ -664,7 +664,7 @@ fn gen_filtering_methods() -> TokenStream {
             value: ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.gt(column, v))
         }
@@ -677,7 +677,7 @@ fn gen_filtering_methods() -> TokenStream {
             value: ::std::option::Option<T>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(value, |q, v| q.lt(column, v))
         }
@@ -710,7 +710,7 @@ fn gen_filtering_methods() -> TokenStream {
             values: ::std::option::Option<::std::vec::Vec<T>>,
         ) -> pgorm::OrmResult<Self>
         where
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.apply_if_some(values, |q, v| q.in_list(column, v))
         }
@@ -725,7 +725,7 @@ fn gen_filtering_methods() -> TokenStream {
         ) -> pgorm::OrmResult<Self>
         where
             I: pgorm::IntoIdent + ::core::clone::Clone,
-            T: ::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
+            T: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Send + ::core::marker::Sync + 'static,
         {
             self.range_opt(column, from, to)
         }

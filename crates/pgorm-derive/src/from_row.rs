@@ -41,7 +41,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         impl #impl_generics pgorm::FromRow for #name #ty_generics #where_clause {
-            fn from_row(row: &::tokio_postgres::Row) -> pgorm::OrmResult<Self> {
+            fn from_row(row: &::pgorm::tokio_postgres::Row) -> pgorm::OrmResult<Self> {
                 use pgorm::RowExt;
                 ::std::result::Result::Ok(Self {
                     #(#field_extracts),*

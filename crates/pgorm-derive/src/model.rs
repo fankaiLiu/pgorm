@@ -468,7 +468,7 @@ fn generate_has_many_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<#related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync,
                     {
                         let sql = ::std::format!(
                             "SELECT {} FROM {} WHERE {} = $1",
@@ -489,8 +489,8 @@ fn generate_has_many_methods(
                     ) -> pgorm::OrmResult<pgorm::HasManyMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -521,8 +521,8 @@ fn generate_has_many_methods(
                     ) -> pgorm::OrmResult<pgorm::HasManyMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -555,8 +555,8 @@ fn generate_has_many_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::vec::Vec<#related_model>>>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -582,8 +582,8 @@ fn generate_has_many_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::vec::Vec<#related_model>>>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -637,7 +637,7 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<::std::option::Option<#related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync,
                     {
                         let sql = ::std::format!(
                             "SELECT {} FROM {} {} WHERE {}.{} = $1",
@@ -665,8 +665,8 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -697,8 +697,8 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -730,8 +730,8 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -762,8 +762,8 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<pgorm::HasOneMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -796,8 +796,8 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::option::Option<#related_model>>>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -823,8 +823,8 @@ fn generate_has_one_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::option::Option<#related_model>>>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -877,7 +877,7 @@ fn generate_many_to_many_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<#related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync,
                     {
                         let select_list = if #related_model::JOIN_CLAUSE.trim().is_empty() {
                             #related_model::select_list_as(#related_model::TABLE)
@@ -908,8 +908,8 @@ fn generate_many_to_many_methods(
                     ) -> pgorm::OrmResult<pgorm::HasManyMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -948,8 +948,8 @@ fn generate_many_to_many_methods(
                     ) -> pgorm::OrmResult<pgorm::HasManyMap<#id_ty, #related_model>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -990,8 +990,8 @@ fn generate_many_to_many_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::vec::Vec<#related_model>>>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -1017,8 +1017,8 @@ fn generate_many_to_many_methods(
                     ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::vec::Vec<#related_model>>>>
                     where
                         #related_model: pgorm::FromRow,
-                        #id_ty: ::tokio_postgres::types::ToSql
-                            + ::tokio_postgres::types::FromSqlOwned
+                        #id_ty: ::pgorm::tokio_postgres::types::ToSql
+                            + ::pgorm::tokio_postgres::types::FromSqlOwned
                             + ::std::cmp::Eq
                             + ::std::hash::Hash
                             + ::core::marker::Send
@@ -1140,7 +1140,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<#related_model>
                 where
                     #related_model: pgorm::FromRow,
-                    #fk_type: ::tokio_postgres::types::ToSql + ::core::marker::Sync,
+                    #fk_type: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync,
                 {
                     let sql = ::std::format!(
                         "SELECT {} FROM {} WHERE {} = $1",
@@ -1166,7 +1166,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<pgorm::BelongsToMap<#fk_inner_ty, #related_model>>
                 where
                     #related_model: pgorm::FromRow + pgorm::ModelPk<Id = #fk_inner_ty>,
-                    #fk_inner_ty: ::tokio_postgres::types::ToSql
+                    #fk_inner_ty: ::pgorm::tokio_postgres::types::ToSql
                         + ::std::cmp::Eq
                         + ::std::hash::Hash
                         + ::core::marker::Send
@@ -1198,7 +1198,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<pgorm::BelongsToMap<#fk_inner_ty, #related_model>>
                 where
                     #related_model: pgorm::FromRow + pgorm::ModelPk<Id = #fk_inner_ty>,
-                    #fk_inner_ty: ::tokio_postgres::types::ToSql
+                    #fk_inner_ty: ::pgorm::tokio_postgres::types::ToSql
                         + ::std::cmp::Eq
                         + ::std::hash::Hash
                         + ::core::marker::Send
@@ -1232,7 +1232,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::option::Option<#related_model>>>>
                 where
                     #related_model: pgorm::FromRow + pgorm::ModelPk<Id = #fk_inner_ty> + ::core::clone::Clone,
-                    #fk_inner_ty: ::tokio_postgres::types::ToSql
+                    #fk_inner_ty: ::pgorm::tokio_postgres::types::ToSql
                         + ::std::cmp::Eq
                         + ::std::hash::Hash
                         + ::core::marker::Send
@@ -1259,7 +1259,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, ::std::option::Option<#related_model>>>>
                 where
                     #related_model: pgorm::FromRow + pgorm::ModelPk<Id = #fk_inner_ty> + ::core::clone::Clone,
-                    #fk_inner_ty: ::tokio_postgres::types::ToSql
+                    #fk_inner_ty: ::pgorm::tokio_postgres::types::ToSql
                         + ::std::cmp::Eq
                         + ::std::hash::Hash
                         + ::core::marker::Send
@@ -1286,7 +1286,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, #related_model>>>
                 where
                     #related_model: pgorm::FromRow + pgorm::ModelPk<Id = #fk_inner_ty> + ::core::clone::Clone,
-                    #fk_inner_ty: ::tokio_postgres::types::ToSql
+                    #fk_inner_ty: ::pgorm::tokio_postgres::types::ToSql
                         + ::std::cmp::Eq
                         + ::std::hash::Hash
                         + ::core::marker::Send
@@ -1312,7 +1312,7 @@ fn generate_belongs_to_methods(
                 ) -> pgorm::OrmResult<::std::vec::Vec<pgorm::Loaded<Self, #related_model>>>
                 where
                     #related_model: pgorm::FromRow + pgorm::ModelPk<Id = #fk_inner_ty> + ::core::clone::Clone,
-                    #fk_inner_ty: ::tokio_postgres::types::ToSql
+                    #fk_inner_ty: ::pgorm::tokio_postgres::types::ToSql
                         + ::std::cmp::Eq
                         + ::std::hash::Hash
                         + ::core::marker::Send

@@ -65,7 +65,7 @@ pub(super) fn generate_update_graph_methods(
             id: I,
         ) -> ::pgorm::OrmResult<u64>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
         {
             let mut __pgorm_total_affected: u64 = 0;
             let __pgorm_id = id.clone();
@@ -140,7 +140,7 @@ pub(super) fn generate_update_graph_methods(
                 id: I,
             ) -> ::pgorm::OrmResult<#returning_ty>
             where
-                I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
+                I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + ::core::clone::Clone + 'static,
                 #returning_ty: ::pgorm::FromRow,
             {
                 let mut __pgorm_total_affected: u64 = 0;

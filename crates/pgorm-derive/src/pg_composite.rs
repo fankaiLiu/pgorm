@@ -54,17 +54,17 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 out.extend_from_slice(&[0u8; 4]); // placeholder for length
                 let start = out.len();
 
-                match ::tokio_postgres::types::ToSql::to_sql(
+                match ::pgorm::tokio_postgres::types::ToSql::to_sql(
                     &self.#field_name,
                     // Use TEXT type as a fallback for composite fields.
                     // The server handles the actual type resolution.
-                    &::tokio_postgres::types::Type::TEXT,
+                    &::pgorm::tokio_postgres::types::Type::TEXT,
                     out,
                 )? {
-                    ::tokio_postgres::types::IsNull::Yes => {
+                    ::pgorm::tokio_postgres::types::IsNull::Yes => {
                         out[len_pos..len_pos + 4].copy_from_slice(&(-1_i32).to_be_bytes());
                     }
-                    ::tokio_postgres::types::IsNull::No => {
+                    ::pgorm::tokio_postgres::types::IsNull::No => {
                         let written = (out.len() - start) as i32;
                         out[len_pos..len_pos + 4].copy_from_slice(&written.to_be_bytes());
                     }
@@ -91,16 +91,16 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
             let #field_name: #field_ty = if __pgorm_field_len < 0 {
                 // NULL — try FromSql::from_sql_null
-                <#field_ty as ::tokio_postgres::types::FromSql>::from_sql_null(
-                    &::tokio_postgres::types::Type::TEXT,
+                <#field_ty as ::pgorm::tokio_postgres::types::FromSql>::from_sql_null(
+                    &::pgorm::tokio_postgres::types::Type::TEXT,
                 )?
             } else {
                 let __pgorm_end = __pgorm_pos + __pgorm_field_len as usize;
                 if __pgorm_end > raw.len() {
                     return Err("composite: insufficient data for field value".into());
                 }
-                let __pgorm_val = <#field_ty as ::tokio_postgres::types::FromSql>::from_sql(
-                    &::tokio_postgres::types::Type::TEXT,
+                let __pgorm_val = <#field_ty as ::pgorm::tokio_postgres::types::FromSql>::from_sql(
+                    &::pgorm::tokio_postgres::types::Type::TEXT,
                     &raw[__pgorm_pos..__pgorm_end],
                 )?;
                 __pgorm_pos = __pgorm_end;
@@ -110,13 +110,13 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
     }
 
     let expanded = quote! {
-        impl ::tokio_postgres::types::ToSql for #name {
+        impl ::pgorm::tokio_postgres::types::ToSql for #name {
             fn to_sql(
                 &self,
-                _ty: &::tokio_postgres::types::Type,
+                _ty: &::pgorm::tokio_postgres::types::Type,
                 out: &mut ::bytes::BytesMut,
             ) -> ::std::result::Result<
-                ::tokio_postgres::types::IsNull,
+                ::pgorm::tokio_postgres::types::IsNull,
                 ::std::boxed::Box<dyn ::std::error::Error + ::std::marker::Sync + ::std::marker::Send>,
             > {
                 // Write field count
@@ -124,19 +124,19 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
 
                 #(#encode_fields)*
 
-                Ok(::tokio_postgres::types::IsNull::No)
+                Ok(::pgorm::tokio_postgres::types::IsNull::No)
             }
 
-            fn accepts(ty: &::tokio_postgres::types::Type) -> bool {
+            fn accepts(ty: &::pgorm::tokio_postgres::types::Type) -> bool {
                 ty.name() == #pg_type
             }
 
-            ::tokio_postgres::types::to_sql_checked!();
+            ::pgorm::tokio_postgres::types::to_sql_checked!();
         }
 
-        impl<'__pgorm_a> ::tokio_postgres::types::FromSql<'__pgorm_a> for #name {
+        impl<'__pgorm_a> ::pgorm::tokio_postgres::types::FromSql<'__pgorm_a> for #name {
             fn from_sql(
-                _ty: &::tokio_postgres::types::Type,
+                _ty: &::pgorm::tokio_postgres::types::Type,
                 raw: &'__pgorm_a [u8],
             ) -> ::std::result::Result<
                 Self,
@@ -163,7 +163,7 @@ pub fn expand(input: DeriveInput) -> Result<TokenStream> {
                 Ok(#name { #(#field_names),* })
             }
 
-            fn accepts(ty: &::tokio_postgres::types::Type) -> bool {
+            fn accepts(ty: &::pgorm::tokio_postgres::types::Type) -> bool {
                 ty.name() == #pg_type
             }
         }

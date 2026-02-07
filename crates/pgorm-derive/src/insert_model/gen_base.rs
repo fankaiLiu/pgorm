@@ -595,7 +595,7 @@ fn generate_diff_helper(
             rows: ::std::vec::Vec<Self>,
         ) -> ::pgorm::OrmResult<u64>
         where
-            I: ::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
+            I: ::pgorm::tokio_postgres::types::ToSql + ::core::marker::Sync + ::core::marker::Send + 'static,
         {
             let rows_count = rows.len() as u64;
 

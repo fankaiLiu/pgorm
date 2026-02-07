@@ -61,6 +61,7 @@ pub use sql::{FromRowStream, Query, Sql, query, sql};
 
 // Row mapping & types
 pub use row::{FromRow, PgType, RowExt};
+pub use tokio_postgres;
 pub use tokio_postgres::types::Json;
 pub use types::{Bound, Range};
 
