@@ -78,13 +78,12 @@ fn demo_input_as_option_option() {
     let create_model = create_input.try_into_model().unwrap();
     println!("create external_id parsed: {:?}", create_model.external_id);
 
-    let clear_json = r#"
-        {
-          "external_id": null,
-          "version": 1
-        }
-    "#;
-    let clear_input: DevicePatchInput = serde_json::from_str(clear_json).unwrap();
+    // For explicit "set NULL" intent in Rust value form, use `Some(None)`.
+    let clear_input = DevicePatchInput {
+        label: None,
+        external_id: Some(None),
+        version: Some(1),
+    };
     let clear_patch = clear_input.try_into_patch().unwrap();
     println!(
         "patch external_id parsed: {:?} (Some(None) => set NULL)",

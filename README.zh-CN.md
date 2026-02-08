@@ -712,16 +712,19 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `sql_builder` | 动态 SQL：条件、排序、分页 |
 | `bulk_operations` | 条件批量更新/删除 |
 | `changeset` | Changeset 验证 |
+| `input_as_nested_option` | `input_as` 的 `Option<Option<T>>` 三态转换 |
 | `monitoring` | 查询监控、日志、Hook |
 | `statement_cache` | LRU 预编译语句缓存 |
 | `jsonb` | JSONB 列支持 |
 | `fetch_semantics` | fetch_one / fetch_optional / fetch_all / fetch_scalar |
 | `query_params` | QueryParams 派生宏 |
+| `query_params_multi_ops` | 单字段支持多个过滤操作 |
 | `streaming` | 逐行流式查询 |
 | `keyset_pagination` | 游标分页 |
 | `keyset_pagination_multi` | `KeysetN` 多列游标分页 |
 | `cte_queries` | CTE (WITH) 查询（含递归） |
 | `optimistic_locking` | 乐观锁（版本列） |
+| `bulk_optimistic_locking` | 带版本检查的批量 `update_by_ids` |
 | `pg_enum` | PostgreSQL ENUM 派生宏 |
 | `pg_range` | 范围类型（tstzrange、daterange、int4range） |
 | `pg_composite` | PostgreSQL 复合类型派生宏 |
@@ -741,6 +744,9 @@ DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example \
 
 # 部分示例无需数据库也能展示 SQL 生成
 cargo run --example sql_builder -p pgorm
+
+# 仅 CLI 示例：关系推断 + 写模型生成（不需要数据库）
+cargo run -p pgorm-cli --example model_codegen_relations
 ```
 
 ## 文档

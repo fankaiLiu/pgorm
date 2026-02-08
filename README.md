@@ -712,16 +712,19 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `sql_builder` | Dynamic SQL with conditions, ordering, pagination |
 | `bulk_operations` | Bulk update/delete with conditions |
 | `changeset` | Changeset validation |
+| `input_as_nested_option` | `input_as` with tri-state `Option<Option<T>>` conversion |
 | `monitoring` | Query monitoring, logging, hooks |
 | `statement_cache` | Prepared statement cache with LRU eviction |
 | `jsonb` | JSONB column support |
 | `fetch_semantics` | fetch_one / fetch_optional / fetch_all / fetch_scalar |
 | `query_params` | QueryParams derive for dynamic query building |
+| `query_params_multi_ops` | Multiple filter ops on one `QueryParams` field |
 | `streaming` | Streaming large result sets row-by-row |
 | `keyset_pagination` | Cursor-based keyset pagination |
 | `keyset_pagination_multi` | Multi-column cursor pagination with `KeysetN` |
 | `cte_queries` | CTE (WITH) queries including recursive CTEs |
 | `optimistic_locking` | Optimistic locking with version column |
+| `bulk_optimistic_locking` | Bulk `update_by_ids` with version check |
 | `pg_enum` | PostgreSQL ENUM with PgEnum derive |
 | `pg_range` | Range types (tstzrange, daterange, int4range) |
 | `pg_composite` | PostgreSQL composite types with PgComposite derive |
@@ -741,6 +744,9 @@ DATABASE_URL=postgres://postgres:postgres@localhost/pgorm_example \
 
 # Some examples can show SQL generation without a database
 cargo run --example sql_builder -p pgorm
+
+# CLI-only example: inferred relations + generated write models (no DB needed)
+cargo run -p pgorm-cli --example model_codegen_relations
 ```
 
 ## Documentation

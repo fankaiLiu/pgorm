@@ -48,7 +48,7 @@ pub(super) fn generate_update_by_id_methods(
             q.push(" AND ");
             q.push(#version_col);
             q.push(" = ");
-            q.push_bind(#version_ident as i64);
+            q.push_bind(#version_ident);
         }
     } else {
         quote! {}
@@ -81,7 +81,8 @@ pub(super) fn generate_update_by_id_methods(
         if let Some((version_ident, version_col)) = version_field {
             (
                 quote! {
-                    let __version_val = #version_ident as i64;
+                    let __version_param = #version_ident;
+                    let __version_val = __version_param as i64;
                     let __target_sql = ::std::format!(
                         "SELECT COUNT(*) FROM {} WHERE {}.{} = ANY($1)",
                         #table_name,
@@ -95,7 +96,7 @@ pub(super) fn generate_update_by_id_methods(
                     q.push(" AND ");
                     q.push(#version_col);
                     q.push(" = ");
-                    q.push_bind(__version_val);
+                    q.push_bind(__version_param);
                 },
                 quote! {
                     let __affected = q.execute(conn).await?;
@@ -325,7 +326,7 @@ pub(super) fn generate_update_returning_methods(
             q.push(" AND ");
             q.push(#version_col);
             q.push(" = ");
-            q.push_bind(#version_ident as i64);
+            q.push_bind(#version_ident);
         }
     } else {
         quote! {}
@@ -370,7 +371,8 @@ pub(super) fn generate_update_returning_methods(
         if let Some((version_ident, version_col)) = version_field {
             (
                 quote! {
-                    let __version_val = #version_ident as i64;
+                    let __version_param = #version_ident;
+                    let __version_val = __version_param as i64;
                     let __target_sql = ::std::format!(
                         "SELECT COUNT(*) FROM {} WHERE {}.{} = ANY($1)",
                         #table_name,
@@ -384,7 +386,7 @@ pub(super) fn generate_update_returning_methods(
                     q.push(" AND ");
                     q.push(#version_col);
                     q.push(" = ");
-                    q.push_bind(__version_val);
+                    q.push_bind(__version_param);
                 },
                 quote! {
                     let __rows = q.fetch_all_as::<#returning_ty>(conn).await?;

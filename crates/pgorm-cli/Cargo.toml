@@ -12,6 +12,10 @@ path = "src/main.rs"
 # Avoid `cargo doc --workspace` output collisions with the `pgorm` library crate.
 doc = false
 
+[[example]]
+name = "model_codegen_relations"
+path = "examples/model_codegen_relations/main.rs"
+
 [dependencies]
 anyhow.workspace = true
 glob.workspace = true

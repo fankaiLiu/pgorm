@@ -205,3 +205,15 @@ path = "examples/composite_primary_key/main.rs"
 [[example]]
 name = "productized_limits"
 path = "examples/productized_limits/main.rs"
+
+[[example]]
+name = "input_as_nested_option"
+path = "examples/input_as_nested_option/main.rs"
+
+[[example]]
+name = "query_params_multi_ops"
+path = "examples/query_params_multi_ops/main.rs"
+
+[[example]]
+name = "bulk_optimistic_locking"
+path = "examples/bulk_optimistic_locking/main.rs"
