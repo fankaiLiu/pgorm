@@ -17,6 +17,10 @@ pub use tokio_postgres::types::Json;
 
 // ── Client ──────────────────────────────────────────────────────────────────
 pub use crate::client::{GenericClient, RowStream, StreamingClient};
+pub use crate::listen::{
+    PgListener, PgListenerConfig, PgListenerQueuePolicy, PgListenerState, PgListenerStats,
+    PgNotification, PgNotificationStream,
+};
 
 // ── Query building ──────────────────────────────────────────────────────────
 pub use crate::builder::{

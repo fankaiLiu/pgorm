@@ -19,6 +19,7 @@ mod schema;
 mod sql_check;
 mod sql_validate;
 mod type_mapper;
+mod workflow;
 mod write;
 
 /// Runs the `pgorm` CLI with an argv-style argument list.
@@ -31,13 +32,10 @@ pub async fn run(args: Vec<String>) -> anyhow::Result<()> {
             cli::print_help(topic);
             Ok(())
         }
-        cli::Command::Gen(cmd) => match cmd {
-            cli::GenCommand::Init(args) => init::run(args),
-            cli::GenCommand::Schema(args) => schema::run(args).await,
-            cli::GenCommand::Check(args) => gen_check::run(args).await,
-            cli::GenCommand::Run(args) => generate::run(args).await,
-        },
-        cli::Command::Model(args) => model_generate::run(args).await,
+        cli::Command::Init(args) => workflow::run_init(args).await,
+        cli::Command::Build(args) => workflow::run_build(args).await,
+        cli::Command::Check(args) => workflow::run_check(args).await,
+        cli::Command::Schema(args) => schema::run(args).await,
         cli::Command::Sql(cmd) => match cmd {
             cli::SqlCommand::Check(args) => sql_check::run(args).await,
         },

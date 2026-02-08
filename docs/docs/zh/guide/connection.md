@@ -204,6 +204,24 @@ let pg = PgClient::with_config(client, PgClientConfig::new()
     .with_stats());
 ```
 
+## LISTEN/NOTIFY 订阅
+
+对于 PostgreSQL 异步通知，请使用专用 `PgListener` 连接。
+
+```rust
+use pgorm::{PgListener, PgListenerConfig};
+
+let mut listener = PgListener::connect_with_no_tls_config(
+    &database_url,
+    PgListenerConfig::new(),
+).await?;
+listener.listen("orders_changed").await?;
+```
+
+不要把长期 listener 放在普通查询连接池连接上。
+
+完整说明见：[LISTEN/NOTIFY 事件](/zh/guide/listen-notify)
+
 ---
 
-下一步：[模型与派生宏](/zh/guide/models)
+下一步：[LISTEN/NOTIFY 事件](/zh/guide/listen-notify)

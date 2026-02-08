@@ -25,7 +25,7 @@ pub async fn run(args: GenSchemaArgs) -> anyhow::Result<()> {
     } else {
         let Some(database_url) = args.database.clone() else {
             anyhow::bail!(
-                "failed to load config {}; provide --database or run `pgorm gen init` first",
+                "failed to load config {}; provide --database or run `pgorm init` first",
                 args.config.display()
             );
         };

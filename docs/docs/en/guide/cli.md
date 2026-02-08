@@ -10,7 +10,7 @@ cargo install pgorm-cli
 
 ## Configuration (`pgorm.toml`)
 
-pgorm-cli is configured via a `pgorm.toml` file (default location: project root). Generate one with `pgorm gen init`.
+pgorm-cli is configured via a `pgorm.toml` file (default location: project root). Generate one with `pgorm init`.
 
 ### Full Configuration Example
 
@@ -143,27 +143,35 @@ Optional section for generating Rust model structs directly from the database sc
 
 ## Commands
 
-### `pgorm gen init`
+Recommended commands are task-oriented: `init`, `build`, `check`, `schema`, `sql`.
 
-Create an initial `pgorm.toml` configuration file:
+### `pgorm init`
+
+Create an initial project setup:
 
 ```bash
-pgorm gen init
-pgorm gen init --config path/to/pgorm.toml
+pgorm init
+pgorm init --config path/to/pgorm.toml
+pgorm init --migrations-dir db/migrations
+pgorm init --no-migrations
 ```
 
-This writes a commented template with all available options. It refuses to overwrite an existing file.
+By default, this writes a commented `pgorm.toml` template and initializes the migrations directory.
 
-### `pgorm gen`
+### `pgorm build`
 
-Generate Rust code from SQL query files defined in the `[[packages]]` sections:
+Generate project outputs from config:
+- SQL package codegen from `[[packages]]`
+- model codegen from `[models]` (if present)
 
 ```bash
-pgorm gen
-pgorm gen --config pgorm.toml
-pgorm gen --database postgres://user:pass@localhost/mydb
-pgorm gen --dry-run    # print what would change without writing
-pgorm gen --check      # exit non-zero if output would change (for CI)
+pgorm build
+pgorm build --config pgorm.toml
+pgorm build --database postgres://user:pass@localhost/mydb
+pgorm build --dry-run
+pgorm build --check
+pgorm build --no-models
+pgorm build --no-queries
 ```
 
 Options:
@@ -174,15 +182,39 @@ Options:
 | `--database <URL>` | Override `database.url` from config |
 | `--dry-run` | Print files that would change without writing |
 | `--check` | Exit non-zero if generated output differs (CI mode) |
+| `--no-queries` | Skip `[[packages]]` codegen |
+| `--no-models` | Skip `[models]` codegen |
 
-### `pgorm gen schema`
+### `pgorm check`
+
+Run non-mutating project checks:
+- package SQL and query-codegen checks (`[[packages]]`)
+- model output drift check (`[models]`, if present)
+
+```bash
+pgorm check
+pgorm check --deny-warnings
+pgorm check --no-models
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--config <FILE>` | Config file path (default: `pgorm.toml`) |
+| `--database <URL>` | Override `database.url` from config |
+| `--deny-warnings` | Treat SQL warnings as errors |
+| `--no-queries` | Skip package checks |
+| `--no-models` | Skip model checks |
+
+### `pgorm schema`
 
 Dump or refresh the schema cache from the database:
 
 ```bash
-pgorm gen schema
-pgorm gen schema --schemas public,myschema
-pgorm gen schema --database postgres://user:pass@localhost/mydb
+pgorm schema
+pgorm schema --schemas public,myschema
+pgorm schema --database postgres://user:pass@localhost/mydb
 ```
 
 Options:
@@ -193,50 +225,14 @@ Options:
 | `--database <URL>` | Override `database.url` from config |
 | `--schemas <CSV>` | Comma-separated list of schemas (default: `public`) |
 
-### `pgorm gen check`
-
-Verify that generated code is up-to-date. Useful in CI pipelines to ensure developers have run `pgorm gen` after modifying queries:
-
-```bash
-pgorm gen check
-pgorm gen check --deny-warnings
-```
-
-Options:
-
-| Flag | Description |
-|------|-------------|
-| `--config <FILE>` | Config file path (default: `pgorm.toml`) |
-| `--database <URL>` | Override `database.url` from config |
-| `--deny-warnings` | Treat warnings as errors |
-
-### `pgorm model`
-
-Generate Rust model structs from the database schema, using the `[models]` section in your config:
-
-```bash
-pgorm model
-pgorm model --dry-run
-pgorm model --check     # CI mode: exit non-zero if output would change
-```
-
-Options:
-
-| Flag | Description |
-|------|-------------|
-| `--config <FILE>` | Config file path (default: `pgorm.toml`) |
-| `--database <URL>` | Override `database.url` from config |
-| `--dry-run` | Print files that would change without writing |
-| `--check` | Exit non-zero if generated output differs (CI mode) |
-
-### `pgorm sql check [FILES...]`
+### `pgorm sql [FILES...]`
 
 Validate SQL files for syntax errors, lint issues, and schema mismatches:
 
 ```bash
-pgorm sql check queries/users.sql queries/orders.sql
-pgorm sql check queries/**/*.sql
-pgorm sql check --deny-warnings queries/*.sql
+pgorm sql queries/users.sql queries/orders.sql
+pgorm sql queries/**/*.sql
+pgorm sql --deny-warnings queries/*.sql
 ```
 
 Supports multi-statement input -- each statement is validated separately.
@@ -269,9 +265,8 @@ Use the `--check` flag in your CI pipeline to ensure generated code is always up
 
 ```bash
 # In your CI script
-pgorm gen --check
-pgorm model --check
-pgorm sql check --deny-warnings queries/**/*.sql
+pgorm check --deny-warnings
+pgorm sql --deny-warnings queries/**/*.sql
 ```
 
 These commands exit with a non-zero status if anything is out of date or has issues, making them suitable for CI gates.
@@ -282,8 +277,7 @@ Example GitHub Actions step:
 - name: Check pgorm codegen
   run: |
     cargo install pgorm-cli
-    pgorm gen --check
-    pgorm model --check
+    pgorm check --deny-warnings
   env:
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```

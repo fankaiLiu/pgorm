@@ -720,6 +720,7 @@ The `crates/pgorm/examples/` directory contains runnable examples for every feat
 | `query_params` | QueryParams derive for dynamic query building |
 | `query_params_multi_ops` | Multiple filter ops on one `QueryParams` field |
 | `streaming` | Streaming large result sets row-by-row |
+| `listen_notify` | PostgreSQL LISTEN/NOTIFY subscription and notification consumption |
 | `keyset_pagination` | Cursor-based keyset pagination |
 | `keyset_pagination_multi` | Multi-column cursor pagination with `KeysetN` |
 | `cte_queries` | CTE (WITH) queries including recursive CTEs |

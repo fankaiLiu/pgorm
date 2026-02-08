@@ -32,6 +32,7 @@ mod cte;
 pub mod eager;
 mod error;
 mod ident;
+mod listen;
 pub mod monitor;
 pub mod prelude;
 pub mod qb;
@@ -68,6 +69,10 @@ pub use types::{Bound, Range};
 
 // Client
 pub use client::{GenericClient, RowStream, StreamingClient};
+pub use listen::{
+    PgListener, PgListenerConfig, PgListenerQueuePolicy, PgListenerState, PgListenerStats,
+    PgNotification, PgNotificationStream,
+};
 
 // Bulk operations
 pub use bulk::{DeleteManyBuilder, SetExpr, UpdateManyBuilder};

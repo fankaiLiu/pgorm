@@ -720,6 +720,7 @@ let pg = PgClient::with_config(&client, PgClientConfig::new()
 | `query_params` | QueryParams 派生宏 |
 | `query_params_multi_ops` | 单字段支持多个过滤操作 |
 | `streaming` | 逐行流式查询 |
+| `listen_notify` | PostgreSQL LISTEN/NOTIFY 订阅与通知消费 |
 | `keyset_pagination` | 游标分页 |
 | `keyset_pagination_multi` | `KeysetN` 多列游标分页 |
 | `cte_queries` | CTE (WITH) 查询（含递归） |

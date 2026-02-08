@@ -104,9 +104,10 @@ let users = NewUser::insert_many_returning(&pg, vec![
 
 1. [安装与功能标志](/zh/guide/installation) -- 功能标志、MSRV 和最小化构建
 2. [连接与连接池](/zh/guide/connection) -- `PgClient`、预处理语句缓存、TLS
-3. [模型与派生宏](/zh/guide/models) -- `FromRow`、`Model`、`QueryParams`、`ViewModel`
-4. [关系与预加载](/zh/guide/relations) -- `has_many`、`belongs_to`、`has_one`、`many_to_many`
-5. [PostgreSQL 类型](/zh/guide/pg-types) -- `PgEnum`、`PgComposite`、`Range<T>`、JSONB
+3. [LISTEN/NOTIFY 事件](/zh/guide/listen-notify) -- 专用 listener、重连、队列策略
+4. [模型与派生宏](/zh/guide/models) -- `FromRow`、`Model`、`QueryParams`、`ViewModel`
+5. [关系与预加载](/zh/guide/relations) -- `has_many`、`belongs_to`、`has_one`、`many_to_many`
+6. [PostgreSQL 类型](/zh/guide/pg-types) -- `PgEnum`、`PgComposite`、`Range<T>`、JSONB
 
 ---
 

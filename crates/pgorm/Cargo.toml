@@ -159,6 +159,10 @@ name = "streaming"
 path = "examples/streaming/main.rs"
 
 [[example]]
+name = "listen_notify"
+path = "examples/listen_notify/main.rs"
+
+[[example]]
 name = "keyset_pagination"
 path = "examples/keyset_pagination/main.rs"
 

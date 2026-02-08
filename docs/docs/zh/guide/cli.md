@@ -10,7 +10,7 @@ cargo install pgorm-cli
 
 ## 配置（`pgorm.toml`）
 
-pgorm-cli 通过 `pgorm.toml` 文件进行配置（默认位置：项目根目录）。使用 `pgorm gen init` 可以生成配置文件。
+pgorm-cli 通过 `pgorm.toml` 文件进行配置（默认位置：项目根目录）。使用 `pgorm init` 可以生成配置文件。
 
 ### 完整配置示例
 
@@ -143,27 +143,35 @@ column."SearchUsers".created_at = "chrono::DateTime<chrono::Utc>"
 
 ## 命令
 
-### `pgorm gen init`
+推荐使用任务导向命令：`init`、`build`、`check`、`schema`、`sql`。
 
-创建初始的 `pgorm.toml` 配置文件：
+### `pgorm init`
+
+初始化项目：
 
 ```bash
-pgorm gen init
-pgorm gen init --config path/to/pgorm.toml
+pgorm init
+pgorm init --config path/to/pgorm.toml
+pgorm init --migrations-dir db/migrations
+pgorm init --no-migrations
 ```
 
-生成包含所有可用选项的带注释模板。如果文件已存在，则拒绝覆盖。
+默认会写入带注释的 `pgorm.toml` 模板，并初始化迁移目录。
 
-### `pgorm gen`
+### `pgorm build`
 
-从 `[[packages]]` 章节中定义的 SQL 查询文件生成 Rust 代码：
+根据配置生成项目产物：
+- 从 `[[packages]]` 生成 SQL 查询代码
+- 从 `[models]` 生成模型代码（若配置存在）
 
 ```bash
-pgorm gen
-pgorm gen --config pgorm.toml
-pgorm gen --database postgres://user:pass@localhost/mydb
-pgorm gen --dry-run    # 打印将要更改的内容但不写入
-pgorm gen --check      # 如果输出会发生变化则返回非零退出码（用于 CI）
+pgorm build
+pgorm build --config pgorm.toml
+pgorm build --database postgres://user:pass@localhost/mydb
+pgorm build --dry-run
+pgorm build --check
+pgorm build --no-models
+pgorm build --no-queries
 ```
 
 选项：
@@ -174,15 +182,39 @@ pgorm gen --check      # 如果输出会发生变化则返回非零退出码（�
 | `--database <URL>` | 覆盖配置中的 `database.url` |
 | `--dry-run` | 打印将要更改的文件但不写入 |
 | `--check` | 如果生成的输出有差异则返回非零退出码（CI 模式） |
+| `--no-queries` | 跳过 `[[packages]]` 代码生成 |
+| `--no-models` | 跳过 `[models]` 代码生成 |
 
-### `pgorm gen schema`
+### `pgorm check`
+
+执行无副作用的项目检查：
+- `[[packages]]` 的 SQL 与查询代码检查
+- `[models]` 生成结果一致性检查（若配置存在）
+
+```bash
+pgorm check
+pgorm check --deny-warnings
+pgorm check --no-models
+```
+
+选项：
+
+| 标志 | 说明 |
+|------|------|
+| `--config <FILE>` | 配置文件路径（默认：`pgorm.toml`） |
+| `--database <URL>` | 覆盖配置中的 `database.url` |
+| `--deny-warnings` | 将警告视为错误 |
+| `--no-queries` | 跳过 package 检查 |
+| `--no-models` | 跳过 model 检查 |
+
+### `pgorm schema`
 
 从数据库转储或刷新 schema 缓存：
 
 ```bash
-pgorm gen schema
-pgorm gen schema --schemas public,myschema
-pgorm gen schema --database postgres://user:pass@localhost/mydb
+pgorm schema
+pgorm schema --schemas public,myschema
+pgorm schema --database postgres://user:pass@localhost/mydb
 ```
 
 选项：
@@ -193,50 +225,14 @@ pgorm gen schema --database postgres://user:pass@localhost/mydb
 | `--database <URL>` | 覆盖配置中的 `database.url` |
 | `--schemas <CSV>` | 逗号分隔的 schema 列表（默认：`public`） |
 
-### `pgorm gen check`
-
-验证生成的代码是否最新。在 CI 流水线中非常有用，可确保开发者在修改查询后已运行过 `pgorm gen`：
-
-```bash
-pgorm gen check
-pgorm gen check --deny-warnings
-```
-
-选项：
-
-| 标志 | 说明 |
-|------|------|
-| `--config <FILE>` | 配置文件路径（默认：`pgorm.toml`） |
-| `--database <URL>` | 覆盖配置中的 `database.url` |
-| `--deny-warnings` | 将警告视为错误 |
-
-### `pgorm model`
-
-使用配置中的 `[models]` 章节从数据库 schema 生成 Rust 模型结构体：
-
-```bash
-pgorm model
-pgorm model --dry-run
-pgorm model --check     # CI 模式：如果输出会发生变化则返回非零退出码
-```
-
-选项：
-
-| 标志 | 说明 |
-|------|------|
-| `--config <FILE>` | 配置文件路径（默认：`pgorm.toml`） |
-| `--database <URL>` | 覆盖配置中的 `database.url` |
-| `--dry-run` | 打印将要更改的文件但不写入 |
-| `--check` | 如果生成的输出有差异则返回非零退出码（CI 模式） |
-
-### `pgorm sql check [FILES...]`
+### `pgorm sql [FILES...]`
 
 验证 SQL 文件的语法错误、lint 问题和 schema 不匹配：
 
 ```bash
-pgorm sql check queries/users.sql queries/orders.sql
-pgorm sql check queries/**/*.sql
-pgorm sql check --deny-warnings queries/*.sql
+pgorm sql queries/users.sql queries/orders.sql
+pgorm sql queries/**/*.sql
+pgorm sql --deny-warnings queries/*.sql
 ```
 
 支持多语句输入 -- 每条语句单独验证。
@@ -269,9 +265,8 @@ pgorm-cli 会在加载时从进程环境中解析 `${DATABASE_URL}`。如果变�
 
 ```bash
 # 在 CI 脚本中
-pgorm gen --check
-pgorm model --check
-pgorm sql check --deny-warnings queries/**/*.sql
+pgorm check --deny-warnings
+pgorm sql --deny-warnings queries/**/*.sql
 ```
 
 这些命令在有内容过时或存在问题时会以非零状态退出，适合用作 CI 门禁。
@@ -282,8 +277,7 @@ GitHub Actions 步骤示例：
 - name: Check pgorm codegen
   run: |
     cargo install pgorm-cli
-    pgorm gen --check
-    pgorm model --check
+    pgorm check --deny-warnings
   env:
     DATABASE_URL: ${{ secrets.DATABASE_URL }}
 ```

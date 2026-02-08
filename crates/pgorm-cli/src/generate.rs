@@ -10,7 +10,7 @@ pub async fn run(args: GenRunArgs) -> anyhow::Result<()> {
     let project = ProjectConfig::load(args.config.clone())?;
     if project.file.packages.is_empty() {
         anyhow::bail!(
-            "no [[packages]] configured in {}; run `pgorm gen init` to create a template",
+            "no [[packages]] configured in {}; run `pgorm init` and configure [[packages]]",
             args.config.display()
         );
     }
@@ -46,11 +46,11 @@ pub async fn run(args: GenRunArgs) -> anyhow::Result<()> {
     }
 
     if had_error {
-        anyhow::bail!("gen failed due to previous errors");
+        anyhow::bail!("query code generation failed due to previous errors");
     }
 
     if had_warning {
-        eprintln!("[WARN] gen completed with warnings");
+        eprintln!("[WARN] query code generation completed with warnings");
     }
 
     apply_generated_files(

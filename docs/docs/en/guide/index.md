@@ -104,9 +104,10 @@ Follow these guides to learn more:
 
 1. [Installation & Feature Flags](/en/guide/installation) -- feature flags, MSRV, and minimal builds
 2. [Connection & Pooling](/en/guide/connection) -- `PgClient`, statement cache, TLS
-3. [Models & Derive Macros](/en/guide/models) -- `FromRow`, `Model`, `QueryParams`, `ViewModel`
-4. [Relations & Eager Loading](/en/guide/relations) -- `has_many`, `belongs_to`, `has_one`, `many_to_many`
-5. [PostgreSQL Types](/en/guide/pg-types) -- `PgEnum`, `PgComposite`, `Range<T>`, JSONB
+3. [LISTEN/NOTIFY Events](/en/guide/listen-notify) -- dedicated listeners, reconnect, queue policy
+4. [Models & Derive Macros](/en/guide/models) -- `FromRow`, `Model`, `QueryParams`, `ViewModel`
+5. [Relations & Eager Loading](/en/guide/relations) -- `has_many`, `belongs_to`, `has_one`, `many_to_many`
+6. [PostgreSQL Types](/en/guide/pg-types) -- `PgEnum`, `PgComposite`, `Range<T>`, JSONB
 
 ---
 

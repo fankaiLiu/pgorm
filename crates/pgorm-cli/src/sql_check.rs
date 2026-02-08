@@ -12,7 +12,7 @@ pub async fn run(args: SqlCheckArgs) -> anyhow::Result<()> {
     } else {
         let Some(database_url) = args.database.clone() else {
             anyhow::bail!(
-                "failed to load config {}; provide --database or run `pgorm gen init` first",
+                "failed to load config {}; provide --database or run `pgorm init` first",
                 args.config.display()
             );
         };
@@ -82,7 +82,7 @@ pub async fn run(args: SqlCheckArgs) -> anyhow::Result<()> {
     }
 
     if had_error || (args.deny_warnings && had_warning) {
-        anyhow::bail!("sql check failed");
+        anyhow::bail!("sql validation failed");
     }
 
     Ok(())

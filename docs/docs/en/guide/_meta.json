@@ -16,6 +16,11 @@
   },
   {
     "type": "file",
+    "name": "listen-notify",
+    "label": "LISTEN/NOTIFY Events"
+  },
+  {
+    "type": "file",
     "name": "models",
     "label": "Models & Derive Macros"
   },

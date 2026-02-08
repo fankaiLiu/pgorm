@@ -204,6 +204,24 @@ let pg = PgClient::with_config(client, PgClientConfig::new()
     .with_stats());
 ```
 
+## LISTEN/NOTIFY Subscriptions
+
+For asynchronous PostgreSQL notifications, use a dedicated `PgListener` connection.
+
+```rust
+use pgorm::{PgListener, PgListenerConfig};
+
+let mut listener = PgListener::connect_with_no_tls_config(
+    &database_url,
+    PgListenerConfig::new(),
+).await?;
+listener.listen("orders_changed").await?;
+```
+
+Do not use regular pooled query connections for long-lived listeners.
+
+See full guide: [LISTEN/NOTIFY Events](/en/guide/listen-notify)
+
 ---
 
-Next: [Models & Derive Macros](/en/guide/models)
+Next: [LISTEN/NOTIFY Events](/en/guide/listen-notify)

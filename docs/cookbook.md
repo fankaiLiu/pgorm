@@ -9,6 +9,7 @@ Best practices and common patterns for building applications with pgorm.
 - [Pagination: Page vs Keyset](#pagination-page-vs-keyset)
 - [Dynamic WHERE / ORDER BY](#dynamic-where--order-by)
 - [Transactions & Savepoints](#transactions--savepoints)
+- [LISTEN/NOTIFY Worker Pattern](#listennotify-worker-pattern)
 - [Optimistic Locking & Retry](#optimistic-locking--retry)
 - [Bulk Insert / Upsert Performance](#bulk-insert--upsert-performance)
 
@@ -237,6 +238,44 @@ pgorm::transaction!(&mut client, tx, {
 - `savepoint!` auto-releases on `Ok`, auto-rollbacks on `Err`
 - Always type-annotate the `Ok` value: `Ok::<(), OrmError>(())`
 - Savepoints are PostgreSQL-native and have minimal overhead
+
+---
+
+## LISTEN/NOTIFY Worker Pattern
+
+Use `PgListener` for asynchronous event fan-out from PostgreSQL.
+
+### Recommended architecture
+
+- Keep your normal query pool for request/response SQL.
+- Run one dedicated `PgListener` connection per listener worker.
+- Publish events via `pg_notify(channel, payload)` from writers.
+
+```rust
+use pgorm::{PgListener, PgListenerConfig, PgListenerQueuePolicy};
+use std::time::Duration;
+
+let cfg = PgListenerConfig::new()
+    .queue_capacity(1024)
+    .queue_policy(PgListenerQueuePolicy::DropNewest)
+    .reconnect(true)
+    .reconnect_backoff(Duration::from_millis(250), Duration::from_secs(5));
+
+let mut listener = PgListener::connect_with_no_tls_config(&database_url, cfg).await?;
+listener.listen("cache_invalidate").await?;
+
+while let Some(msg) = listener.next().await {
+    let msg = msg?;
+    handle_event(msg.channel, msg.payload).await?;
+}
+```
+
+### Operational notes
+
+1. `LISTEN/NOTIFY` is best-effort, not durable. Use an outbox/queue if you need guaranteed delivery.
+2. During reconnect windows, notifications can be missed. Add reconciliation pull logic if needed.
+3. Monitor `listener.stats().dropped_notifications` and increase capacity or switch to `Block` policy if drops are too high.
+4. Keep channel naming stable and version payload format (for example: JSON with `type` and `version` fields).
 
 ---
 

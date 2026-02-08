@@ -7,6 +7,7 @@
 
 use pgorm::prelude::*;
 use pgorm::{OrmResult, query, sql};
+use std::time::Duration;
 
 // ── Model definitions ────────────────────────────────────────────────────────
 
@@ -145,6 +146,28 @@ fn compile_query_bind() {
         let _ = query("SELECT * FROM users WHERE name = $1 AND age > $2")
             .bind("alice")
             .bind(18_i32);
+    };
+}
+
+#[test]
+fn compile_pg_listener_api() {
+    let _ = || -> OrmResult<()> {
+        let _cfg = PgListenerConfig::new()
+            .queue_capacity(128)
+            .queue_policy(PgListenerQueuePolicy::DropNewest)
+            .reconnect(true)
+            .reconnect_backoff(Duration::from_millis(100), Duration::from_secs(2));
+        let _ = PgListenerState::Connected;
+        let _ = PgListenerStats::default();
+
+        // Type-check async constructors without executing.
+        let _fut = PgListener::connect("postgres://postgres:postgres@localhost/postgres");
+        let _fut2 = PgListener::connect_with_no_tls_config(
+            "postgres://postgres:postgres@localhost/postgres",
+            PgListenerConfig::default(),
+        );
+
+        Ok(())
     };
 }
 

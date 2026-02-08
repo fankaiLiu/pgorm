@@ -8,7 +8,7 @@ pub async fn run(args: GenCheckArgs) -> anyhow::Result<()> {
     let project = ProjectConfig::load(args.config.clone())?;
     if project.file.packages.is_empty() {
         anyhow::bail!(
-            "no [[packages]] configured in {}; run `pgorm gen init` to create a template",
+            "no [[packages]] configured in {}; run `pgorm init` and configure [[packages]]",
             args.config.display()
         );
     }
@@ -34,7 +34,7 @@ pub async fn run(args: GenCheckArgs) -> anyhow::Result<()> {
     }
 
     if had_error || (args.deny_warnings && had_warning) {
-        anyhow::bail!("gen check failed");
+        anyhow::bail!("query checks failed");
     }
 
     Ok(())
